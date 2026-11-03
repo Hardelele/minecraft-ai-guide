@@ -7,3 +7,4 @@ out/
 api.key
 mcp.token
 knowledge/
+__pycache__/

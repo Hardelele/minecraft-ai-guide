@@ -133,4 +133,46 @@ class SelfTest {
         t.setDaemon(true);
         t.start();
     }
+    /** -Daiguide.pilottest=<player>: when that player comes with the client mod, the autopilot is tried on them */
+    static void pilot(final AIGuide mod, final EntityPlayerMP p) {
+        WorldServer w = (WorldServer) p.field_70170_p;
+        int px = (int) Math.floor(p.field_70165_t), py = (int) Math.floor(p.field_70163_u), pz = (int) Math.floor(p.field_70161_v);
+        int[] c = Errands.spot(w, px + 7, py, pz + 2), t = Errands.spot(w, px - 5, py, pz + 5);
+        AIGuide.LOG.info("pilottest: player at {} {} {}, chest at {}, table at {}", px, py, pz, c == null ? "-" : c[0] + " " + c[1] + " " + c[2],
+                t == null ? "-" : t[0] + " " + t[1] + " " + t[2]);
+        if (c == null || t == null) return;
+        w.func_147449_b(c[0], c[1], c[2], Blocks.field_150486_ae);
+        ((IInventory) w.func_147438_o(c[0], c[1], c[2])).func_70299_a(0, new ItemStack(Item.func_150898_a(Blocks.field_150344_f), 4));
+        w.func_147449_b(t[0], t[1], t[2], Blocks.field_150462_ai);
+        p.field_71071_by.func_70441_a(new ItemStack(Item.func_150898_a(Blocks.field_150347_e), 8));
+        log("pilottest craft", mod.tools.call("craft", "{\"item\":\"minecraft:stick@0\",\"count\":4}", p.func_70005_c_()));
+        int[] g = Errands.spot(w, px + 3, py, pz - 3), d = Errands.spot(w, px - 3, py, pz - 2);
+        if (g == null || d == null) { AIGuide.LOG.info("pilottest: no room to build"); return; }
+        int bx = g[0], by = g[1], bz = g[2];
+        log("pilottest build", mod.tools.call("build", "{\"place\":\"" + bx + " " + by + " " + bz + " minecraft:cobblestone@0\n" + (bx + 1) + " " + by + " " + bz
+                + " minecraft:cobblestone@0\n" + bx + " " + (by + 1) + " " + bz + " minecraft:cobblestone@0\",\"dig\":\"" + d[0] + " " + (d[1] - 1) + " " + d[2] + "\"}",
+                p.func_70005_c_()));
+        final String name = p.func_70005_c_();
+        Thread th = new Thread(new Runnable() {
+            @Override public void run() {
+                for (int i = 0; i < 120; i++) {
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        return;
+                    }
+                    if (mod.errands.waiting(name)) {
+                        AIGuide.LOG.info("pilottest answers yes");
+                        mod.mainQueue.add(new Runnable() {
+                            @Override public void run() { mod.errands.answer(name, true); }
+                        });
+                    }
+                    Errands.Helper h = mod.errands.helpers.get(name);
+                    if (h == null || h.queue.isEmpty()) { AIGuide.LOG.info("pilottest: all done after {} s", i + 1); return; }
+                }
+            }
+        }, "AIGuide-pilottest");
+        th.setDaemon(true);
+        th.start();
+    }
 }

@@ -50,6 +50,7 @@ public class AIGuide {
     Storage storage;
     Actions actions;
     Errands errands;
+    ClientLink link;
     McpServer mcp;
     Learner learner;
     int ticks;
@@ -67,6 +68,8 @@ public class AIGuide {
         storage = new Storage(this);
         actions = new Actions(this);
         errands = new Errands(this);
+        link = new ClientLink(this);
+        link.start();
         mcp = new McpServer(this);
         learner = new Learner(this);
     }
@@ -246,6 +249,20 @@ public class AIGuide {
         m("gotit", "Взял из сундука тебе:", "Took from the chest for you:");
         m("leaddone", "Готово, всё у тебя.", "Done, you have it all.");
         m("toolong", "слишком долго", "it took too long");
+        m("pilotchest", "Веду тебя к сундуку", "Taking you to the chest at");
+        m("pilottable", "Веду тебя к верстаку", "Taking you to the crafting table at");
+        m("tookback", "Управление у тебя. Дальше веду искрами.", "The controls are yours. The sparks show the way on.");
+        m("nopath", "Не нашёл дороги сам, дальше иди по искрам.", "I found no way myself; follow the sparks.");
+        m("manual", "автопилот выключен", "the autopilot is off");
+        m("plan", "План подсвечен:", "The plan is shown:");
+        m("toplace", "поставить", "to place");
+        m("todig", "вскопать", "to dig");
+        m("planask", "Строим? Напиши «да» или «нет».", "Shall I build it? Say yes or no.");
+        m("planself", "Клиентского мода нет, так что ставь сам по искрам (зелёные — поставить, красные — вскопать), подсветка 2 минуты.",
+                "No client mod, so build it yourself by the sparks (green: place, red: dig), shown for 2 minutes.");
+        m("planno", "Хорошо, не строю.", "All right, I do not build it.");
+        m("built", "Построено:", "Built:");
+        m("notbuilt", "не вышло", "failed");
         m("oponly", "Это команда для операторов сервера.", "This command is for server operators.");
     }
 

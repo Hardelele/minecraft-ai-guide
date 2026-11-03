@@ -1,0 +1,352 @@
+package hardelele.aiguide.client;
+
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import cpw.mods.fml.common.FMLCommonHandler;
+import cpw.mods.fml.common.eventhandler.SubscribeEvent;
+import cpw.mods.fml.common.gameevent.TickEvent;
+import cpw.mods.fml.common.network.FMLEventChannel;
+import cpw.mods.fml.common.network.FMLNetworkEvent;
+import cpw.mods.fml.common.network.NetworkRegistry;
+import cpw.mods.fml.common.network.internal.FMLProxyPacket;
+import io.netty.buffer.Unpooled;
+import java.nio.charset.Charset;
+import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.entity.EntityClientPlayerMP;
+import net.minecraft.block.Block;
+import net.minecraft.client.settings.KeyBinding;
+import net.minecraft.network.play.client.C07PacketPlayerDigging;
+import net.minecraft.network.play.client.C09PacketHeldItemChange;
+import net.minecraft.util.MathHelper;
+import net.minecraft.util.Vec3;
+import net.minecraft.world.World;
+import net.minecraftforge.client.event.RenderGameOverlayEvent;
+import net.minecraftforge.common.MinecraftForge;
+import org.lwjgl.input.Keyboard;
+
+/**
+ * The autopilot: drives the player's own character for the AI Guide server mod. The server says where
+ * to go and what to do with which block (JSON on the channel "aiguide"); the autopilot finds a way on
+ * foot, turns and walks with the movement keys, jumps where the way goes up, and clicks blocks as the
+ * player would. Any movement key held by the player stops it and tells the server.
+ */
+public class Pilot {
+    static final String CHANNEL = "aiguide";
+    static final Charset UTF8 = Charset.forName("UTF-8");
+    static final int[][] SIDE = { { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { -1, 0, 0 }, { 1, 0, 0 } };
+
+    static Pilot instance;
+
+    final Minecraft mc = Minecraft.getMinecraft();
+    final ConcurrentLinkedQueue<JsonObject> inbox = new ConcurrentLinkedQueue<JsonObject>();
+    FMLEventChannel channel;
+
+    String task;   // goto, use, place, dig; null when idle
+    int tx, ty, tz, slot, ticks, side, replans, checkAt;
+    double reach, lastX, lastZ;
+    List<int[]> path;
+    int at;
+    boolean pressing, hitStarted;
+
+    static void start() {
+        instance = new Pilot();
+        instance.channel = NetworkRegistry.INSTANCE.newEventDrivenChannel(CHANNEL);
+        instance.channel.register(instance);
+        FMLCommonHandler.instance().bus().register(instance);
+        MinecraftForge.EVENT_BUS.register(instance);
+        MinecraftForge.EVENT_BUS.register(new Ghosts());
+    }
+
+    // ---- the line to the server --------------------------------------------------------------
+
+    @SubscribeEvent
+    public void packet(FMLNetworkEvent.ClientCustomPacketEvent e) {
+        try {
+            inbox.add(new JsonParser().parse(e.packet.payload().toString(UTF8)).getAsJsonObject());
+        } catch (Exception ex) {
+            // not ours
+        }
+    }
+
+    @SubscribeEvent
+    public void left(FMLNetworkEvent.ClientDisconnectionFromServerEvent e) {
+        inbox.add(msg("stop"));
+        inbox.add(msg("ghostclear"));
+    }
+
+    void send(JsonObject m) {
+        if (mc.thePlayer != null) channel.sendToServer(new FMLProxyPacket(Unpooled.wrappedBuffer(m.toString().getBytes(UTF8)), CHANNEL));
+    }
+
+    static JsonObject msg(String t) {
+        JsonObject m = new JsonObject();
+        m.addProperty("t", t);
+        return m;
+    }
+
+    static int num(JsonObject m, String k) {
+        return m.has(k) ? m.get(k).getAsInt() : 0;
+    }
+
+    void handle(JsonObject m) {
+        String t = m.has("t") ? m.get("t").getAsString() : "";
+        if (t.equals("hello")) {
+            JsonObject r = msg("hello");
+            r.addProperty("v", 1);
+            send(r);
+        } else if (t.equals("goto") || t.equals("use") || t.equals("place") || t.equals("dig")) {
+            stop();
+            task = t;
+            tx = num(m, "x");
+            ty = num(m, "y");
+            tz = num(m, "z");
+            slot = num(m, "slot");
+            reach = m.has("reach") ? m.get("reach").getAsDouble() : 2.5;
+            ticks = 0;
+            replans = 0;
+            hitStarted = false;
+            if (t.equals("goto") && !plan()) fail("no way there");
+        } else if (t.equals("close")) {
+            if (mc.currentScreen != null) mc.thePlayer.closeScreen();
+        } else if (t.equals("stop")) stop();
+        else if (t.equals("ghost")) Ghosts.set(m);
+        else if (t.equals("ghostclear")) Ghosts.clear();
+    }
+
+    // ---- every tick ----------------------------------------------------------------------------
+
+    @SubscribeEvent
+    public void tick(TickEvent.ClientTickEvent e) {
+        if (e.phase != TickEvent.Phase.END) return;
+        if (mc.thePlayer == null || mc.theWorld == null) {
+            inbox.clear();
+            task = null;
+            pressing = false;
+            return;
+        }
+        for (JsonObject m; (m = inbox.poll()) != null; ) handle(m);
+        shots();
+        if (task == null) return;
+        if (taken()) {   // the player moves themselves: the controls are theirs
+            stop();
+            send(msg("cancel"));
+            return;
+        }
+        ticks++;
+        if (task.equals("goto")) walk();
+        else if (task.equals("use") || task.equals("place")) click();
+        else if (task.equals("dig")) dig();
+    }
+
+    /** a movement key held on the keyboard itself (not by the autopilot) */
+    boolean taken() {
+        if (mc.currentScreen != null) return false;
+        int[] keys = { mc.gameSettings.keyBindForward.getKeyCode(), mc.gameSettings.keyBindBack.getKeyCode(), mc.gameSettings.keyBindLeft.getKeyCode(),
+                mc.gameSettings.keyBindRight.getKeyCode(), mc.gameSettings.keyBindJump.getKeyCode(), mc.gameSettings.keyBindSneak.getKeyCode() };
+        for (int k : keys)
+            if (k > 0 && Keyboard.isKeyDown(k)) return true;
+        return false;
+    }
+
+    void stop() {
+        if (task != null && task.equals("dig") && hitStarted) mc.getNetHandler().addToSendQueue(new C07PacketPlayerDigging(1, tx, ty, tz, 0));
+        task = null;
+        path = null;
+        keys(false, false);
+    }
+
+    void fail(String why) {
+        String was = task;
+        stop();
+        JsonObject m = msg("failed");
+        m.addProperty("why", why);
+        m.addProperty("task", was == null ? "" : was);
+        send(m);
+    }
+
+    void keys(boolean forward, boolean jump) {
+        if (!forward && !jump && !pressing) return;
+        KeyBinding.setKeyBindState(mc.gameSettings.keyBindForward.getKeyCode(), forward);
+        KeyBinding.setKeyBindState(mc.gameSettings.keyBindJump.getKeyCode(), jump);
+        pressing = forward || jump;
+    }
+
+    // ---- walking -----------------------------------------------------------------------------
+
+    int[] feet() {
+        EntityClientPlayerMP p = mc.thePlayer;
+        return new int[] { MathHelper.floor_double(p.posX), MathHelper.floor_double(p.boundingBox.minY + 0.01), MathHelper.floor_double(p.posZ) };
+    }
+
+    boolean plan() {
+        path = Paths.find(mc.theWorld, feet(), tx, ty, tz, reach);
+        at = 0;
+        checkAt = ticks + 40;
+        lastX = mc.thePlayer.posX;
+        lastZ = mc.thePlayer.posZ;
+        return path != null;
+    }
+
+    void walk() {
+        EntityClientPlayerMP p = mc.thePlayer;
+        if (mc.currentScreen != null) { keys(false, false); return; }   // a window is open: wait
+        if (path == null || at >= path.size()) {
+            keys(false, false);
+            if (Paths.near(feet(), tx, ty, tz, reach + 0.5)) {
+                task = null;
+                send(msg("arrived"));
+            } else if (++replans > 3 || !plan()) fail("lost the way");
+            return;
+        }
+        int[] n = path.get(at);
+        double cx = n[0] + 0.5, cz = n[2] + 0.5, dx = cx - p.posX, dz = cz - p.posZ, d = Math.sqrt(dx * dx + dz * dz);
+        int fy = feet()[1];
+        if (d < (at == path.size() - 1 ? 0.3 : 0.45) && Math.abs(fy - n[1]) <= 1) {
+            at++;
+            return;
+        }
+        float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        float diff = MathHelper.wrapAngleTo180_float(yaw - p.rotationYaw);
+        p.rotationYaw += Math.max(-35, Math.min(35, diff));
+        p.rotationPitch += Math.max(-10, Math.min(10, 15 - p.rotationPitch));   // eyes a little down, at the way
+        boolean up = n[1] > fy || (p.isCollidedHorizontally && p.onGround) || p.isInWater();
+        keys(Math.abs(diff) < 60, up);
+        if (ticks >= checkAt) {   // no progress in two seconds: look for the way again
+            if (Math.abs(p.posX - lastX) + Math.abs(p.posZ - lastZ) < 0.3) {
+                keys(false, false);
+                if (++replans > 3 || !plan()) fail("stuck");
+                return;
+            }
+            checkAt = ticks + 40;
+            lastX = p.posX;
+            lastZ = p.posZ;
+        }
+    }
+
+    // ---- turning to a point --------------------------------------------------------------------
+
+    /** turns the head toward a point a little each tick; true when looking at it */
+    boolean aim(double x, double y, double z) {
+        EntityClientPlayerMP p = mc.thePlayer;
+        double dx = x - p.posX, dy = y - (p.boundingBox.minY + p.getEyeHeight()), dz = z - p.posZ;
+        float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+        float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+        float dyaw = MathHelper.wrapAngleTo180_float(yaw - p.rotationYaw), dpitch = pitch - p.rotationPitch;
+        p.rotationYaw += Math.max(-30, Math.min(30, dyaw));
+        p.rotationPitch += Math.max(-30, Math.min(30, dpitch));
+        return Math.abs(dyaw) < 3 && Math.abs(dpitch) < 3;
+    }
+
+    /** the side of a block that faces the player's eyes */
+    int facing(int x, int y, int z) {
+        EntityClientPlayerMP p = mc.thePlayer;
+        double dx = p.posX - (x + 0.5), dy = p.boundingBox.minY + p.getEyeHeight() - (y + 0.5), dz = p.posZ - (z + 0.5);
+        double ax = Math.abs(dx), ay = Math.abs(dy), az = Math.abs(dz);
+        if (ay >= ax && ay >= az) return dy > 0 ? 1 : 0;
+        if (ax >= az) return dx > 0 ? 5 : 4;
+        return dz > 0 ? 3 : 2;
+    }
+
+    // ---- using, placing, digging ---------------------------------------------------------------
+
+    /** a right click: on the block itself (use), or on a block next to the planned one (place) */
+    void click() {
+        World w = mc.theWorld;
+        EntityClientPlayerMP p = mc.thePlayer;
+        int x = tx, y = ty, z = tz, s;
+        if (task.equals("place")) {
+            if (ticks == 1) p.inventory.currentItem = Math.max(0, Math.min(8, slot));
+            int[] on = support(w, tx, ty, tz);
+            if (on == null) { fail("nothing to place it against"); return; }
+            x = on[0];
+            y = on[1];
+            z = on[2];
+            s = on[3];
+        } else s = facing(x, y, z);
+        double hx = x + 0.5 + SIDE[s][0] * 0.5, hy = y + 0.5 + SIDE[s][1] * 0.5, hz = z + 0.5 + SIDE[s][2] * 0.5;
+        if (!aim(hx, hy, hz) && ticks < 20) return;
+        if (mc.playerController.onPlayerRightClick(p, w, p.getHeldItem(), x, y, z, s, Vec3.createVectorHelper(hx - x, hy - y, hz - z)))
+            p.swingItem();
+        task = null;
+    }
+
+    /** a solid block next to the place, and the side of it that faces the place */
+    static int[] support(World w, int x, int y, int z) {
+        int[] order = { 0, 2, 3, 4, 5, 1 };   // below first, then the sides, then above
+        for (int i : order) {
+            int nx = x + SIDE[i][0], ny = y + SIDE[i][1], nz = z + SIDE[i][2];
+            if (!Paths.solid(w, nx, ny, nz)) continue;
+            return new int[] { nx, ny, nz, i ^ 1 };   // the side of the neighbour that looks back at the place
+        }
+        return null;
+    }
+
+    float progress;
+
+    /**
+     * Digs as the player does: the best tool of the hotbar in hand, "started digging" to the server, the
+     * cracks growing for as long as the block takes with that tool, then "done digging" (the server checks
+     * the time). Not through the controller, which drops a dig that the attack button does not hold.
+     */
+    void dig() {
+        World w = mc.theWorld;
+        EntityClientPlayerMP p = mc.thePlayer;
+        int s = facing(tx, ty, tz);
+        if (w.isAirBlock(tx, ty, tz)) {
+            w.destroyBlockInWorldPartially(p.getEntityId(), tx, ty, tz, -1);
+            task = null;
+            return;
+        }
+        if (ticks > 20 * 30) { fail("could not dig it"); return; }
+        boolean looking = aim(tx + 0.5 + SIDE[s][0] * 0.5, ty + 0.5 + SIDE[s][1] * 0.5, tz + 0.5 + SIDE[s][2] * 0.5);
+        if (!looking && ticks < 20) return;
+        Block b = w.getBlock(tx, ty, tz);
+        if (!hitStarted) {
+            int best = p.inventory.currentItem;
+            float speed = -1;
+            for (int i = 0; i < 9; i++) {   // the hotbar slot that digs it fastest
+                p.inventory.currentItem = i;
+                float h = b.getPlayerRelativeBlockHardness(p, w, tx, ty, tz);
+                if (h > speed + 1e-6) { speed = h; best = i; }
+            }
+            p.inventory.currentItem = best;
+            mc.getNetHandler().addToSendQueue(new C09PacketHeldItemChange(best));
+            if (speed <= 0) { fail("cannot be dug"); return; }
+            mc.getNetHandler().addToSendQueue(new C07PacketPlayerDigging(0, tx, ty, tz, s));
+            hitStarted = true;
+            progress = 0;
+        }
+        progress += b.getPlayerRelativeBlockHardness(p, w, tx, ty, tz);
+        p.swingItem();
+        w.destroyBlockInWorldPartially(p.getEntityId(), tx, ty, tz, (int) (Math.min(1, progress) * 10) - 1);
+        if (progress >= 1.0f) {
+            mc.getNetHandler().addToSendQueue(new C07PacketPlayerDigging(2, tx, ty, tz, s));
+            hitStarted = false;
+            progress = -100;   // waits for the server to take the block away
+        }
+    }
+
+    // ---- -Daiguide.client.shots=true: screenshots while it works, to see it from outside -----------
+
+    static final boolean SHOTS = Boolean.getBoolean("aiguide.client.shots");
+    int clock, taken;
+
+    void shots() {
+        if (!SHOTS || ++clock % 60 != 0 || taken >= 20 || task == null && Ghosts.all.isEmpty()) return;
+        taken++;
+        net.minecraft.util.ScreenShotHelper.saveScreenshot(mc.mcDataDir, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
+        System.out.println("[AIGuideClient] shot " + taken + ": task " + task + ", ghosts " + Ghosts.all.size() + ", at "
+                + (int) mc.thePlayer.posX + " " + (int) mc.thePlayer.boundingBox.minY + " " + (int) mc.thePlayer.posZ);
+    }
+
+    // ---- a line on the screen while it drives ------------------------------------------------------
+
+    @SubscribeEvent
+    public void overlay(RenderGameOverlayEvent.Text e) {
+        if (task == null) return;
+        boolean ru = mc.gameSettings.language != null && mc.gameSettings.language.startsWith("ru");
+        e.left.add("§b" + (ru ? "[Гид] ведёт тебя — WASD, чтобы взять управление" : "[Guide] is driving — WASD to take the controls"));
+    }
+}

@@ -9,6 +9,10 @@ import java.util.List;
 import java.util.Map;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Blocks;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
+import net.minecraft.inventory.ContainerWorkbench;
 import net.minecraft.inventory.IInventory;
 import net.minecraft.inventory.InventoryCrafting;
 import net.minecraft.item.ItemStack;
@@ -23,7 +27,7 @@ import net.minecraft.world.WorldServer;
  * Nothing moves at a distance and nothing happens at once. Everything runs on the server thread.
  */
 class Errands {
-    static final int CHEST = 0, FROM_PLAYER = 1, TABLE = 2, BRING = 3;
+    static final int CHEST = 0, FROM_PLAYER = 1, TABLE = 2, BRING = 3, PLACE = 4, DIG = 5;
     static final int TIMEOUT = 20 * 180, LEAD_TIMEOUT = 20 * 600, IDLE = 20 * 40, WAIT_OFFLINE = 20 * 60;
 
     /** what to collect: an exact item (fetch) or a recipe's ingredient (craft) */
@@ -39,6 +43,7 @@ class Errands {
 
     static final class Stop {
         int kind, x, y, z;
+        ItemStack item;   // what is placed there
 
         Stop(int kind, int x, int y, int z) {
             this.kind = kind;
@@ -61,7 +66,10 @@ class Errands {
         final List<Stop> sources = new ArrayList<Stop>();
         int dim, made, step, ticks, wait, askedAt;
         volatile int asked;   // 0 not yet, 1 waiting, 2 yes, 3 no (the chat thread answers)
-        boolean open, lead;   // lead: no body, the player walks the route along a trail of sparks
+        boolean open, lead;   // lead: no body, the player walks the route along a trail of sparks (or the autopilot walks them)
+        boolean manual, gui, building;   // manual: they took the controls back; gui: the block's window is open
+        int phase, since, failed;
+        List<Stop> jobs;   // a building plan
         Stop shown;
         String why = "";
     }
@@ -248,10 +256,18 @@ class Errands {
         StringBuilder r = new StringBuilder();
         for (Stop s : e.route) {
             if (s.kind == CHEST) stops++;
-            r.append(r.length() > 0 ? " -> " : "").append(new String[] { "chest", "player's inventory", "table", "player" }[s.kind])
+            r.append(r.length() > 0 ? " -> " : "").append(new String[] { "chest", "player's inventory", "table", "player", "place", "dig" }[s.kind])
                     .append(s.kind == CHEST || s.kind == TABLE ? " " + s.x + " " + s.y + " " + s.z : "");
         }
         AIGuide.LOG.info("errand for {}{}: {}; from {}: {}", e.player, e.lead ? " (lead)" : "", what, at(p.field_70165_t, p.field_70163_u, p.field_70161_v), r);
+        if (e.jobs != null)
+            return mod.link.has(e.player) ? "The plan is shown to the player as see-through blocks and they are asked; with their yes the autopilot "
+                    + "walks them there and builds it. Tell them to look and answer yes or no; do not call this again for it."
+                    : "The player has no client mod: the planned blocks are marked with sparks for two minutes for them to build by hand. Tell them so.";
+        if (e.lead && mod.link.has(e.player))
+            return "The autopilot of the player's client walks them to " + what + ": " + r + " (they can take the controls back with any movement key; "
+                    + "then sparks show the way). It opens the chests and the table itself and the guide tells each step in chat. Tell the player; "
+                    + "do not call this again for it.";
         if (e.lead)
             return "A trail of sparks leads the player to " + what + ": " + r + ". When they reach a chest, what is needed goes into their inventory"
                     + (e.recipe != null ? "; at the crafting table it is crafted from their inventory" : "")
@@ -369,109 +385,368 @@ class Errands {
         return true;
     }
 
-    // ---- leading: the player walks, the sparks show the way ------------------------------------
+    // ---- leading: the player walks, or the client mod's autopilot walks them ----------------------
+
+    /** the client mod drives the player, unless they took the controls back */
+    boolean pilot(Helper h, Errand e) {
+        return !e.manual && mod.link.has(h.player);
+    }
 
     boolean lead(Helper h, Errand e, EntityPlayerMP p) {
-        if (++e.ticks > LEAD_TIMEOUT) { h.queue.poll(); leadDone(h, e, mod.msg("toolong")); return true; }
+        if (++e.ticks > LEAD_TIMEOUT) { h.queue.poll(); leadDone(h, e, p, mod.msg("toolong")); return true; }
         if (e.wait > 0) { e.wait--; return true; }
-        Stop s = e.route.peek();
-        if (s == null) { h.queue.poll(); leadDone(h, e, null); return true; }
         WorldServer w = (WorldServer) p.field_70170_p;
+        if (e.jobs != null && !e.building) return plan(h, e, p, w);
+        Stop s = e.route.peek();
+        if (s == null) { h.queue.poll(); leadDone(h, e, p, null); return true; }
+        boolean auto = pilot(h, e), work = s.kind == PLACE || s.kind == DIG;
         double cx = s.x + 0.5, cy = s.y + 0.5, cz = s.z + 0.5, d = Math.sqrt(p.func_70092_e(cx, cy, cz));
         if (e.shown != s) {
             e.shown = s;
-            mod.say(h.player, mod.msg(s.kind == CHEST ? "gochest" : "gotable") + " " + s.x + " " + s.y + " " + s.z + " (" + (int) d + " " + mod.msg("blocks") + ")");
+            e.phase = 0;
+            if (!work) mod.say(h.player, mod.msg((auto ? "pilot" : "go") + (s.kind == CHEST ? "chest" : "table")) + " " + s.x + " " + s.y + " " + s.z
+                    + " (" + (int) d + " " + mod.msg("blocks") + ")");
+            if (auto) {
+                JsonObject m = ClientLink.msg("goto");
+                m.addProperty("x", s.x);
+                m.addProperty("y", s.y);
+                m.addProperty("z", s.z);
+                m.addProperty("reach", work ? 3.5 : 2.5);
+                mod.link.send(p, m);
+            }
         }
-        if (d > 3.5) {
-            if (e.ticks % 10 == 0) trail(w, p, cx, cy, cz);
+        if (e.phase == 0 && d > (work ? 4.5 : 3.5)) {
+            if (!auto && e.ticks % 10 == 0) trail(w, p, cx, cy, cz);
             return true;
         }
-        if (s.kind == CHEST) leadChest(h, e, s, w, p);
-        else leadBench(h, e, s, w, p);
+        if (s.kind == CHEST) leadChest(h, e, s, w, p, auto);
+        else if (s.kind == TABLE) leadBench(h, e, s, w, p, auto);
+        else work(h, e, s, w, p);
         return true;
     }
 
-    /** the player is at the chest: the lid goes up and what is needed goes to them */
-    void leadChest(Helper h, Errand e, Stop s, WorldServer w, EntityPlayerMP p) {
+    void use(EntityPlayerMP p, Stop s) {
+        JsonObject m = ClientLink.msg("use");
+        m.addProperty("x", s.x);
+        m.addProperty("y", s.y);
+        m.addProperty("z", s.z);
+        mod.link.send(p, m);
+    }
+
+    /** a window of a block is open (not the player's own inventory) */
+    static boolean open(EntityPlayerMP p) {
+        return p.field_71070_bA != null && p.field_71070_bA != p.field_71069_bz;
+    }
+
+    /** at the chest: the autopilot opens it (or the lid goes up), what is needed goes to the player */
+    void leadChest(Helper h, Errand e, Stop s, WorldServer w, EntityPlayerMP p, boolean auto) {
         TileEntity t = w.func_147438_o(s.x, s.y, s.z);
         IInventory inv = t instanceof IInventory ? (IInventory) t : null;
-        if (!e.open) {
+        if (e.phase == 0) {
             AIGuide.LOG.info("errand for {}: the player is at the chest {} {} {} after {} s", h.player, s.x, s.y, s.z, e.ticks / 20);
+            e.gui = false;
+            if (auto) { use(p, s); e.phase = 1; e.since = e.ticks; return; }
             if (inv != null) inv.func_70295_k_();
-            e.open = true;
+            e.phase = 2;
             e.wait = 12;
             return;
         }
-        List<ItemStack> got = new ArrayList<ItemStack>();
-        if (inv != null) {
-            for (Need n : e.needs) {
-                int want = e.recipe != null ? n.left - carried(p, n) : n.left;
-                for (int i = 0; i < inv.func_70302_i_() && want > 0; i++) {
-                    ItemStack c = inv.func_70301_a(i);
-                    if (!n.matches(c)) continue;
-                    ItemStack g = inv.func_70298_a(i, Math.min(want, c.field_77994_a));
-                    if (g == null) continue;
-                    want -= g.field_77994_a;
-                    if (e.recipe == null) n.left -= g.field_77994_a;
-                    got.add(g.func_77946_l());
-                    Actions.give(p, g);
+        if (e.phase == 1) {   // waiting for the window
+            if (open(p)) { e.gui = true; e.phase = 2; e.wait = 10; }
+            else if (e.ticks - e.since > 60) { if (inv != null) inv.func_70295_k_(); e.phase = 2; }
+            return;
+        }
+        if (e.phase == 2) {
+            List<ItemStack> got = new ArrayList<ItemStack>();
+            if (inv != null) {
+                for (Need n : e.needs) {
+                    int want = e.recipe != null ? n.left - carried(p, n) : n.left;
+                    for (int i = 0; i < inv.func_70302_i_() && want > 0; i++) {
+                        ItemStack c = inv.func_70301_a(i);
+                        if (!n.matches(c)) continue;
+                        ItemStack g = inv.func_70298_a(i, Math.min(want, c.field_77994_a));
+                        if (g == null) continue;
+                        want -= g.field_77994_a;
+                        if (e.recipe == null) n.left -= g.field_77994_a;
+                        got.add(g.func_77946_l());
+                        Actions.give(p, g);
+                    }
                 }
+                inv.func_70296_d();
             }
-            inv.func_70296_d();
-            inv.func_70305_f();
-        }
-        Actions.sync(p);
-        if (!got.isEmpty()) {
-            List<String> l = new ArrayList<String>();
-            for (ItemStack g : merged(got)) l.add(g.field_77994_a + " " + mod.lang.name(g));
-            mod.say(h.player, mod.msg("gotit") + " " + String.join(", ", l));
-        }
-        e.open = false;
-        e.route.poll();
-        e.wait = 8;
-    }
-
-    /** the player is at the crafting table: one craft a second from their inventory */
-    void leadBench(Helper h, Errand e, Stop s, WorldServer w, EntityPlayerMP p) {
-        if (w.func_147439_a(s.x, s.y, s.z) != Blocks.field_150462_ai) { e.why = mod.msg("notable"); e.route.poll(); return; }
-        if (e.step == 0 && e.made == 0 && e.why.isEmpty()) AIGuide.LOG.info("errand for {}: the player is at the table after {} s", h.player, e.ticks / 20);
-        if (e.step < e.times) {
-            ItemStack[] inv = p.field_71071_by.field_70462_a;
-            int[] slots = new int[9];
-            InventoryCrafting g = Actions.grid(inv, e.recipe, slots);
-            ItemStack out = g == null ? null : CraftingManager.func_77594_a().func_82787_a(g, w);
-            if (out == null || !RecipeIndex.key(out).equals(RecipeIndex.key(e.want))) {
-                e.why = g == null ? mod.msg("short") : mod.msg("nogrid");
-                e.step = e.times;
-            } else {
-                FMLCommonHandler.instance().firePlayerCraftingEvent(p, out, g);
-                for (int i = 0; i < 9; i++) {
-                    if (slots[i] < 0 || inv[slots[i]] == null) continue;
-                    ItemStack c = Actions.containerItem(inv[slots[i]]);
-                    if (--inv[slots[i]].field_77994_a <= 0) inv[slots[i]] = null;
-                    if (c != null) Actions.give(p, c);
-                }
-                Actions.give(p, out.func_77946_l());
-                Actions.sync(p);
-                e.made += out.field_77994_a;
-                e.step++;
-                w.func_72908_a(s.x + 0.5, s.y + 0.5, s.z + 0.5, "dig.wood", 0.6f, 1.0f);
-                w.func_147487_a("crit", s.x + 0.5, s.y + 1.1, s.z + 0.5, 6, 0.25, 0.1, 0.25, 0.05);
-                e.wait = 20;
-                return;
+            if (open(p)) p.field_71070_bA.func_75142_b();
+            Actions.sync(p);
+            if (!got.isEmpty()) {
+                List<String> l = new ArrayList<String>();
+                for (ItemStack g : merged(got)) l.add(g.field_77994_a + " " + mod.lang.name(g));
+                mod.say(h.player, mod.msg("gotit") + " " + String.join(", ", l));
             }
+            e.phase = 3;
+            e.wait = e.gui ? 15 : 8;
+            return;
         }
+        if (e.gui) mod.link.send(p, ClientLink.msg("close"));
+        else if (inv != null) inv.func_70305_f();
         e.route.poll();
+        e.phase = 0;
         e.wait = 6;
     }
 
-    void leadDone(Helper h, Errand e, String why) {
+    /** at the crafting table: the autopilot opens it and the grid is laid out and taken in its window, one craft a second */
+    void leadBench(Helper h, Errand e, Stop s, WorldServer w, EntityPlayerMP p, boolean auto) {
+        if (w.func_147439_a(s.x, s.y, s.z) != Blocks.field_150462_ai) { e.why = mod.msg("notable"); e.route.poll(); return; }
+        if (e.phase == 0) {
+            AIGuide.LOG.info("errand for {}: the player is at the table after {} s", h.player, e.ticks / 20);
+            e.gui = false;
+            if (auto) { use(p, s); e.phase = 1; e.since = e.ticks; }
+            else e.phase = 2;
+            return;
+        }
+        if (e.phase == 1) {
+            if (p.field_71070_bA instanceof ContainerWorkbench) { e.gui = true; e.phase = 2; e.wait = 10; }
+            else if (e.ticks - e.since > 60) e.phase = 2;
+            return;
+        }
+        ItemStack[] inv = p.field_71071_by.field_70462_a;
+        if (e.gui && !(p.field_71070_bA instanceof ContainerWorkbench)) e.gui = false;   // they closed it
+        if (e.phase == 2) {
+            if (e.step >= e.times) { e.phase = 4; return; }
+            int[] slots = new int[9];
+            InventoryCrafting g = Actions.grid(inv, e.recipe, slots);
+            if (g == null) { e.why = mod.msg("short"); e.step = e.times; return; }
+            if (e.gui) {   // the grid is laid out in the open window, the result is taken from it
+                ContainerWorkbench c = (ContainerWorkbench) p.field_71070_bA;
+                for (int i = 0; i < 9; i++) {
+                    if (slots[i] < 0 || inv[slots[i]] == null) continue;
+                    ItemStack one = inv[slots[i]].func_77979_a(1);
+                    if (inv[slots[i]].field_77994_a <= 0) inv[slots[i]] = null;
+                    c.field_75162_e.func_70299_a(i, one);
+                }
+                c.func_75130_a(c.field_75162_e);
+                c.func_75142_b();
+                e.phase = 3;
+                e.wait = 12;
+                return;
+            }
+            ItemStack out = CraftingManager.func_77594_a().func_82787_a(g, w);
+            if (out == null || !RecipeIndex.key(out).equals(RecipeIndex.key(e.want))) { e.why = mod.msg("nogrid"); e.step = e.times; return; }
+            FMLCommonHandler.instance().firePlayerCraftingEvent(p, out, g);
+            for (int i = 0; i < 9; i++) {
+                if (slots[i] < 0 || inv[slots[i]] == null) continue;
+                ItemStack c = Actions.containerItem(inv[slots[i]]);
+                if (--inv[slots[i]].field_77994_a <= 0) inv[slots[i]] = null;
+                if (c != null) Actions.give(p, c);
+            }
+            Actions.give(p, out.func_77946_l());
+            Actions.sync(p);
+            crafted(e, s, w, out.field_77994_a);
+            return;
+        }
+        if (e.phase == 3) {
+            if (!e.gui) { e.phase = 2; return; }
+            ContainerWorkbench c = (ContainerWorkbench) p.field_71070_bA;
+            ItemStack r = c.func_75139_a(0).func_75211_c();
+            if (r == null || !RecipeIndex.key(r).equals(RecipeIndex.key(e.want))) {
+                e.why = mod.msg("nogrid");   // what is in the grid goes back to the player when the window closes
+                e.step = e.times;
+                e.phase = 4;
+                return;
+            }
+            int n = r.field_77994_a;
+            c.func_75144_a(0, 0, 1, p);   // shift-click on the result, as a player would
+            c.func_75142_b();
+            e.phase = 2;
+            crafted(e, s, w, n);
+            return;
+        }
+        if (e.gui) mod.link.send(p, ClientLink.msg("close"));
+        e.route.poll();
+        e.phase = 0;
+        e.wait = 6;
+    }
+
+    void crafted(Errand e, Stop s, WorldServer w, int n) {
+        e.made += n;
+        e.step++;
+        w.func_72908_a(s.x + 0.5, s.y + 0.5, s.z + 0.5, "dig.wood", 0.6f, 1.0f);
+        w.func_147487_a("crit", s.x + 0.5, s.y + 1.1, s.z + 0.5, 6, 0.25, 0.1, 0.25, 0.05);
+        e.wait = 20;
+    }
+
+    // ---- building: a plan shown as see-through blocks, built by the autopilot after a yes -------
+
+    String build(EntityPlayerMP p, List<int[]> places, List<ItemStack> items, List<int[]> digs) {
+        Errand e = new Errand();
+        e.lead = true;
+        e.player = p.func_70005_c_();
+        e.jobs = new ArrayList<Stop>();
+        for (int[] d : digs) e.jobs.add(new Stop(DIG, d[0], d[1], d[2]));
+        List<Stop> put = new ArrayList<Stop>();
+        for (int i = 0; i < places.size(); i++) {
+            Stop s = new Stop(PLACE, places.get(i)[0], places.get(i)[1], places.get(i)[2]);
+            s.item = items.get(i);
+            put.add(s);
+        }
+        java.util.Collections.sort(put, new java.util.Comparator<Stop>() {   // from the bottom up
+            @Override public int compare(Stop a, Stop b) { return a.y - b.y; }
+        });
+        e.jobs.addAll(put);
+        Map<String, Integer> need = new LinkedHashMap<String, Integer>();
+        Map<String, ItemStack> what = new LinkedHashMap<String, ItemStack>();
+        for (Stop s : put) {
+            String k = RecipeIndex.key(s.item);
+            Integer o = need.get(k);
+            need.put(k, (o == null ? 0 : o) + 1);
+            what.put(k, s.item);
+        }
+        List<String> lack = new ArrayList<String>();
+        for (Map.Entry<String, Integer> n : need.entrySet()) {
+            int have = 0;
+            for (ItemStack c : p.field_71071_by.field_70462_a) if (c != null && RecipeIndex.key(c).equals(n.getKey())) have += c.field_77994_a;
+            if (have < n.getValue()) lack.add((n.getValue() - have) + " " + mod.lang.name(what.get(n.getKey())));
+        }
+        if (!lack.isEmpty()) return "The player does not carry: " + String.join(", ", lack) + ". Get them first (fetch or craft), then build.";
+        e.what = put.size() + " block(s) to place, " + digs.size() + " to dig";
+        return start(p, e, "show the plan (" + e.what + ") and build it after the player's yes");
+    }
+
+    /** the plan is shown and the player is asked; with a yes the jobs become the route */
+    boolean plan(Helper h, Errand e, EntityPlayerMP p, WorldServer w) {
+        boolean auto = pilot(h, e);
+        if (e.asked == 0) {
+            if (auto) mod.link.send(p, ghost(e));
+            else e.asked = 4;   // nothing to drive: the player builds by the sparks
+            int put = 0;
+            for (Stop s : e.jobs) if (s.kind == PLACE) put++;
+            mod.say(h.player, mod.msg("plan") + " " + put + " " + mod.msg("toplace") + ", " + (e.jobs.size() - put) + " " + mod.msg("todig") + ". "
+                    + mod.msg(auto ? "planask" : "planself"));
+            if (e.asked == 0) e.asked = 1;
+            e.askedAt = e.ticks;
+            return true;
+        }
+        if (e.asked == 4) {
+            if (e.ticks % 10 == 0) marks(w, e);
+            if (e.ticks - e.askedAt > 20 * 120) h.queue.poll();
+            return true;
+        }
+        if (e.asked == 1) {
+            if (!auto && e.ticks % 10 == 0) marks(w, e);
+            if (e.ticks - e.askedAt > 20 * 120) e.asked = 3;
+            return true;
+        }
+        if (e.asked == 3) {
+            h.queue.poll();
+            mod.link.send(p, ClientLink.msg("ghostclear"));
+            mod.say(h.player, mod.msg("planno"));
+            return true;
+        }
+        e.building = true;
+        e.route.addAll(e.jobs);
+        AIGuide.LOG.info("errand for {}: building {}", h.player, e.what);
+        return true;
+    }
+
+    static JsonObject ghost(Errand e) {
+        JsonObject m = ClientLink.msg("ghost");
+        JsonArray put = new JsonArray(), dig = new JsonArray();
+        for (Stop s : e.jobs) {
+            JsonArray a = new JsonArray();
+            a.add(new JsonPrimitive(s.x));
+            a.add(new JsonPrimitive(s.y));
+            a.add(new JsonPrimitive(s.z));
+            if (s.kind == PLACE) {
+                a.add(new JsonPrimitive(net.minecraft.item.Item.field_150901_e.func_148750_c(s.item.func_77973_b())));
+                a.add(new JsonPrimitive(s.item.func_77960_j()));
+                put.add(a);
+            } else dig.add(a);
+        }
+        m.add("place", put);
+        m.add("dig", dig);
+        return m;
+    }
+
+    /** without the client mod: sparks over the planned blocks */
+    static void marks(WorldServer w, Errand e) {
+        for (Stop s : e.jobs)
+            w.func_147487_a(s.kind == PLACE ? "happyVillager" : "reddust", s.x + 0.5, s.y + 0.5, s.z + 0.5, 4, 0.3, 0.3, 0.3, 0.0);
+    }
+
+    /** one block of the plan: the item goes into the player's hand and the autopilot places it, or digs */
+    void work(Helper h, Errand e, Stop s, WorldServer w, EntityPlayerMP p) {
+        boolean air = w.func_147437_c(s.x, s.y, s.z);
+        if (e.phase == 0) {
+            if (s.kind == DIG && air || s.kind == PLACE && !air && !w.func_147439_a(s.x, s.y, s.z).func_149688_o().func_76222_j()) { next(e, s, p); return; }
+            if (!pilot(h, e)) { e.why = mod.msg("manual"); next(e, s, p); return; }
+            JsonObject m = ClientLink.msg(s.kind == PLACE ? "place" : "dig");
+            m.addProperty("x", s.x);
+            m.addProperty("y", s.y);
+            m.addProperty("z", s.z);
+            if (s.kind == PLACE) {
+                ItemStack[] inv = p.field_71071_by.field_70462_a;
+                int cur = p.field_71071_by.field_70461_c, at = -1;
+                for (int i = 0; i < inv.length && at < 0; i++) if (inv[i] != null && RecipeIndex.key(inv[i]).equals(RecipeIndex.key(s.item))) at = i;
+                if (at < 0) { e.why = mod.msg("short"); next(e, s, p); return; }
+                if (at >= 9) {   // into the hand, as the player would move it
+                    ItemStack x = inv[cur];
+                    inv[cur] = inv[at];
+                    inv[at] = x;
+                    at = cur;
+                    Actions.sync(p);
+                }
+                m.addProperty("slot", at);
+            }
+            mod.link.send(p, m);
+            e.phase = 1;
+            e.since = e.ticks;
+            return;
+        }
+        boolean done = s.kind == PLACE ? !air : air;
+        if (done) { e.made++; next(e, s, p); return; }
+        if (e.ticks - e.since > (s.kind == PLACE ? 80 : 20 * 30)) {
+            AIGuide.LOG.info("errand for {}: could not {} at {} {} {}", h.player, s.kind == PLACE ? "place" : "dig", s.x, s.y, s.z);
+            e.failed++;
+            next(e, s, p);
+        }
+    }
+
+    void next(Errand e, Stop s, EntityPlayerMP p) {
+        e.route.poll();
+        e.phase = 0;
+        e.wait = 4;
+    }
+
+    void leadDone(Helper h, Errand e, EntityPlayerMP p, String why) {
         String done;
         if (why != null) done = mod.msg("gaveup") + " " + why;
+        else if (e.jobs != null) done = mod.msg("built") + " " + e.made + "/" + e.jobs.size() + (e.failed > 0 ? ", " + mod.msg("notbuilt") + " " + e.failed : "") + ".";
         else if (e.recipe != null) done = e.made > 0 ? mod.msg("crafted") + " " + e.made + " " + mod.lang.name(e.want) + "." : mod.msg("notcrafted") + " " + e.why;
         else done = mod.msg("leaddone");
+        if (p != null) {
+            mod.link.send(p, ClientLink.msg("stop"));
+            if (e.jobs != null) mod.link.send(p, ClientLink.msg("ghostclear"));
+        }
         mod.say(h.player, done);
         AIGuide.LOG.info("errand for {} (lead) done in {} s: {}", h.player, e.ticks / 20, done);
+    }
+
+    /** from the client mod: the player took the controls back, or the autopilot found no way */
+    void fromClient(String player, String t, JsonObject m) {
+        Helper h = helpers.get(player);
+        Errand e = h == null ? null : h.queue.peek();
+        if (e == null || !e.lead || e.manual) return;
+        String task = m.has("task") ? m.get("task").getAsString() : "";
+        if (t.equals("failed") && (task.equals("place") || task.equals("dig"))) {   // one block did not work: the rest goes on
+            AIGuide.LOG.info("errand for {}: {} failed: {}", player, task, m.has("why") ? m.get("why").getAsString() : "");
+            Stop s = e.route.peek();
+            if (s != null && (s.kind == PLACE || s.kind == DIG) && e.phase == 1) { e.failed++; next(e, s, null); }
+            return;
+        }
+        if (t.equals("cancel") || t.equals("failed")) {
+            e.manual = true;
+            e.shown = null;
+            AIGuide.LOG.info("errand for {}: autopilot {}{}", player, t, m.has("why") ? ": " + m.get("why").getAsString() : "");
+            mod.say(player, mod.msg(t.equals("cancel") ? "tookback" : "nopath"));
+        }
     }
 
     /** sparks from the player toward the point, and a column over it */

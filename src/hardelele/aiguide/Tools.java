@@ -57,6 +57,12 @@ class Tools {
                     + "then to the table, where it is crafted from their inventory (or your villager body collects, crafts and brings it, asking "
                     + "before it takes anything of theirs). One recipe level: the parts must exist. Only when the player asks for it.",
                     P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)", "how", "lead (the default: sparks lead the player, who walks there) or body (your villager body walks instead; only if the player asks you to go yourself)"));
+            a.add(tool("build", "Plan blocks to place and to dig near the player (up to 64, within 24 blocks). The plan is shown to them as "
+                    + "see-through blocks and they are asked; with their yes the autopilot of their client walks them and builds it with what "
+                    + "they carry. Coordinates are absolute: take them from player_status (where they stand and the block they face). Only "
+                    + "when the player asks you to build or dig something.", P, PD,
+                    "place", "one block a line: x y z item (item: an id from find_items, or a name); empty if none",
+                    "dig", "one block a line: x y z; empty if none"));
             a.add(tool("mark", "Show the player a block: a column of sparks over it for a while.", P, PD,
                     "x", "x", "y", "y", "z", "z", "seconds", "how long, 5-120"));
         }
@@ -143,11 +149,41 @@ class Tools {
 
     /** the tools that look at or act in the world around a player: on the server thread */
     String world(final String name, final JsonObject args, final String player) throws Exception {
-        final boolean act = name.equals("fetch") || name.equals("craft") || name.equals("mark");
+        final boolean act = name.equals("fetch") || name.equals("craft") || name.equals("mark") || name.equals("build");
         if (!name.equals("where_is") && !name.equals("storage_overview") && !name.equals("plan_crafting") && !act) return "unknown tool " + name;
         if (act && !mod.config.actions) return "Actions are switched off on this server.";
         final ItemStack item = args.has("item") ? resolve(str(args, "item")) : null;
         if (args.has("item") && item == null) return "No item '" + str(args, "item") + "'. Use find_items.";
+        final List<int[]> places = new ArrayList<int[]>(), digs = new ArrayList<int[]>();
+        final List<ItemStack> items = new ArrayList<ItemStack>();
+        if (name.equals("build")) {
+            for (String l : str(args, "place").split("[\\n;]+")) {
+                String[] w = l.trim().split("\\s+", 4);
+                if (w.length < 4) {
+                    if (l.trim().length() > 0) return "Bad place line '" + l + "': x y z item";
+                    continue;
+                }
+                ItemStack it = resolve(w[3]);
+                if (it == null) return "No item '" + w[3] + "'. Use find_items.";
+                try {
+                    places.add(new int[] { Integer.parseInt(w[0]), Integer.parseInt(w[1]), Integer.parseInt(w[2]) });
+                } catch (NumberFormatException e) {
+                    return "Bad place line '" + l + "': x y z item";
+                }
+                items.add(it);
+            }
+            for (String l : str(args, "dig").split("[\\n;]+")) {
+                String[] w = l.trim().split("[\\s,]+");
+                if (w.length < 3) continue;
+                try {
+                    digs.add(new int[] { Integer.parseInt(w[0]), Integer.parseInt(w[1]), Integer.parseInt(w[2]) });
+                } catch (NumberFormatException e) {
+                    return "Bad dig line '" + l + "': x y z";
+                }
+            }
+            if (places.isEmpty() && digs.isEmpty()) return "Nothing to build: give place and/or dig lines.";
+            if (places.size() + digs.size() > 64) return "Too much at once: up to 64 blocks.";
+        }
         return mod.onMain(new Callable<String>() {
             @Override public String call() {
                 EntityPlayerMP p = AIGuide.player(player);
@@ -164,6 +200,14 @@ class Tools {
                 if (name.equals("storage_overview")) return overview(p);
                 if (name.equals("plan_crafting"))
                     return new Planner(mod, mod.storage.totals(p, mod.config.storageRadius, true)).plan(item, count);
+                if (name.equals("build")) {
+                    List<int[]> all = new ArrayList<int[]>(places);
+                    all.addAll(digs);
+                    for (int[] c : all)
+                        if (p.func_70092_e(c[0] + 0.5, c[1] + 0.5, c[2] + 0.5) > 24 * 24)
+                            return "The block " + c[0] + " " + c[1] + " " + c[2] + " is more than 24 blocks from the player.";
+                    return mod.errands.build(p, places, items, digs);
+                }
                 if (name.equals("fetch")) return mod.errands.fetch(p, item, count, !str(args, "how").trim().equalsIgnoreCase("body"));
                 if (name.equals("craft")) return mod.errands.craft(p, item, count, !str(args, "how").trim().equalsIgnoreCase("body"));
                 return mod.actions.mark(p, num(args, "x", 0), num(args, "y", 0), num(args, "z", 0), num(args, "seconds", 30));
@@ -384,12 +428,34 @@ class Tools {
                 b.append("Player ").append(player).append(", dimension ").append(p.field_71093_bK).append(", at ")
                         .append((int) Math.floor(p.field_70165_t)).append(' ').append((int) Math.floor(p.field_70163_u)).append(' ')
                         .append((int) Math.floor(p.field_70161_v)).append(", health ").append((int) p.func_110143_aJ()).append("/20\n");
+                b.append("Facing ").append(facing(p)).append('\n');
                 b.append("Inventory: ").append(stacks(p.field_71071_by.field_70462_a)).append('\n');
                 b.append("Armor: ").append(stacks(p.field_71071_by.field_70460_b)).append('\n');
+                b.append(mod.link.has(player) ? "Has the client mod: autopilot and see-through plans work.\n"
+                        : "No client mod: the guide leads with sparks; plans show as sparks.\n");
                 b.append("Nearby (").append(mod.config.scanRadius).append(" blocks): ").append(nearby(p)).append('\n');
                 return b.toString();
             }
         });
+    }
+
+    static final String[] SIDES = { "bottom", "top", "north (-z)", "south (+z)", "west (-x)", "east (+x)" };
+
+    /** where the player looks: the compass direction and the block in reach (for "put it here") */
+    String facing(EntityPlayerMP p) {
+        String[] dirs = { "south (+z)", "west (-x)", "north (-z)", "east (+x)" };
+        String dir = dirs[net.minecraft.util.MathHelper.func_76128_c(p.field_70177_z * 4.0F / 360.0F + 0.5D) & 3];
+        double yaw = Math.toRadians(p.field_70177_z), pitch = Math.toRadians(p.field_70125_A);
+        double ex = p.field_70165_t, ey = p.field_70163_u + p.func_70047_e(), ez = p.field_70161_v;
+        double lx = -Math.sin(yaw) * Math.cos(pitch), ly = -Math.sin(pitch), lz = Math.cos(yaw) * Math.cos(pitch);
+        net.minecraft.util.MovingObjectPosition hit = p.field_70170_p.func_72933_a(net.minecraft.util.Vec3.func_72443_a(ex, ey, ez),
+                net.minecraft.util.Vec3.func_72443_a(ex + lx * 6, ey + ly * 6, ez + lz * 6));
+        if (hit == null || !"BLOCK".equals(String.valueOf(hit.field_72313_a))) return dir + ", at no block in reach";
+        int x = hit.field_72311_b, y = hit.field_72312_c, z = hit.field_72309_d;
+        Block bl = p.field_70170_p.func_147439_a(x, y, z);
+        Item i = Item.func_150898_a(bl);
+        String n = i == null ? bl.func_149739_a() : mod.lang.name(new ItemStack(i, 1, bl.func_149692_a(p.field_70170_p.func_72805_g(x, y, z))));
+        return dir + ", at " + n + " " + x + " " + y + " " + z + " (its " + SIDES[Math.max(0, Math.min(5, hit.field_72310_e))] + " side)";
     }
 
     String stacks(ItemStack[] inv) {

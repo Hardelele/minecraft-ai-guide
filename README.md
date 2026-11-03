@@ -25,6 +25,11 @@ model that looks things up in the running game instead of guessing:
   opens them, carries things to a crafting table, crafts one at a time and hands the result over. It takes
   nothing from the player's inventory without asking ("да" / "yes" in chat). It can also show a block with a
   column of sparks;
+- **AI Guide Client** (optional, `AIGuideClient-<version>.jar` in the players' `mods`): an autopilot that walks the
+  player's own character where the guide leads, opens the chests and the crafting table itself (the crafting
+  happens in the table's window), and builds plans: the guide shows blocks to place and dig as see-through
+  blocks, asks, and with a "yes" walks there and places and digs them. Any movement key gives the controls back.
+  Without it the guide leads with a trail of sparks and the player walks;
 - **your guides**: Markdown files you write for your server (`config/aiguide/knowledge`);
 - **the player's profile**: what they told about themselves (`/guide me ...`) and notes the assistant keeps.
 
@@ -126,6 +131,8 @@ configs). Use them as a start or as a model for your own; some facts are about t
 Python 3 and a JDK (8 or newer):
 
     python tools/setup_lib.py   # once: downloads Minecraft 1.7.10, Forge 1614, the MCP mappings into lib/
+    python tools/setup_mcp.py   # once, for the client mod: the same library with readable MCP names
+    python tools/build_client.py   # build/AIGuideClient-<version>.jar
     python tools/build.py       # build/AIGuide-<version>.jar
 
 There is no ForgeGradle: the code uses SRG names (`func_...`, `field_...`) and compiles against the vanilla

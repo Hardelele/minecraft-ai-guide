@@ -22,7 +22,7 @@ def tool(name):
 
 def main():
     version = re.search(r'VERSION = "([^"]+)"', open(os.path.join(ROOT, "src", "hardelele", "aiguide", "AIGuide.java"), encoding="utf8").read()).group(1)
-    jars = [os.path.join(LIB, j) for j in ("mc-forge-srg.jar", "gson-2.2.4.jar", "guava-17.0.jar", "log4j-api-2.0-beta9.jar")]
+    jars = [os.path.join(LIB, j) for j in ("mc-forge-srg.jar", "gson-2.2.4.jar", "guava-17.0.jar", "log4j-api-2.0-beta9.jar", "netty-all-4.0.10.Final.jar")]
     if not all(os.path.isfile(j) for j in jars):
         sys.exit("lib/ is not ready: run tools/setup_lib.py")
     shutil.rmtree(OUT, ignore_errors=True)

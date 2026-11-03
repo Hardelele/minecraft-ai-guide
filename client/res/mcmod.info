@@ -1,0 +1,9 @@
+[{
+  "modid": "aiguideclient",
+  "name": "AI Guide Client",
+  "description": "The client side of AI Guide: an autopilot that walks your character where the guide leads you, opens chests and the crafting table, places and digs the blocks of its plan, and draws the plan as see-through blocks. Any movement key gives the controls back. Needs AI Guide on the server.",
+  "version": "0.1",
+  "mcversion": "1.7.10",
+  "authorList": ["hardelele"],
+  "url": "https://github.com/Hardelele/minecraft-ai-guide"
+}]
