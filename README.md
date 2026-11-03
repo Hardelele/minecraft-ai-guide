@@ -20,8 +20,11 @@ model that looks things up in the running game instead of guessing:
   coordinates ("where is my copper?");
 - **planning**: "do I have enough for two of these?" unfolds the recipes down to what the player has and lists
   the steps in order and what is missing;
-- **hands**, only for what the player could do themselves and only when asked: bring things from the
-  inventories near them, craft at a crafting table from what they carry, show a block with a column of sparks;
+- **hands**, only for what the player could do themselves and only when asked. The guide has a body: a
+  villager with its name (players see it with nothing installed) that walks to the chests near the player,
+  opens them, carries things to a crafting table, crafts one at a time and hands the result over. It takes
+  nothing from the player's inventory without asking ("да" / "yes" in chat). It can also show a block with a
+  column of sparks;
 - **your guides**: Markdown files you write for your server (`config/aiguide/knowledge`);
 - **the player's profile**: what they told about themselves (`/guide me ...`) and notes the assistant keeps.
 

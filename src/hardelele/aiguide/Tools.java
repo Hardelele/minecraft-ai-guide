@@ -53,7 +53,7 @@ class Tools {
                     + " blocks): it walks to them, takes it and hands it over, which takes a while. Only when the player asks for it.",
                     P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)"));
             a.add(tool("craft", "Send your body to craft an item at a crafting table near the player: it collects the parts from the chests "
-                    + "near the player (and what is missing from the player's inventory), crafts and brings the result. One recipe level: "
+                    + "near the player (what is missing it asks the player for, and takes only with their yes), crafts and brings the result. One recipe level: "
                     + "the parts must exist. Only when the player asks for it.", P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)"));
             a.add(tool("mark", "Show the player a block: a column of sparks over it for a while.", P, PD,
                     "x", "x", "y", "y", "z", "z", "seconds", "how long, 5-120"));

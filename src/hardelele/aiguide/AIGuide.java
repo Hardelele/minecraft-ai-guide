@@ -118,6 +118,16 @@ public class AIGuide {
     @SubscribeEvent
     public void chat(ServerChatEvent e) {
         String m = e.message.trim();
+        String bare = m.startsWith(config.prefix) ? m.substring(config.prefix.length()) : m;
+        final String name = e.player.func_70005_c_();
+        final Boolean yes = Errands.reply(bare);
+        if (yes != null && errands.waiting(name)) {   // "да" / "нет" to the body's question
+            e.setCanceled(true);
+            mainQueue.add(new Runnable() {
+                @Override public void run() { errands.answer(name, yes); }
+            });
+            return;
+        }
         if (!m.startsWith(config.prefix) || m.length() <= config.prefix.length()) return;
         e.setCanceled(true);   // a question to the assistant is not for everybody
         String q = m.substring(config.prefix.length()).trim();
@@ -226,6 +236,10 @@ public class AIGuide {
         m("notable", "верстак убрали", "the crafting table is gone");
         m("short", "по дороге чего-то не хватило", "something was missing on the way");
         m("nogrid", "верстак не принял раскладку", "the crafting table did not take the layout");
+        m("ask", "Мне не хватает, а у тебя есть:", "I am short of what you carry:");
+        m("askhow", "Взять у тебя? Напиши в чат «да» или «нет».", "May I take it? Say \"yes\" or \"no\" in chat.");
+        m("declined", "Хорошо, не беру. Вещи вернул в сундуки; положи недостающее в сундук рядом и попроси снова.",
+                "All right, I do not take it. The things went back to the chests; put what is missing into a chest nearby and ask again.");
         m("oponly", "Это команда для операторов сервера.", "This command is for server operators.");
     }
 

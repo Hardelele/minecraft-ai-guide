@@ -102,6 +102,12 @@ class SelfTest {
                 for (int i = 0; i < 24; i++) {
                     try {
                         Thread.sleep(5000);
+                        if (mod.errands.waiting(name)) {
+                            AIGuide.LOG.info("selftest answers yes to the body's question");
+                            mod.mainQueue.add(new Runnable() {
+                                @Override public void run() { mod.errands.answer(name, Boolean.TRUE.equals(Errands.reply("да"))); }
+                            });
+                        }
                         Errands.Helper h = mod.errands.helpers.get(name);
                         String where = h == null || h.body == null ? "no body" : String.format("body at %.1f %.1f %.1f, %d errand(s), %s",
                                 h.body.field_70165_t, h.body.field_70163_u, h.body.field_70161_v, h.queue.size(), h.body.func_94057_bL());

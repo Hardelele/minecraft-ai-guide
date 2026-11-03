@@ -2,7 +2,6 @@ package hardelele.aiguide;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -60,7 +59,8 @@ class Errands {
         final LinkedList<Stop> route = new LinkedList<Stop>();
         final List<ItemStack> bag = new ArrayList<ItemStack>();
         final List<Stop> sources = new ArrayList<Stop>();
-        int dim, made, step, ticks, wait;
+        int dim, made, step, ticks, wait, askedAt;
+        volatile int asked;   // 0 not yet, 1 waiting, 2 yes, 3 no (the chat thread answers)
         boolean open;
         String why = "";
     }
@@ -69,14 +69,14 @@ class Errands {
     static final class Helper {
         String player;
         GuideBody body;
-        final LinkedList<Errand> queue = new LinkedList<Errand>();
+        final java.util.concurrent.ConcurrentLinkedDeque<Errand> queue = new java.util.concurrent.ConcurrentLinkedDeque<Errand>();
         int idle, stuck, offline;
         double best = Double.MAX_VALUE;
         int lastCheck;
     }
 
     final AIGuide mod;
-    final Map<String, Helper> helpers = new HashMap<String, Helper>();
+    final Map<String, Helper> helpers = new java.util.concurrent.ConcurrentHashMap<String, Helper>();
 
     Errands(AIGuide mod) {
         this.mod = mod;
@@ -288,8 +288,31 @@ class Errands {
         } else if (s.kind == FROM_PLAYER) {
             if (!walk(h, p.field_70165_t, p.field_70163_u, p.field_70161_v, 2.5)) return true;
             b.func_70625_a(p, 30, 30);
-            List<String> took = new ArrayList<String>();
             ItemStack[] inv = p.field_71071_by.field_70462_a;
+            if (e.asked == 0) {   // the player's things are taken only with a yes
+                List<String> lack = new ArrayList<String>();
+                for (Need n : e.needs) {
+                    int have = 0;
+                    for (ItemStack c : inv) if (n.matches(c)) have += c.field_77994_a;
+                    if (n.left > 0 && have > 0) lack.add(Math.min(n.left, have) + " " + mod.lang.name(firstMatch(inv, n)));
+                }
+                if (lack.isEmpty()) { e.route.poll(); return true; }
+                mod.say(h.player, mod.msg("ask") + " " + String.join(", ", lack) + ". " + mod.msg("askhow"));
+                e.asked = 1;
+                e.askedAt = e.ticks;
+                return true;
+            }
+            if (e.asked == 1) {
+                if (e.ticks - e.askedAt > 20 * 60) e.asked = 3;
+                else return true;
+            }
+            if (e.asked == 3) {
+                h.queue.poll();
+                stash(h, e);
+                mod.say(h.player, mod.msg("declined"));
+                return true;
+            }
+            List<String> took = new ArrayList<String>();
             for (Need n : e.needs)
                 for (int i = 0; i < inv.length && n.left > 0; i++)
                     if (n.matches(inv[i])) {
@@ -322,6 +345,33 @@ class Errands {
             h.queue.poll();
         }
         return true;
+    }
+
+    static ItemStack firstMatch(ItemStack[] inv, Need n) {
+        for (ItemStack s : inv) if (n.matches(s)) return s;
+        return null;
+    }
+
+    /** the body waits for a yes or a no from this player; called on the server thread */
+    boolean waiting(String player) {
+        Helper h = helpers.get(player);
+        Errand e = h == null ? null : h.queue.peek();
+        return e != null && e.asked == 1;
+    }
+
+    void answer(String player, boolean yes) {
+        Helper h = helpers.get(player);
+        Errand e = h == null ? null : h.queue.peek();
+        if (e != null && e.asked == 1) e.asked = yes ? 2 : 3;
+    }
+
+    static final java.util.regex.Pattern YES = java.util.regex.Pattern.compile("(?iu)(да|ага|бери|возьми|давай|можно|ок|ok|yes|y|sure)[.!]*"),
+            NO = java.util.regex.Pattern.compile("(?iu)(нет|не надо|не бери|no|n|nope)[.!]*");
+
+    /** a chat line as an answer: TRUE yes, FALSE no, null not an answer */
+    static Boolean reply(String line) {
+        String t = line.trim();
+        return YES.matcher(t).matches() ? Boolean.TRUE : NO.matcher(t).matches() ? Boolean.FALSE : null;
     }
 
     /** at a chest: open it, take what is needed, close it */
