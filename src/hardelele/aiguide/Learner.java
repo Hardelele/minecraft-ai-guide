@@ -43,10 +43,17 @@ class Learner {
         return out;
     }
 
+    /** a guide of its own, or one that covers it: the mod (or its family, "BuildCraft|Builders" -> buildcraft) named in a guide's opening */
     boolean hasGuide(ModContainer m) {
         if (new File(mod.knowledge.dir, file(m)).isFile()) return true;
-        String n = m.getName().toLowerCase();
-        for (String t : mod.knowledge.titles.values()) if (t.toLowerCase().startsWith(n)) return true;
+        String id = m.getModId().toLowerCase().split("\\|")[0].replaceAll("[^a-z0-9]", "");
+        String name = m.getName().toLowerCase().replaceAll("^bc ", "buildcraft ").replaceAll("[^a-z0-9]", "");
+        for (String topic : mod.knowledge.titles.keySet()) {
+            String head = mod.knowledge.read(topic);
+            if (head == null) continue;
+            head = head.substring(0, Math.min(400, head.length())).toLowerCase().replaceAll("[^a-z0-9]", "");
+            if ((id.length() > 3 && head.contains(id)) || (name.length() > 3 && head.contains(name))) return true;
+        }
         return false;
     }
 

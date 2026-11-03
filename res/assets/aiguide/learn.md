@@ -16,6 +16,8 @@ Rules:
 - Item and block names exactly as in the data (they are in the players' language). Never translate or invent names.
 - No recipe lists: the assistant looks recipes up in the game. Mention a recipe only when it is a trap or unusual.
 - What the server's config changes (things switched off, different numbers) matters more than defaults: say it.
+  Before writing that something explodes, burns, breaks or costs something, check the config: servers often turn
+  such things off, and a wrong warning scares players away from a working machine.
 - What you know about this mod from elsewhere may be for another version. Keep only what the data supports or what you
   are sure holds for this version; leave out what you are unsure of. A shorter true guide beats a longer wrong one.
 
