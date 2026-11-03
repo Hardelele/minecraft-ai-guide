@@ -86,6 +86,8 @@ class GuideCommand extends CommandBase {
             boolean force = a[a.length - 1].equalsIgnoreCase("force");
             mod.learner.start(which, force, s instanceof EntityPlayerMP ? s.func_70005_c_() : null);
             if (!(s instanceof EntityPlayerMP)) tell(s, "learning in the background, see the log");
+        } else if ((sub.equals("learn") || sub.equals("reload")) && a.length <= 3) {
+            tell(s, "§7" + mod.msg("oponly"));   // not a question to the model
         } else if (s instanceof EntityPlayerMP) {
             mod.ask((EntityPlayerMP) s, join(a, 0));
         }

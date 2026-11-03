@@ -49,10 +49,12 @@ class Tools {
         a.add(tool("remember", "Save a short note about this player for later conversations (their goals, progress, what they have built). Use sparingly.",
                 P, PD, "note", "one sentence"));
         if (mod.config.actions) {
-            a.add(tool("fetch", "Bring an item from the inventories near the player (" + mod.config.fetchRadius + " blocks) into their inventory. "
-                    + "Only when the player asks for it.", P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)"));
-            a.add(tool("craft", "Craft an item at the crafting table from what the player carries (one recipe level: craft the parts first). "
-                    + "Only when the player asks for it.", P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)"));
+            a.add(tool("fetch", "Send your body (a villager) to bring an item from the chests near the player (" + mod.config.fetchRadius
+                    + " blocks): it walks to them, takes it and hands it over, which takes a while. Only when the player asks for it.",
+                    P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)"));
+            a.add(tool("craft", "Send your body to craft an item at a crafting table near the player: it collects the parts from the chests "
+                    + "near the player (and what is missing from the player's inventory), crafts and brings the result. One recipe level: "
+                    + "the parts must exist. Only when the player asks for it.", P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)"));
             a.add(tool("mark", "Show the player a block: a column of sparks over it for a while.", P, PD,
                     "x", "x", "y", "y", "z", "z", "seconds", "how long, 5-120"));
         }
@@ -160,8 +162,8 @@ class Tools {
                 if (name.equals("storage_overview")) return overview(p);
                 if (name.equals("plan_crafting"))
                     return new Planner(mod, mod.storage.totals(p, mod.config.storageRadius, true)).plan(item, count);
-                if (name.equals("fetch")) return mod.actions.fetch(p, item, count);
-                if (name.equals("craft")) return mod.actions.craft(p, item, count);
+                if (name.equals("fetch")) return mod.errands.fetch(p, item, count);
+                if (name.equals("craft")) return mod.errands.craft(p, item, count);
                 return mod.actions.mark(p, num(args, "x", 0), num(args, "y", 0), num(args, "z", 0), num(args, "seconds", 30));
             }
         });

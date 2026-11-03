@@ -37,7 +37,7 @@ import org.apache.logging.log4j.Logger;
  */
 @Mod(modid = AIGuide.ID, name = "AI Guide", version = AIGuide.VERSION, acceptableRemoteVersions = "*")
 public class AIGuide {
-    public static final String ID = "aiguide", VERSION = "0.2";
+    public static final String ID = "aiguide", VERSION = "0.3";
     static final Logger LOG = LogManager.getLogger("AIGuide");
 
     GuideConfig config;
@@ -49,6 +49,7 @@ public class AIGuide {
     Assistant assistant;
     Storage storage;
     Actions actions;
+    Errands errands;
     McpServer mcp;
     Learner learner;
     int ticks;
@@ -65,6 +66,7 @@ public class AIGuide {
         assistant = new Assistant(this);
         storage = new Storage(this);
         actions = new Actions(this);
+        errands = new Errands(this);
         mcp = new McpServer(this);
         learner = new Learner(this);
     }
@@ -72,6 +74,7 @@ public class AIGuide {
     @Mod.EventHandler
     public void serverStopping(FMLServerStoppingEvent e) {
         mcp.stop();
+        errands.stopAll();
     }
 
     @Mod.EventHandler
@@ -130,8 +133,14 @@ public class AIGuide {
     @SubscribeEvent
     public void tick(TickEvent.ServerTickEvent e) {
         if (e.phase != TickEvent.Phase.START) return;
-        for (Runnable r; (r = mainQueue.poll()) != null; ) r.run();
+        for (Runnable r; (r = mainQueue.poll()) != null; )
+            try {
+                r.run();
+            } catch (Exception ex) {   // never takes the server down
+                LOG.warn("guide task failed", ex);
+            }
         if (++ticks % 10 == 0) actions.tick();
+        errands.tick();
     }
 
     /** runs on the server thread and waits for the result (for tools that look at the world) */
@@ -157,7 +166,7 @@ public class AIGuide {
         mainQueue.add(new Runnable() {
             @Override public void run() {
                 EntityPlayerMP p = player(player);
-                if (p == null) {
+                if (p == null || p.field_71135_a == null) {   // offline, or the self-test's fake player
                     LOG.info("answer for {} (offline): {}", player, String.join(" / ", lines));
                     return;
                 }
@@ -206,6 +215,18 @@ public class AIGuide {
         m("forgot", "Разговор забыт (профиль остался).", "Conversation forgotten (the profile stays).");
         m("reloaded", "Гиды и промпт перечитаны.", "Guides and the prompt reloaded.");
         m("page", "страница", "page");
+        m("took", "Беру у тебя:", "Taking from you:");
+        m("brought", "Принёс:", "Brought:");
+        m("handed", "Отдал тебе:", "Handed you:");
+        m("crafted", "Скрафтил", "Crafted");
+        m("notcrafted", "Не вышло скрафтить:", "Could not craft it:");
+        m("nothing", "В сундуках этого уже не оказалось.", "It was not in the chests any more.");
+        m("gaveup", "Бросил поручение, вещи вернул:", "Gave the errand up, the things went back:");
+        m("left", "ты ушёл", "you left");
+        m("notable", "верстак убрали", "the crafting table is gone");
+        m("short", "по дороге чего-то не хватило", "something was missing on the way");
+        m("nogrid", "верстак не принял раскладку", "the crafting table did not take the layout");
+        m("oponly", "Это команда для операторов сервера.", "This command is for server operators.");
     }
 
     static void m(String k, String ru, String en) {

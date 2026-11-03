@@ -1,6 +1,5 @@
 package hardelele.aiguide;
 
-import cpw.mods.fml.common.FMLCommonHandler;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -9,16 +8,14 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.inventory.Container;
 import net.minecraft.inventory.InventoryCrafting;
 import net.minecraft.item.ItemStack;
-import net.minecraft.item.crafting.CraftingManager;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.fluids.FluidContainerRegistry;
 import net.minecraftforge.fluids.FluidStack;
 import net.minecraftforge.fluids.IFluidContainerItem;
 
 /**
- * The assistant's hands, only for what the player could do themselves: bring things from the
- * inventories near them, craft at a crafting table from what they carry, point at a block.
- * Everything runs on the server thread.
+ * The assistant's hands, only for what the player could do themselves: what the crafting table
+ * makes of a set of stacks, and pointing at a block. Everything runs on the server thread.
  */
 class Actions {
     static final Container DUMMY = new Container() {
@@ -39,98 +36,14 @@ class Actions {
         this.mod = mod;
     }
 
-    // ---- fetch ---------------------------------------------------------------------------
-
-    String fetch(EntityPlayerMP p, ItemStack want, int count) {
-        String k = RecipeIndex.key(want);
-        int got = 0;
-        List<String> from = new ArrayList<String>();
-        for (Storage.Place pl : mod.storage.around(p, mod.config.fetchRadius)) {
-            if (pl.inv == null || !pl.counts.containsKey(k)) continue;
-            int before = got;
-            for (int i = 0; i < pl.inv.func_70302_i_() && got < count; i++) {
-                ItemStack s = pl.inv.func_70301_a(i);
-                if (s == null || !RecipeIndex.key(s).equals(k)) continue;
-                ItemStack taken = pl.inv.func_70298_a(i, Math.min(count - got, s.field_77994_a));
-                if (taken == null) continue;
-                int n = taken.field_77994_a;
-                p.field_71071_by.func_70441_a(taken);
-                if (taken.field_77994_a > 0) {   // the player's inventory is full: put the rest back
-                    ItemStack back = pl.inv.func_70301_a(i);
-                    if (back == null) pl.inv.func_70299_a(i, taken);
-                    else back.field_77994_a += taken.field_77994_a;
-                    got += n - taken.field_77994_a;
-                    pl.inv.func_70296_d();
-                    sync(p);
-                    return result(want, got, count, from) + " The player's inventory is full.";
-                }
-                got += n;
-            }
-            pl.inv.func_70296_d();
-            if (got > before) from.add((got - before) + " from " + pl.name + " at " + pl.x + " " + pl.y + " " + pl.z);
-            if (got >= count) break;
-        }
-        sync(p);
-        return result(want, got, count, from);
-    }
-
-    String result(ItemStack want, int got, int count, List<String> from) {
-        String n = mod.lang.name(want);
-        if (got == 0) return "No " + n + " in the inventories within " + mod.config.fetchRadius + " blocks (AE2 networks are not taken from).";
-        return "Moved " + got + " of " + count + " " + n + " into the player's inventory: " + String.join("; ", from) + ".";
-    }
+    // fetching and crafting are walked by the guide's body: see Errands
 
     static void sync(EntityPlayerMP p) {
         p.field_71070_bA.func_75142_b();
     }
 
-    // ---- craft ---------------------------------------------------------------------------
-
-    String craft(EntityPlayerMP p, ItemStack want, int count) {
-        String k = RecipeIndex.key(want);
-        List<RecipeIndex.Recipe> recipes = new ArrayList<RecipeIndex.Recipe>();
-        for (RecipeIndex.Recipe r : mod.recipes.producing(want)) {
-            boolean refill = false;   // recharging or repairing the thing itself is not making it
-            for (RecipeIndex.Ingredient g : r.in) for (ItemStack o : g.options) if (RecipeIndex.key(o).equals(k)) refill = true;
-            if (r.machine.equals("crafting") && !refill) recipes.add(r);
-        }
-        if (recipes.isEmpty()) return mod.lang.name(want) + " is not made at a crafting table: use how_to_make for the machine.";
-        int made = 0, times = 0;
-        String why = "";
-        while (made < count && times < 64) {
-            boolean ok = false;
-            for (RecipeIndex.Recipe r : recipes) {
-                int[] slots = new int[9];
-                InventoryCrafting g = grid(p, r, slots);
-                if (g == null) { why = "the player does not carry everything for it"; continue; }
-                ItemStack out = CraftingManager.func_77594_a().func_82787_a(g, p.field_70170_p);
-                if (out == null || !RecipeIndex.key(out).equals(k)) { why = "the grid did not give it"; continue; }
-                FMLCommonHandler.instance().firePlayerCraftingEvent(p, out, g);
-                for (int i = 0; i < 9; i++) {
-                    if (slots[i] < 0) continue;
-                    ItemStack s = p.field_71071_by.field_70462_a[slots[i]];
-                    ItemStack left = containerItem(s);
-                    s.field_77994_a--;
-                    if (s.field_77994_a <= 0) p.field_71071_by.field_70462_a[slots[i]] = null;
-                    if (left != null) give(p, left);
-                }
-                made += out.field_77994_a;
-                give(p, out);
-                ok = true;
-                break;
-            }
-            times++;
-            if (!ok) break;
-        }
-        sync(p);
-        String n = mod.lang.name(want);
-        if (made == 0) return "Could not craft " + n + ": " + why + ". Use plan_crafting to see what is missing.";
-        return "Crafted " + made + " " + n + (made < count ? " (wanted " + count + ": " + why + ")" : "") + ".";
-    }
-
-    /** the recipe laid out from the player's inventory, or null if they lack something; slots[] gets the inventory slot of each cell */
-    InventoryCrafting grid(EntityPlayerMP p, RecipeIndex.Recipe r, int[] slots) {
-        ItemStack[] inv = p.field_71071_by.field_70462_a;
+    /** the recipe laid out from a set of stacks, or null if something lacks; slots[] gets the stack index of each cell */
+    static InventoryCrafting grid(ItemStack[] inv, RecipeIndex.Recipe r, int[] slots) {
         int[] left = new int[inv.length];
         for (int i = 0; i < inv.length; i++) left[i] = inv[i] == null ? 0 : inv[i].field_77994_a;
         InventoryCrafting g = new InventoryCrafting(DUMMY, 3, 3);
