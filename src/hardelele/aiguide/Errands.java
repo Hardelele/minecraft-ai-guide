@@ -24,7 +24,7 @@ import net.minecraft.world.WorldServer;
  */
 class Errands {
     static final int CHEST = 0, FROM_PLAYER = 1, TABLE = 2, BRING = 3;
-    static final int TIMEOUT = 20 * 180, IDLE = 20 * 40, WAIT_OFFLINE = 20 * 60;
+    static final int TIMEOUT = 20 * 180, LEAD_TIMEOUT = 20 * 600, IDLE = 20 * 40, WAIT_OFFLINE = 20 * 60;
 
     /** what to collect: an exact item (fetch) or a recipe's ingredient (craft) */
     static final class Need {
@@ -61,7 +61,8 @@ class Errands {
         final List<Stop> sources = new ArrayList<Stop>();
         int dim, made, step, ticks, wait, askedAt;
         volatile int asked;   // 0 not yet, 1 waiting, 2 yes, 3 no (the chat thread answers)
-        boolean open;
+        boolean open, lead;   // lead: no body, the player walks the route along a trail of sparks
+        Stop shown;
         String why = "";
     }
 
@@ -84,8 +85,9 @@ class Errands {
 
     // ---- planning (from the tools) ----------------------------------------------------------
 
-    String fetch(EntityPlayerMP p, ItemStack want, int count) {
+    String fetch(EntityPlayerMP p, ItemStack want, int count, boolean lead) {
         Errand e = new Errand();
+        e.lead = lead;
         e.player = p.func_70005_c_();
         e.want = want;
         e.count = count;
@@ -97,12 +99,12 @@ class Errands {
         n.left = count;   // counted again on the way
         String name = mod.lang.name(want);
         if (found == 0) return "No " + name + " in the inventories within " + mod.config.fetchRadius + " blocks (AE2 networks are not taken from).";
-        e.route.add(new Stop(BRING, 0, 0, 0));
+        if (!lead) e.route.add(new Stop(BRING, 0, 0, 0));
         e.what = Math.min(found, count) + " " + name;
         return start(p, e, "bring " + e.what + (found < count ? " (only " + found + " are around)" : ""));
     }
 
-    String craft(EntityPlayerMP p, ItemStack want, int count) {
+    String craft(EntityPlayerMP p, ItemStack want, int count, boolean lead) {
         String k = RecipeIndex.key(want);
         int[] table = table(p);
         if (table == null) return "No crafting table within " + mod.config.fetchRadius + " blocks of the player: the guide crafts at a table, like a player. Ask them to put one down.";
@@ -134,6 +136,7 @@ class Errands {
                     + " blocks). Use plan_crafting to see the whole chain.";
         }
         Errand e = new Errand();
+        e.lead = lead;
         e.player = p.func_70005_c_();
         e.want = want;
         e.recipe = best;
@@ -146,18 +149,26 @@ class Errands {
             n.left = cells[i] * bestTimes;
             e.needs.add(n);
         }
+        if (lead)   // what the player carries is not fetched
+            for (Need n : e.needs) n.left = Math.max(0, n.left - carried(p, n));
         chests(p, e);
         boolean fromPlayer = false;
         for (Need n : e.needs) if (n.left > 0) fromPlayer = true;
         for (Need n : e.needs) n.left = 0;   // counted again on the way
         for (int i = 0, j = 0; i < best.in.size(); i++) if (cells[i] > 0) e.needs.get(j++).left = cells[i] * bestTimes;
-        if (fromPlayer) e.route.add(new Stop(FROM_PLAYER, 0, 0, 0));
+        if (fromPlayer && !lead) e.route.add(new Stop(FROM_PLAYER, 0, 0, 0));
         e.route.add(new Stop(TABLE, table[0], table[1], table[2]));
-        e.route.add(new Stop(BRING, 0, 0, 0));
+        if (!lead) e.route.add(new Stop(BRING, 0, 0, 0));
         int per = Math.max(1, best.out.get(0).stack.field_77994_a);
         e.what = bestTimes * per + " " + name;
         return start(p, e, "craft " + e.what + (bestTimes * per < count ? " (only enough for " + bestTimes * per + ")" : "")
                 + " at the crafting table at " + table[0] + " " + table[1] + " " + table[2]);
+    }
+
+    static int carried(EntityPlayerMP p, Need n) {
+        int have = 0;
+        for (ItemStack c : p.field_71071_by.field_70462_a) if (n.matches(c)) have += c.field_77994_a;
+        return have;
     }
 
     /** grid cells each ingredient takes in one craft */
@@ -234,7 +245,17 @@ class Errands {
         int ahead = h.queue.size();
         h.queue.add(e);
         int stops = 0;
-        for (Stop s : e.route) if (s.kind == CHEST) stops++;
+        StringBuilder r = new StringBuilder();
+        for (Stop s : e.route) {
+            if (s.kind == CHEST) stops++;
+            r.append(r.length() > 0 ? " -> " : "").append(new String[] { "chest", "player's inventory", "table", "player" }[s.kind])
+                    .append(s.kind == CHEST || s.kind == TABLE ? " " + s.x + " " + s.y + " " + s.z : "");
+        }
+        AIGuide.LOG.info("errand for {}{}: {}; from {}: {}", e.player, e.lead ? " (lead)" : "", what, at(p.field_70165_t, p.field_70163_u, p.field_70161_v), r);
+        if (e.lead)
+            return "A trail of sparks leads the player to " + what + ": " + r + ". When they reach a chest, what is needed goes into their inventory"
+                    + (e.recipe != null ? "; at the crafting table it is crafted from their inventory" : "")
+                    + ". The guide tells each next point in chat. Tell the player to follow the sparks; do not call this again for it.";
         return "The guide's body (a villager named " + mod.config.assistantName + ") is on its way to " + what + ": it walks to "
                 + stops + " chest(s)" + (e.recipe != null ? ", the crafting table" : "") + " and then to the player, about "
                 + (10 + stops * 6 + e.times) + " s" + (ahead > 0 ? ", after " + ahead + " errand(s) before it" : "")
@@ -273,6 +294,7 @@ class Errands {
             return true;
         }
         h.offline = 0;
+        if (e.lead) return lead(h, e, p);
         if (h.body == null || h.body.field_70128_L || !h.body.field_70170_p.field_72996_f.contains(h.body) || h.body.field_70170_p != p.field_70170_p) appear(h, p);
         if (++e.ticks > TIMEOUT) { h.queue.poll(); abort(h, e, "it took too long"); return true; }
         if (e.wait > 0) { e.wait--; return true; }
@@ -347,6 +369,120 @@ class Errands {
         return true;
     }
 
+    // ---- leading: the player walks, the sparks show the way ------------------------------------
+
+    boolean lead(Helper h, Errand e, EntityPlayerMP p) {
+        if (++e.ticks > LEAD_TIMEOUT) { h.queue.poll(); leadDone(h, e, mod.msg("toolong")); return true; }
+        if (e.wait > 0) { e.wait--; return true; }
+        Stop s = e.route.peek();
+        if (s == null) { h.queue.poll(); leadDone(h, e, null); return true; }
+        WorldServer w = (WorldServer) p.field_70170_p;
+        double cx = s.x + 0.5, cy = s.y + 0.5, cz = s.z + 0.5, d = Math.sqrt(p.func_70092_e(cx, cy, cz));
+        if (e.shown != s) {
+            e.shown = s;
+            mod.say(h.player, mod.msg(s.kind == CHEST ? "gochest" : "gotable") + " " + s.x + " " + s.y + " " + s.z + " (" + (int) d + " " + mod.msg("blocks") + ")");
+        }
+        if (d > 3.5) {
+            if (e.ticks % 10 == 0) trail(w, p, cx, cy, cz);
+            return true;
+        }
+        if (s.kind == CHEST) leadChest(h, e, s, w, p);
+        else leadBench(h, e, s, w, p);
+        return true;
+    }
+
+    /** the player is at the chest: the lid goes up and what is needed goes to them */
+    void leadChest(Helper h, Errand e, Stop s, WorldServer w, EntityPlayerMP p) {
+        TileEntity t = w.func_147438_o(s.x, s.y, s.z);
+        IInventory inv = t instanceof IInventory ? (IInventory) t : null;
+        if (!e.open) {
+            AIGuide.LOG.info("errand for {}: the player is at the chest {} {} {} after {} s", h.player, s.x, s.y, s.z, e.ticks / 20);
+            if (inv != null) inv.func_70295_k_();
+            e.open = true;
+            e.wait = 12;
+            return;
+        }
+        List<ItemStack> got = new ArrayList<ItemStack>();
+        if (inv != null) {
+            for (Need n : e.needs) {
+                int want = e.recipe != null ? n.left - carried(p, n) : n.left;
+                for (int i = 0; i < inv.func_70302_i_() && want > 0; i++) {
+                    ItemStack c = inv.func_70301_a(i);
+                    if (!n.matches(c)) continue;
+                    ItemStack g = inv.func_70298_a(i, Math.min(want, c.field_77994_a));
+                    if (g == null) continue;
+                    want -= g.field_77994_a;
+                    if (e.recipe == null) n.left -= g.field_77994_a;
+                    got.add(g.func_77946_l());
+                    Actions.give(p, g);
+                }
+            }
+            inv.func_70296_d();
+            inv.func_70305_f();
+        }
+        Actions.sync(p);
+        if (!got.isEmpty()) {
+            List<String> l = new ArrayList<String>();
+            for (ItemStack g : merged(got)) l.add(g.field_77994_a + " " + mod.lang.name(g));
+            mod.say(h.player, mod.msg("gotit") + " " + String.join(", ", l));
+        }
+        e.open = false;
+        e.route.poll();
+        e.wait = 8;
+    }
+
+    /** the player is at the crafting table: one craft a second from their inventory */
+    void leadBench(Helper h, Errand e, Stop s, WorldServer w, EntityPlayerMP p) {
+        if (w.func_147439_a(s.x, s.y, s.z) != Blocks.field_150462_ai) { e.why = mod.msg("notable"); e.route.poll(); return; }
+        if (e.step == 0 && e.made == 0 && e.why.isEmpty()) AIGuide.LOG.info("errand for {}: the player is at the table after {} s", h.player, e.ticks / 20);
+        if (e.step < e.times) {
+            ItemStack[] inv = p.field_71071_by.field_70462_a;
+            int[] slots = new int[9];
+            InventoryCrafting g = Actions.grid(inv, e.recipe, slots);
+            ItemStack out = g == null ? null : CraftingManager.func_77594_a().func_82787_a(g, w);
+            if (out == null || !RecipeIndex.key(out).equals(RecipeIndex.key(e.want))) {
+                e.why = g == null ? mod.msg("short") : mod.msg("nogrid");
+                e.step = e.times;
+            } else {
+                FMLCommonHandler.instance().firePlayerCraftingEvent(p, out, g);
+                for (int i = 0; i < 9; i++) {
+                    if (slots[i] < 0 || inv[slots[i]] == null) continue;
+                    ItemStack c = Actions.containerItem(inv[slots[i]]);
+                    if (--inv[slots[i]].field_77994_a <= 0) inv[slots[i]] = null;
+                    if (c != null) Actions.give(p, c);
+                }
+                Actions.give(p, out.func_77946_l());
+                Actions.sync(p);
+                e.made += out.field_77994_a;
+                e.step++;
+                w.func_72908_a(s.x + 0.5, s.y + 0.5, s.z + 0.5, "dig.wood", 0.6f, 1.0f);
+                w.func_147487_a("crit", s.x + 0.5, s.y + 1.1, s.z + 0.5, 6, 0.25, 0.1, 0.25, 0.05);
+                e.wait = 20;
+                return;
+            }
+        }
+        e.route.poll();
+        e.wait = 6;
+    }
+
+    void leadDone(Helper h, Errand e, String why) {
+        String done;
+        if (why != null) done = mod.msg("gaveup") + " " + why;
+        else if (e.recipe != null) done = e.made > 0 ? mod.msg("crafted") + " " + e.made + " " + mod.lang.name(e.want) + "." : mod.msg("notcrafted") + " " + e.why;
+        else done = mod.msg("leaddone");
+        mod.say(h.player, done);
+        AIGuide.LOG.info("errand for {} (lead) done in {} s: {}", h.player, e.ticks / 20, done);
+    }
+
+    /** sparks from the player toward the point, and a column over it */
+    static void trail(WorldServer w, EntityPlayerMP p, double x, double y, double z) {
+        double sx = p.field_70165_t, sy = p.field_70163_u + 1.2, sz = p.field_70161_v;
+        double dx = x - sx, dy = y - sy, dz = z - sz, d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        for (double t = 1.5; t < Math.min(d - 0.5, 24); t += 1.2)
+            w.func_147487_a("happyVillager", sx + dx * t / d, sy + dy * t / d, sz + dz * t / d, 1, 0.05, 0.05, 0.05, 0.0);
+        for (int k = 1; k <= 4; k++) w.func_147487_a("witchMagic", x, y + k * 0.6, z, 2, 0.1, 0.1, 0.1, 0.0);
+    }
+
     static ItemStack firstMatch(ItemStack[] inv, Need n) {
         for (ItemStack s : inv) if (n.matches(s)) return s;
         return null;
@@ -379,6 +515,7 @@ class Errands {
         TileEntity t = w.func_147438_o(s.x, s.y, s.z);
         IInventory inv = t instanceof IInventory ? (IInventory) t : null;
         if (!e.open) {
+            AIGuide.LOG.info("errand for {}: at the chest {} {} {} after {} s", h.player, s.x, s.y, s.z, e.ticks / 20);
             if (inv != null) inv.func_70295_k_();   // the lid goes up
             e.open = true;
             e.wait = 12;
@@ -408,6 +545,7 @@ class Errands {
     void bench(Helper h, Errand e, Stop s, WorldServer w, EntityPlayerMP p) {
         if (w.func_147439_a(s.x, s.y, s.z) != Blocks.field_150462_ai) { e.why = mod.msg("notable"); e.route.poll(); return; }
         String k = RecipeIndex.key(e.want);
+        if (e.step == 0 && e.made == 0 && e.why.isEmpty()) AIGuide.LOG.info("errand for {}: at the table after {} s", h.player, e.ticks / 20);
         if (e.step < e.times) {
             ItemStack[] inv = e.bag.toArray(new ItemStack[0]);
             int[] slots = new int[9];
@@ -452,11 +590,17 @@ class Errands {
             h.stuck = 0;
             return true;
         }
-        if (b.func_70661_as().func_75500_f() || ++h.lastCheck % 20 == 0) b.func_70661_as().func_75492_a(x, y, z, 0.8);
-        if (h.lastCheck % 40 == 0) {
+        int t = ++h.lastCheck;
+        if (t % 10 == 0 && b.func_70661_as().func_75500_f() || t % 20 == 0) {
+            boolean ok = b.func_70661_as().func_75492_a(x, y, z, 0.8);
+            if (!ok && t % 40 == 0) AIGuide.LOG.info("errand for {}: no path from {} to {} ({} blocks)", h.player, at(b), at(x, y, z), (int) d);
+        }
+        if (t % 40 == 0) {
             if (d < h.best - 0.5) { h.best = d; h.stuck = 0; }
-            else if (++h.stuck >= 4) {   // 8 s without getting closer: a wall, a hole, a closed room
+            else if (++h.stuck >= 3) {   // 6 s without getting closer: a wall, a hole, a closed room, pipes
                 int[] spot = spot(b.field_70170_p, (int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z));
+                AIGuide.LOG.info("errand for {}: stuck at {}, {} blocks from {}: {}", h.player, at(b), (int) d, at(x, y, z),
+                        spot == null ? "no place to stand there" : "steps over to " + spot[0] + " " + spot[1] + " " + spot[2]);
                 if (spot != null) {
                     puff(b);
                     b.func_70634_a(spot[0] + 0.5, spot[1], spot[2] + 0.5);
@@ -467,6 +611,14 @@ class Errands {
             }
         }
         return false;
+    }
+
+    static String at(GuideBody b) {
+        return at(b.field_70165_t, b.field_70163_u, b.field_70161_v);
+    }
+
+    static String at(double x, double y, double z) {
+        return (int) Math.floor(x) + " " + (int) Math.floor(y) + " " + (int) Math.floor(z);
     }
 
     static boolean far(GuideBody b, double x, double y, double z, double d) {

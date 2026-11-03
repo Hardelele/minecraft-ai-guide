@@ -49,12 +49,14 @@ class Tools {
         a.add(tool("remember", "Save a short note about this player for later conversations (their goals, progress, what they have built). Use sparingly.",
                 P, PD, "note", "one sentence"));
         if (mod.config.actions) {
-            a.add(tool("fetch", "Send your body (a villager) to bring an item from the chests near the player (" + mod.config.fetchRadius
-                    + " blocks): it walks to them, takes it and hands it over, which takes a while. Only when the player asks for it.",
-                    P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)"));
-            a.add(tool("craft", "Send your body to craft an item at a crafting table near the player: it collects the parts from the chests "
-                    + "near the player (what is missing it asks the player for, and takes only with their yes), crafts and brings the result. One recipe level: "
-                    + "the parts must exist. Only when the player asks for it.", P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)"));
+            a.add(tool("fetch", "Get an item from the chests near the player (" + mod.config.fetchRadius
+                    + " blocks) the way a player would: a trail of sparks leads the player to each chest and the things go to them there "
+                    + "(or your villager body walks and brings them). Only when the player asks for it.",
+                    P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)", "how", "lead (the default: sparks lead the player, who walks there) or body (your villager body walks instead; only if the player asks you to go yourself)"));
+            a.add(tool("craft", "Craft an item at a crafting table near the player: sparks lead the player to the chests with the parts and "
+                    + "then to the table, where it is crafted from their inventory (or your villager body collects, crafts and brings it, asking "
+                    + "before it takes anything of theirs). One recipe level: the parts must exist. Only when the player asks for it.",
+                    P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)", "how", "lead (the default: sparks lead the player, who walks there) or body (your villager body walks instead; only if the player asks you to go yourself)"));
             a.add(tool("mark", "Show the player a block: a column of sparks over it for a while.", P, PD,
                     "x", "x", "y", "y", "z", "z", "seconds", "how long, 5-120"));
         }
@@ -162,8 +164,8 @@ class Tools {
                 if (name.equals("storage_overview")) return overview(p);
                 if (name.equals("plan_crafting"))
                     return new Planner(mod, mod.storage.totals(p, mod.config.storageRadius, true)).plan(item, count);
-                if (name.equals("fetch")) return mod.errands.fetch(p, item, count);
-                if (name.equals("craft")) return mod.errands.craft(p, item, count);
+                if (name.equals("fetch")) return mod.errands.fetch(p, item, count, !str(args, "how").trim().equalsIgnoreCase("body"));
+                if (name.equals("craft")) return mod.errands.craft(p, item, count, !str(args, "how").trim().equalsIgnoreCase("body"));
                 return mod.actions.mark(p, num(args, "x", 0), num(args, "y", 0), num(args, "z", 0), num(args, "seconds", 30));
             }
         });

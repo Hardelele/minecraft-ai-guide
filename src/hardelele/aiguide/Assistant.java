@@ -90,6 +90,7 @@ class Assistant {
                 // a model that still wants a tool may write the call as text: that is not for the chat
                 text = text.replaceAll("(?s)<[｜|]+DSML.*", "").replaceAll("(?s)<tool_call>.*", "").trim();
                 AIGuide.LOG.info("{} asked ({} lookups, {} ms): {}", player, calls, System.currentTimeMillis() - t0, question);
+                if (mod.config.logTools) AIGuide.LOG.info("answer to {}: {}", player, text.replace('\n', ' '));
                 remember(player, user, message("assistant", text));
                 return text.isEmpty() ? mod.msg("empty") : text;
             }

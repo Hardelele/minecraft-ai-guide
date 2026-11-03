@@ -92,16 +92,25 @@ class SelfTest {
         w.func_147449_b(x - 4, y, z + 3, Blocks.field_150462_ai);
         log("fetch 4 plates", mod.tools.call("fetch", "{\"item\":\"Оловянная пластина\",\"count\":4}", "selftest"));
         log("craft the coolant cell", mod.tools.call("craft", "{\"item\":\"IC2:reactorCoolantSimple@1\",\"count\":1}", "selftest"));
-        log("craft sticks", mod.tools.call("craft", "{\"item\":\"minecraft:stick@0\",\"count\":4}", "selftest"));
+        log("craft sticks (body)", mod.tools.call("craft", "{\"item\":\"minecraft:stick@0\",\"count\":4,\"how\":\"body\"}", "selftest"));
         log("craft a diamond block (nothing for it)", mod.tools.call("craft", "{\"item\":\"minecraft:diamond_block@0\",\"count\":1}", "selftest"));
         log("mark the chest", mod.tools.call("mark", "{\"x\":" + (x + 2) + ",\"y\":" + y + ",\"z\":" + z + ",\"seconds\":10}", "selftest"));
         // the body walks: look again when it should be done
         final String name = p.func_70005_c_();
         Thread t = new Thread(new Runnable() {
             @Override public void run() {
-                for (int i = 0; i < 24; i++) {
+                for (int i = 0; i < 40; i++) {
                     try {
                         Thread.sleep(5000);
+                        final Errands.Helper lh = mod.errands.helpers.get(name);
+                        final Errands.Errand le = lh == null ? null : lh.queue.peek();
+                        if (le != null && le.lead && le.route.peek() != null) {   // the player follows the sparks
+                            final Errands.Stop st = le.route.peek();
+                            AIGuide.LOG.info("selftest player walks to {} {} {}", st.x, st.y, st.z);
+                            mod.mainQueue.add(new Runnable() {
+                                @Override public void run() { AIGuide.player(name).func_70107_b(st.x + 1.5, st.y, st.z + 0.5); }
+                            });
+                        }
                         if (mod.errands.waiting(name)) {
                             AIGuide.LOG.info("selftest answers yes to the body's question");
                             mod.mainQueue.add(new Runnable() {

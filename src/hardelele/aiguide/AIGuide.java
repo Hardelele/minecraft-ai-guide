@@ -240,6 +240,12 @@ public class AIGuide {
         m("askhow", "Взять у тебя? Напиши в чат «да» или «нет».", "May I take it? Say \"yes\" or \"no\" in chat.");
         m("declined", "Хорошо, не беру. Вещи вернул в сундуки; положи недостающее в сундук рядом и попроси снова.",
                 "All right, I do not take it. The things went back to the chests; put what is missing into a chest nearby and ask again.");
+        m("gochest", "Иди по искрам к сундуку", "Follow the sparks to the chest at");
+        m("gotable", "Теперь по искрам к верстаку", "Now follow the sparks to the crafting table at");
+        m("blocks", "бл.", "blocks");
+        m("gotit", "Взял из сундука тебе:", "Took from the chest for you:");
+        m("leaddone", "Готово, всё у тебя.", "Done, you have it all.");
+        m("toolong", "слишком долго", "it took too long");
         m("oponly", "Это команда для операторов сервера.", "This command is for server operators.");
     }
 
