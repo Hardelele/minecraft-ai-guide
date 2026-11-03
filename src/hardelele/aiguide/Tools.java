@@ -1,0 +1,432 @@
+package hardelele.aiguide;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Callable;
+import net.minecraft.block.Block;
+import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
+import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.World;
+import net.minecraftforge.fluids.Fluid;
+import net.minecraftforge.fluids.FluidRegistry;
+import net.minecraftforge.fluids.FluidStack;
+
+/** What the assistant may look up, and the text it gets back. */
+class Tools {
+    static final int MAX_RESULT = 4000, MAX_GUIDE = 20000;   // characters of one tool result
+    final AIGuide mod;
+    List<String[]> names;   // key, lowercase searchable text, display name
+
+    Tools(AIGuide mod) {
+        this.mod = mod;
+    }
+
+    /** the tools; over MCP the ones about a player take the player's name */
+    JsonArray definitions(boolean mcp) {
+        JsonArray a = new JsonArray();
+        String P = mcp ? "player" : null, PD = "the player's name";
+        a.add(tool("find_items", "Find items and blocks by name (in any language, part of the name works). Returns ids for the other tools.",
+                "query", "a name or a part of it"));
+        a.add(tool("how_to_make", "All the ways to get an item: crafting grids, furnace, machines of every mod.",
+                "item", "an id from find_items, or a name"));
+        a.add(tool("what_uses", "What an item is used for: recipes that take it.", "item", "an id from find_items, or a name"));
+        a.add(tool("read_guide", "Read a guide from the knowledge base (the list is in the system prompt).", "topic", "the guide's name"));
+        a.add(tool("player_status", "The player's inventory, position, health and the machines and blocks with tile entities around them.", P, PD));
+        a.add(tool("where_is", "Where an item lies: the player's inventory, chests, barrels, drawers, machines and AE2 networks around them, with coordinates.",
+                P, PD, "item", "an id from find_items, or a name"));
+        a.add(tool("storage_overview", "The inventories and AE2 networks around the player and what is most in each.", P, PD));
+        a.add(tool("plan_crafting", "Can the player make it? Unfolds the item into recipes down to what they have (inventory and storage around) "
+                + "and lists the steps in order and what is missing.", P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)"));
+        a.add(tool("remember", "Save a short note about this player for later conversations (their goals, progress, what they have built). Use sparingly.",
+                P, PD, "note", "one sentence"));
+        if (mod.config.actions) {
+            a.add(tool("fetch", "Bring an item from the inventories near the player (" + mod.config.fetchRadius + " blocks) into their inventory. "
+                    + "Only when the player asks for it.", P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)"));
+            a.add(tool("craft", "Craft an item at the crafting table from what the player carries (one recipe level: craft the parts first). "
+                    + "Only when the player asks for it.", P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)"));
+            a.add(tool("mark", "Show the player a block: a column of sparks over it for a while.", P, PD,
+                    "x", "x", "y", "y", "z", "z", "seconds", "how long, 5-120"));
+        }
+        if (mcp) {
+            a.add(tool("list_players", "The players online, with their positions."));
+            a.add(tool("tell", "Write to a player in chat, as the assistant.", P, PD, "text", "the message"));
+        }
+        return a;
+    }
+
+    JsonArray definitions() {
+        return definitions(false);
+    }
+
+    static JsonObject tool(String name, String description, String... params) {
+        JsonObject f = new JsonObject();
+        f.addProperty("name", name);
+        f.addProperty("description", description);
+        JsonObject p = new JsonObject(), props = new JsonObject();
+        JsonArray req = new JsonArray();
+        p.addProperty("type", "object");
+        for (int i = 0; i + 1 < params.length; i += 2) {
+            if (params[i] == null) continue;
+            JsonObject s = new JsonObject();
+            s.addProperty("type", "string");
+            s.addProperty("description", params[i + 1]);
+            props.add(params[i], s);
+            req.add(new com.google.gson.JsonPrimitive(params[i]));
+        }
+        p.add("properties", props);
+        p.add("required", req);
+        f.add("parameters", p);
+        JsonObject t = new JsonObject();
+        t.addProperty("type", "function");
+        t.add("function", f);
+        return t;
+    }
+
+    /** runs a tool; player is the asking player, or null over MCP (then it comes in the arguments) */
+    String call(String name, String argsJson, String player) {
+        JsonObject args;
+        try {
+            args = new JsonParser().parse(argsJson == null || argsJson.isEmpty() ? "{}" : argsJson).getAsJsonObject();
+        } catch (Exception e) {
+            args = new JsonObject();
+        }
+        if (player == null) player = str(args, "player");
+        String r;
+        try {
+            if (name.equals("find_items")) r = findItems(str(args, "query"));
+            else if (name.equals("how_to_make")) r = recipes(str(args, "item"), true);
+            else if (name.equals("what_uses")) r = recipes(str(args, "item"), false);
+            else if (name.equals("player_status")) r = playerStatus(player);
+            else if (name.equals("read_guide")) {
+                String t = mod.knowledge.read(str(args, "topic"));
+                r = t == null ? "No such guide. Guides: " + mod.knowledge.titles.keySet() : t;
+            } else if (name.equals("remember")) {
+                mod.profiles.addNote(player, str(args, "note"), mod.config.maxNotes);
+                r = "saved";
+            } else if (name.equals("list_players")) r = listPlayers();
+            else if (name.equals("tell")) {
+                mod.say(player, str(args, "text"));
+                r = "sent";
+            } else r = world(name, args, player);
+        } catch (Exception e) {
+            AIGuide.LOG.warn("tool " + name + " failed", e);
+            r = "error: " + e;
+        }
+        int max = name.equals("read_guide") ? MAX_GUIDE : MAX_RESULT;   // a guide is read whole
+        return r.length() > max ? r.substring(0, max) + "\n... (cut)" : r;
+    }
+
+    static String str(JsonObject o, String k) {
+        return o.has(k) && !o.get(k).isJsonNull() ? o.get(k).getAsString() : "";
+    }
+
+    static int num(JsonObject o, String k, int def) {
+        try {
+            return (int) Math.round(Double.parseDouble(str(o, k).trim()));
+        } catch (Exception e) {
+            return def;
+        }
+    }
+
+    /** the tools that look at or act in the world around a player: on the server thread */
+    String world(final String name, final JsonObject args, final String player) throws Exception {
+        final boolean act = name.equals("fetch") || name.equals("craft") || name.equals("mark");
+        if (!name.equals("where_is") && !name.equals("storage_overview") && !name.equals("plan_crafting") && !act) return "unknown tool " + name;
+        if (act && !mod.config.actions) return "Actions are switched off on this server.";
+        final ItemStack item = args.has("item") ? resolve(str(args, "item")) : null;
+        if (args.has("item") && item == null) return "No item '" + str(args, "item") + "'. Use find_items.";
+        return mod.onMain(new Callable<String>() {
+            @Override public String call() {
+                EntityPlayerMP p = AIGuide.player(player);
+                if (p == null) return "The player '" + player + "' is offline.";
+                int count = Math.max(1, Math.min(2304, num(args, "count", 1)));
+                if (name.equals("where_is")) {
+                    int inInv = 0;
+                    for (ItemStack s : p.field_71071_by.field_70462_a)
+                        if (s != null && RecipeIndex.key(s).equals(RecipeIndex.key(item))) inInv += s.field_77994_a;
+                    String w = mod.storage.where(p, item, mod.config.storageRadius);
+                    return mod.lang.name(item) + ": " + (inInv > 0 ? inInv + " in the player's inventory. " : "none in the inventory. ")
+                            + (w.isEmpty() ? "None in the storage within " + mod.config.storageRadius + " blocks." : "Around:\n" + w);
+                }
+                if (name.equals("storage_overview")) return overview(p);
+                if (name.equals("plan_crafting"))
+                    return new Planner(mod, mod.storage.totals(p, mod.config.storageRadius, true)).plan(item, count);
+                if (name.equals("fetch")) return mod.actions.fetch(p, item, count);
+                if (name.equals("craft")) return mod.actions.craft(p, item, count);
+                return mod.actions.mark(p, num(args, "x", 0), num(args, "y", 0), num(args, "z", 0), num(args, "seconds", 30));
+            }
+        });
+    }
+
+    String overview(EntityPlayerMP p) {
+        StringBuilder b = new StringBuilder();
+        List<Storage.Place> places = mod.storage.around(p, mod.config.storageRadius);
+        if (places.isEmpty()) return "No inventories within " + mod.config.storageRadius + " blocks.";
+        for (Storage.Place pl : places) {
+            if (b.length() > MAX_RESULT - 200) { b.append("... more places\n"); break; }
+            List<Map.Entry<String, Integer>> l = new ArrayList<Map.Entry<String, Integer>>(pl.counts.entrySet());
+            Collections.sort(l, new Comparator<Map.Entry<String, Integer>>() {
+                @Override public int compare(Map.Entry<String, Integer> x, Map.Entry<String, Integer> y) { return y.getValue() - x.getValue(); }
+            });
+            b.append("- ").append(pl.name).append(" at ").append(pl.x).append(' ').append(pl.y).append(' ').append(pl.z)
+                    .append(" (").append((int) pl.dist).append(" blocks): ");
+            for (int i = 0; i < l.size() && i < 6; i++)
+                b.append(i > 0 ? ", " : "").append(mod.lang.name(pl.stacks.get(l.get(i).getKey()))).append(" x").append(l.get(i).getValue());
+            if (l.size() > 6) b.append(", +").append(l.size() - 6).append(" more kinds");
+            b.append('\n');
+        }
+        return b.toString();
+    }
+
+    String listPlayers() throws Exception {
+        return mod.onMain(new Callable<String>() {
+            @Override public String call() {
+                StringBuilder b = new StringBuilder();
+                for (Object o : net.minecraft.server.MinecraftServer.func_71276_C().func_71203_ab().field_72404_b) {
+                    EntityPlayerMP p = (EntityPlayerMP) o;
+                    b.append(p.func_70005_c_()).append(": dimension ").append(p.field_71093_bK).append(", at ")
+                            .append((int) p.field_70165_t).append(' ').append((int) p.field_70163_u).append(' ').append((int) p.field_70161_v).append('\n');
+                }
+                return b.length() == 0 ? "Nobody is online." : b.toString();
+            }
+        });
+    }
+
+    // ---- items --------------------------------------------------------------------------
+
+    static String norm(String s) {
+        return s.toLowerCase().replace('ё', 'е').replaceAll("§.", "");
+    }
+
+    synchronized List<String[]> names() {
+        if (names == null) {
+            names = new ArrayList<String[]>();
+            for (Map.Entry<String, ItemStack> e : mod.recipes.stacks.entrySet()) {
+                String n = mod.lang.name(e.getValue());
+                String en;
+                try {
+                    en = e.getValue().func_82833_r();
+                } catch (RuntimeException x) {
+                    en = "";
+                }
+                names.add(new String[] { e.getKey(), norm(n + " | " + en + " | " + e.getKey()), n });
+            }
+            for (Fluid f : FluidRegistry.getRegisteredFluids().values()) {
+                String n = fluid(new FluidStack(f, 0)).replaceAll(" 0 mB$", "") + " (fluid)";
+                names.add(new String[] { RecipeIndex.fluidKey(f), norm(n + " | " + f.getName()), n });
+            }
+        }
+        return names;
+    }
+
+    List<String[]> search(String q, int max) {
+        final String n = norm(q.trim());
+        final String[] words = n.split("\\s+");
+        List<String[]> hits = new ArrayList<String[]>();
+        final Map<String[], Integer> score = new LinkedHashMap<String[], Integer>();
+        for (String[] e : names()) {
+            String name = norm(e[2]);
+            int s = name.equals(n) ? 100 : name.startsWith(n) ? 80 : e[1].contains(n) ? 60 : 0;
+            if (s == 0) {
+                boolean all = true;
+                for (String w : words) if (!e[1].contains(w.length() > 4 ? w.substring(0, w.length() - 1) : w)) all = false;
+                if (all) s = 40;
+            }
+            if (s > 0) {
+                hits.add(e);
+                score.put(e, s * 1000 - name.length());
+            }
+        }
+        Collections.sort(hits, new Comparator<String[]>() {
+            @Override public int compare(String[] a, String[] b) { return score.get(b) - score.get(a); }
+        });
+        return hits.subList(0, Math.min(max, hits.size()));
+    }
+
+    String findItems(String q) {
+        List<String[]> hits = search(q, 15);
+        if (hits.isEmpty()) return "Nothing found for '" + q + "'. Try a shorter part of the name or another language.";
+        StringBuilder b = new StringBuilder();
+        for (String[] h : hits) b.append(h[2]).append("  [").append(h[0]).append("]\n");
+        return b.toString();
+    }
+
+    ItemStack resolve(String item) {
+        ItemStack s = mod.recipes.stacks.get(item.trim());
+        if (s != null) return s;
+        if (!item.contains("@") && mod.recipes.stacks.containsKey(item.trim() + "@0")) return mod.recipes.stacks.get(item.trim() + "@0");
+        List<String[]> hits = search(item, 1);
+        return hits.isEmpty() ? null : mod.recipes.stacks.get(hits.get(0)[0]);
+    }
+
+    String recipes(String item, boolean make) {
+        String id = item.trim();
+        if (!id.startsWith("fluid:")) {   // a fluid by its name ("Хладагент" is both an item and a fluid in IC2): show both
+            String fl = null;
+            for (String[] h : search(id, 8)) if (h[0].startsWith("fluid:") && norm(h[2]).startsWith(norm(id))) { fl = h[0]; break; }
+            if (fl != null) {
+                ItemStack s = resolve(id);
+                return recipes(fl, make) + (s == null ? "" : "\n" + recipes(RecipeIndex.key(s), make));
+            }
+        }
+        if (id.startsWith("fluid:")) {
+            Fluid f = FluidRegistry.getFluid(id.substring(6));
+            if (f == null) return "No fluid '" + id + "'.";
+            List<RecipeIndex.Recipe> l = make ? mod.recipes.producing(id) : mod.recipes.using(id);
+            String name = fluid(new FluidStack(f, 0)).replaceAll(" 0 mB$", "") + " (fluid) [" + id + "]";
+            if (l.isEmpty()) return name + ": " + (make ? "no machine recipe makes it (it may be pumped from the world or come from a mod's own machine)."
+                    : "no recipe the guide can see takes it.");
+            StringBuilder b = new StringBuilder(name + ", " + l.size() + (make ? " way(s) to make:\n" : " use(s):\n"));
+            for (RecipeIndex.Recipe r : l) {
+                if (b.length() > MAX_RESULT - 300) break;
+                b.append(make ? text(r) : textUse(r)).append('\n');
+            }
+            return b.toString();
+        }
+        ItemStack s = resolve(item);
+        if (s == null) return "No item '" + item + "'. Use find_items.";
+        List<RecipeIndex.Recipe> l = make ? mod.recipes.producing(s) : mod.recipes.using(s);
+        String name = mod.lang.name(s);
+        if (l.isEmpty()) return name + " [" + RecipeIndex.key(s) + "]: " + (make
+                ? "no recipe found. It is likely found in the world, dropped by mobs, or made in a way the guide cannot see (in-world crafting, rituals, AE2 inscriber)."
+                : "not used in any recipe the guide can see.");
+        StringBuilder b = new StringBuilder(name + " [" + RecipeIndex.key(s) + "], " + l.size() + (make ? " way(s) to make:\n" : " use(s):\n"));
+        int shown = 0;
+        for (RecipeIndex.Recipe r : l) {
+            if (b.length() > MAX_RESULT - 300) { b.append("... and ").append(l.size() - shown).append(" more\n"); break; }
+            b.append(make ? text(r) : textUse(r)).append('\n');
+            shown++;
+        }
+        return b.toString();
+    }
+
+    String machine(String m) {
+        return m.equals("crafting") ? "Crafting table (Верстак)" : m.equals("furnace") ? "Furnace (Печь)" : m;
+    }
+
+    String text(RecipeIndex.Recipe r) {
+        StringBuilder b = new StringBuilder("- ").append(machine(r.machine)).append(": ");
+        for (int i = 0; i < r.in.size(); i++) {
+            if (i > 0) b.append(", ");
+            if (r.grid != null) b.append((char) ('A' + i)).append('=');
+            b.append(ingredient(r.in.get(i)));
+        }
+        if (r.grid != null) {
+            b.append("; grid ");
+            for (int i = 0; i < r.grid.length; i++) b.append(i > 0 ? "/" : "").append(r.grid[i]);
+        }
+        b.append(" -> ");
+        for (int i = 0; i < r.out.size(); i++) b.append(i > 0 ? " + " : "").append(output(r.out.get(i)));
+        if (!r.notes.isEmpty()) b.append(" ").append(r.notes);
+        return b.toString();
+    }
+
+    String textUse(RecipeIndex.Recipe r) {
+        StringBuilder b = new StringBuilder("- ").append(machine(r.machine)).append(" -> ");
+        for (int i = 0; i < r.out.size(); i++) b.append(i > 0 ? " + " : "").append(output(r.out.get(i)));
+        return b.toString();
+    }
+
+    String ingredient(RecipeIndex.Ingredient g) {
+        StringBuilder b = new StringBuilder();
+        if (g.fluid != null) b.append(fluid(g.fluid)).append(g.options.isEmpty() ? "" : " in ");
+        if (g.fluid != null && !g.options.isEmpty() && cpw.mods.fml.common.Loader.isModLoaded("modglue"))
+            b.append("any container holding it (Mod Glue), e.g. ");
+        if (!g.options.isEmpty()) {
+            b.append(mod.lang.name(g.options.get(0)));
+            if (g.ore != null) b.append(" (any ").append(g.ore).append(")");
+            else if (g.options.size() > 1) b.append(" or ").append(mod.lang.name(g.options.get(1)))
+                    .append(g.options.size() > 2 ? " or other" : "");
+        }
+        int n = g.amount > 1 ? g.amount : g.options.isEmpty() ? 1 : Math.max(1, g.options.get(0).field_77994_a);
+        if (n > 1) b.append(" x").append(n);
+        return b.toString();
+    }
+
+    String output(RecipeIndex.Output o) {
+        String s = o.stack != null ? mod.lang.name(o.stack) + (o.stack.field_77994_a > 1 ? " x" + o.stack.field_77994_a : "")
+                : o.fluid != null ? fluid(o.fluid) : "?";
+        return o.note == null ? s : s + " (" + o.note + ")";
+    }
+
+    String fluid(FluidStack f) {
+        Fluid fl = f.getFluid();
+        String n = fl == null ? "?" : fl.getName();
+        if (fl != null) {
+            String u = fl.getUnlocalizedName();
+            for (String k : new String[] { u, u + ".name", Lang.strip(u), Lang.strip(u) + ".name" })
+                if (mod.lang.names.containsKey(k)) { n = mod.lang.names.get(k); break; }
+        }
+        return n + " " + f.amount + " mB";
+    }
+
+    // ---- the player ---------------------------------------------------------------------
+
+    String playerStatus(final String player) throws Exception {
+        return mod.onMain(new Callable<String>() {
+            @Override public String call() {
+                EntityPlayerMP p = AIGuide.player(player);
+                if (p == null) return "The player is offline.";
+                StringBuilder b = new StringBuilder();
+                b.append("Player ").append(player).append(", dimension ").append(p.field_71093_bK).append(", at ")
+                        .append((int) Math.floor(p.field_70165_t)).append(' ').append((int) Math.floor(p.field_70163_u)).append(' ')
+                        .append((int) Math.floor(p.field_70161_v)).append(", health ").append((int) p.func_110143_aJ()).append("/20\n");
+                b.append("Inventory: ").append(stacks(p.field_71071_by.field_70462_a)).append('\n');
+                b.append("Armor: ").append(stacks(p.field_71071_by.field_70460_b)).append('\n');
+                b.append("Nearby (").append(mod.config.scanRadius).append(" blocks): ").append(nearby(p)).append('\n');
+                return b.toString();
+            }
+        });
+    }
+
+    String stacks(ItemStack[] inv) {
+        Map<String, Integer> count = new LinkedHashMap<String, Integer>();
+        for (ItemStack s : inv) {
+            if (s == null || s.func_77973_b() == null) continue;
+            String n = mod.lang.name(s);
+            count.put(n, (count.containsKey(n) ? count.get(n) : 0) + s.field_77994_a);
+        }
+        return count.isEmpty() ? "empty" : join(count);
+    }
+
+    String nearby(EntityPlayerMP p) {
+        World w = p.field_70170_p;
+        int r = mod.config.scanRadius;
+        Map<String, Integer> count = new LinkedHashMap<String, Integer>();
+        for (Object o : new ArrayList<Object>(w.field_147482_g)) {
+            TileEntity t = (TileEntity) o;
+            if (Math.abs(t.field_145851_c - p.field_70165_t) > r || Math.abs(t.field_145848_d - p.field_70163_u) > r
+                    || Math.abs(t.field_145849_e - p.field_70161_v) > r) continue;
+            Block b = w.func_147439_a(t.field_145851_c, t.field_145848_d, t.field_145849_e);
+            Item i = Item.func_150898_a(b);
+            String n;
+            if (i == null) n = b.func_149739_a();
+            else {
+                int meta = w.func_72805_g(t.field_145851_c, t.field_145848_d, t.field_145849_e);
+                ItemStack s = new ItemStack(i, 1, i.func_77614_k() ? b.func_149692_a(meta) : 0);
+                n = mod.lang.name(s);
+            }
+            count.put(n, (count.containsKey(n) ? count.get(n) : 0) + 1);
+        }
+        return count.isEmpty() ? "nothing" : join(count);
+    }
+
+    static String join(Map<String, Integer> m) {
+        StringBuilder b = new StringBuilder();
+        for (Map.Entry<String, Integer> e : m.entrySet()) {
+            if (b.length() > 0) b.append(", ");
+            b.append(e.getKey());
+            if (e.getValue() > 1) b.append(" x").append(e.getValue());
+        }
+        return b.toString();
+    }
+}

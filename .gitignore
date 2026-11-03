@@ -1,0 +1,9 @@
+# downloaded by tools/setup_lib.py: Minecraft and Forge are not ours to share
+lib/
+build/
+out/
+*.jar
+# secrets of a running server
+api.key
+mcp.token
+knowledge/
