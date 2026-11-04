@@ -506,7 +506,7 @@ class Day1 {
             for (Agent a : c.agents) if (Skills.count(a.bag, Items.stone_pickaxe, -1) == 0) without++;
             if (crewStone) for (int k = 0; k < Math.min(without, c.agents.size() - 1); k++)   // a stone pickaxe for each of the others who has none, made by himself
                 c.board.post("stone pickaxe", () -> new TaskBoard.Seq(new Take(c, COBBLE, 3), new Take(c, Items.stick, 2), new Skills.Craft(Items.stone_pickaxe, -1, 1)))
-                        .need(a -> Skills.count(a.bag, Items.stone_pickaxe, -1) == 0).wants(COBBLE, 3).wants(Items.stick, 2).prio(2).at(t[0], t[1], t[2]);
+                        .need(a -> Skills.count(a.bag, Items.stone_pickaxe, -1) == 0).wants(COBBLE, 3).wants(Items.stick, 2).prio(2).at(t[0], t[1], t[2]).optional();
         }
     }
 

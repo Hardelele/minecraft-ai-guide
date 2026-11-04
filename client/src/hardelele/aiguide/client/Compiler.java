@@ -236,7 +236,7 @@ class Compiler {
      */
     static void afterPhase(Crew c, Crew.Phase ph, WorldServer w, boolean outOfTime) {
         List<TaskBoard.Card> failed = new ArrayList<TaskBoard.Card>();
-        for (TaskBoard.Card k : c.board.cards) if (k.phase == ph && k.state == TaskBoard.State.FAILED) failed.add(k);
+        for (TaskBoard.Card k : c.board.cards) if (k.phase == ph && k.state == TaskBoard.State.FAILED && !k.optional) failed.add(k);
         if (failed.isEmpty() && !outOfTime) { succeeded.add(ph.kind); return; }
         StringBuilder what = new StringBuilder();
         for (TaskBoard.Card k : failed) what.append(what.length() > 0 ? ", " : "").append(k.kind).append(" -> ").append(k.last);

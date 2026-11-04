@@ -99,6 +99,11 @@ public class Director {
     @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent e) {
         if (e.phase != TickEvent.Phase.END) return;
+        if (mc.currentScreen instanceof net.minecraft.client.gui.GuiIngameMenu) {   // the window lost focus (someone plays in front): the world must not pause
+            mc.displayGuiScreen(null);
+            mc.setIngameNotInFocus();
+            event("unpaused: the pause menu came up (focus lost)");
+        }
         look();
         camera();
         if (pchopBg && mc.thePlayer != null) pchopTick();

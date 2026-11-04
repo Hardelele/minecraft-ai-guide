@@ -416,11 +416,39 @@ public class Crew {
     /** walk (run) to a point with the game's path finder */
     static class GoTo implements Task {
         double x, y, z, within;
-        int ticks, tries, lastTry = -100, direct;
+        int ticks, tries, lastTry = -100, direct, digs;
+        Break br;
         GoTo(double x, double y, double z, double within) { this.x = x; this.y = y; this.z = z; this.within = within; }
+
+        /** the next block to dig on a way out toward the target: headroom, then the step ahead (natural blocks only) */
+        int[] dig(Agent a, WorldServer w) {
+            int x0 = MathHelper.floor_double(a.posX), y0 = MathHelper.floor_double(a.posY + 0.01), z0 = MathHelper.floor_double(a.posZ);
+            double dx = x - a.posX, dz = z - a.posZ;
+            int sx = Math.abs(dx) >= Math.abs(dz) ? (dx > 0 ? 1 : -1) : 0, sz = sx == 0 ? (dz > 0 ? 1 : -1) : 0;
+            int fx = x0 + sx, fz = z0 + sz;
+            int[][] cells = y > a.posY + 0.9
+                    ? new int[][] { { x0, y0 + 2, z0 }, { fx, y0 + 1, fz }, { fx, y0 + 2, fz } }   // up: room to jump, then the step's air
+                    : new int[][] { { fx, y0, fz }, { fx, y0 + 1, fz } };                          // level or down: the way ahead
+            for (int[] c : cells) {
+                Block b = w.getBlock(c[0], c[1], c[2]);
+                if (soft(w, c[0], c[1], c[2]) || b.getMaterial().isLiquid()) continue;
+                if (!(b == Blocks.stone || b == Blocks.dirt || b == Blocks.grass || b == Blocks.gravel || b == Blocks.sand || b == Blocks.leaves
+                        || b == Blocks.leaves2 || b instanceof net.minecraft.block.BlockOre || b == Blocks.clay || b == Blocks.sandstone)) return null;   // nothing built, no bedrock
+                return c;
+            }
+            return null;   // the way is open: walk it
+        }
+
         public Result step(Agent a, WorldServer w) {
             ticks++;
             if (dist(a, x, y, z) <= within) { a.getNavigator().clearPathEntity(); return Result.OK; }
+            if (br != null) {   // digging a way out
+                Result r = br.step(a, w);
+                if (r == Result.RUNNING) return r;
+                br = null;
+                Day1.catchNear(a, w, 2.0);
+                direct = 12;   // and on into the gap
+            }
             if (direct > 0) {   // going straight: keep at it, jumping where it is blocked
                 direct--;
                 double dx = x - a.posX, dz = z - a.posZ, d = Math.max(0.5, Math.hypot(dx, dz)), s = Math.min(3, d);
@@ -439,6 +467,10 @@ public class Crew {
                         int wy = ground(w, wx, MathHelper.floor_double(y + (a.posY - y) * (1 - s / d)), wz);
                         if (wy >= 0 && a.getNavigator().tryMoveToXYZ(wx + 0.5, wy, wz + 0.5, 1.0D)) { ok = true; break; }
                     }
+                }
+                if (!ok && tries >= 3 && digs < 60) {   // boxed in (a pit, the bottom of a mine): dig a way as a player would, a stair up toward it
+                    int[] b = dig(a, w);
+                    if (b != null) { br = new Break(b[0], b[1], b[2], 0); digs++; tries--; return Result.RUNNING; }
                 }
                 if (!ok) {   // no path at all (in the stairs of a mine, in a pond): straight toward it, jumping, as a player would
                     double dx = x - a.posX, dz = z - a.posZ, d = Math.max(0.5, Math.hypot(dx, dz)), s = Math.min(3, d);
@@ -1053,8 +1085,9 @@ public class Crew {
             if (fetch != null) {   // to the chest for more of what the walls take
                 Result r = fetch.step(a, w);
                 if (r == Result.RUNNING) return r;
-                if (r != Result.OK) h.missing.add(fetchKind);
                 fetch = null;
+                if (r == Result.NO_ITEMS) h.missing.add(fetchKind);   // the chest is out of it (for everyone)
+                else if (r != Result.OK) return r;                   // this agent cannot get there: its card, not the house, fails
                 return Result.RUNNING;
             }
             if (cur == null) {

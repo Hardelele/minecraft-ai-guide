@@ -39,6 +39,8 @@ class TaskBoard {
         Need need;
         final Map<Item, Integer> wants = new LinkedHashMap<Item, Integer>();   // chest quantities it counts on
         int lease = 20 * 240, tries, maxTries = 2;
+        boolean optional;     // nice to have: its failure does not fail the phase
+        Card optional() { optional = true; return this; }
         State state = State.OPEN;
         Agent holder, doneBy;
         long since;
@@ -140,9 +142,13 @@ class TaskBoard {
             Ledger.act(a, "haul");
             return true;
         }
+        Long r = rest.get(a);
+        if (r != null && r > now) {   // resting after a way it could not go: it tries to get out (toward the base) meanwhile
+            if (c.base != null && ((now - r) % 100 == 0)) Crew.job(a, new Crew.GoTo(c.base[0] + 0.5, c.base[1], c.base[2] + 0.5, 3), Origin.AUTO_DEFAULT);
+            return false;
+        }
         Card k = best(a, w);
         if (k != null) { take(k, a, w); return true; }
-        Long r = rest.get(a);
         final Crew.Task d = r != null && r > now || c.current == null ? null : deficit(a, w);
         if (d != null) {
             Crew.job(a, new Crew.Task() {
@@ -198,6 +204,7 @@ class TaskBoard {
         k.last = r;
         if (r == Result.OK) { k.state = State.DONE; k.doneBy = a; return; }
         k.tries++;
+        if (r == Result.NO_PATH) rest.put(a, now + 20 * 15);   // it cannot get out from where it is: not the next card at once
         k.state = k.tries >= k.maxTries || k.only != null && r == Result.NO_TOOL ? State.FAILED : State.OPEN;
         Director.log("board: " + k + " by " + a.getCustomNameTag() + " -> " + r + (k.state == State.OPEN ? ", back on the board" : ", given up"));
     }
@@ -220,7 +227,9 @@ class TaskBoard {
                 if (someone) k.unfit = 0;
                 else if ((k.unfit += 20) > 20 * 30) {
                     k.state = State.FAILED;
-                    k.last = k.need != null ? Result.NO_TOOL : Result.NO_ITEMS;
+                    boolean needOk = false;   // what keeps everyone off it: the agent (a tool, a thing in the bag) or the chest
+                    for (Agent a : c.agents) if (k.need == null || k.need.ok(a)) needOk = true;
+                    k.last = needOk ? Result.NO_ITEMS : Result.NO_TOOL;
                     Ledger.result(k.last);
                     Director.log("board: " + k + " nobody can take it -> " + k.last);
                 }
