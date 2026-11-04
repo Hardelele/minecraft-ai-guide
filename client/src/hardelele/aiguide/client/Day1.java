@@ -32,6 +32,10 @@ class Day1 {
         for (java.util.Iterator<ItemStack> it = from.bag.iterator(); it.hasNext(); ) {
             ItemStack s = it.next();
             if (keep != null && s.getItem() == keep) continue;
+            Ledger.flow(Ledger.Way.HANDED_OUT, s);
+            Ledger.act(from, "hand over");
+            Ledger.flow(Ledger.Way.HANDED_OUT, s);
+            Ledger.act(from, "hand over");
             EntityItem e = new EntityItem(w, from.posX, from.posY + 1.3, from.posZ, s.copy());
             e.motionX = dx / d * Math.min(0.42, d * 0.1);
             e.motionZ = dz / d * Math.min(0.42, d * 0.1);
@@ -54,6 +58,8 @@ class Day1 {
             ItemStack s = it.getEntityItem();
             a.onItemPickup(it, s.stackSize);
             Crew.give(a.bag, s);
+            Ledger.flow(Ledger.Way.DROP, s);
+            Ledger.act(a, "pick up");
             it.setDead();
             got += s.stackSize;
             if (a.getHeldItem() == null) a.setCurrentItemOrArmor(0, new ItemStack(s.getItem(), 1, s.getMetadata()));
@@ -70,9 +76,9 @@ class Day1 {
         Crew.Task stash;
         int state, ticks, idle;
         Courier(Crew c, List<Agent> choppers) { this.c = c; this.choppers = choppers; }
-        public boolean step(Agent a, WorldServer w) {
+        public Result step(Agent a, WorldServer w) {
             ticks++;
-            if (stash != null) { if (stash.step(a, w)) stash = null; return false; }
+            if (stash != null) { if (stash.step(a, w) != Result.RUNNING) stash = null; return Result.RUNNING; }
             if (state == 0) {   // whom to go to
                 from = null;
                 int most = 0;
@@ -86,23 +92,23 @@ class Day1 {
                 int mine = 0;
                 for (ItemStack s : a.bag) mine += s.stackSize;
                 if (from == null || most < 3 && working) {
-                    if (mine > 0 && (!working || mine >= 12)) { stash = c.new Stash(null, 0); return false; }
-                    if (!working) return true;
+                    if (mine > 0 && (!working || mine >= 12)) { stash = c.new Stash(null, 0); return Result.RUNNING; }
+                    if (!working) return Result.OK;
                     if (++idle % 40 == 0 && !choppers.isEmpty()) {   // wait near the busiest chopper
                         Agent g = choppers.get((idle / 40) % choppers.size());
                         walk = new Crew.GoTo(g.posX + 2, g.posY, g.posZ + 1, 2.5);
                     }
-                    if (walk != null && walk.step(a, w)) walk = null;
-                    return false;
+                    if (walk != null && walk.step(a, w).done()) walk = null;
+                    return Result.RUNNING;
                 }
                 walk = new Crew.GoTo(from.posX, from.posY, from.posZ, 3.2);
                 state = 1;
-                return false;
+                return Result.RUNNING;
             }
             if (state == 1) {   // run to it; it throws, the carrier catches
                 if (Crew.dist(a, from.posX, from.posY, from.posZ) > 3.4) {
-                    if (walk.step(a, w)) walk = new Crew.GoTo(from.posX, from.posY, from.posZ, 3.2);
-                    return false;
+                    if (walk.step(a, w) != Result.RUNNING) walk = new Crew.GoTo(from.posX, from.posY, from.posZ, 3.2);
+                    return Result.RUNNING;
                 }
                 a.getNavigator().clearPathEntity();
                 Crew.face(a, from.posX, from.posY + 1.4, from.posZ);
@@ -110,7 +116,7 @@ class Day1 {
                 toss(from, a.posX, a.posY + 1.0, a.posZ, w, null);
                 ticks = 0;
                 state = 2;
-                return false;
+                return Result.RUNNING;
             }
             Crew.face(a, from.posX, from.posY + 1.4, from.posZ);
             catchNear(a, w, 1.6);
@@ -121,7 +127,7 @@ class Day1 {
                 if (mine >= 12) stash = c.new Stash(null, 0);
                 state = 0;
             }
-            return false;
+            return Result.RUNNING;
         }
     }
 
@@ -147,14 +153,14 @@ class Day1 {
                     }
                     if (best == null) break;
                     c.taken.add(Crew.key(best[0], best[1], best[2]));
-                    a.jobs.add(new Crew.Chop(best[0], best[1], best[2]));
-                    a.jobs.add(new Crew.Collect(best[0] + 0.5, best[1], best[2] + 0.5, 5));
+                    Crew.job(a, new Crew.Chop(best[0], best[1], best[2]));
+                    Crew.job(a, new Crew.Collect(best[0] + 0.5, best[1], best[2] + 0.5, 5));
                     fx = best[0];
                     fz = best[2];
                 }
-                if (carrier == null) a.jobs.add(c.new Stash(Item.getItemFromBlock(Blocks.log), 1));
+                if (carrier == null) Crew.job(a, c.new Stash(Item.getItemFromBlock(Blocks.log), 1));
             }
-            if (carrier != null) carrier.jobs.add(new Courier(c, choppers));
+            if (carrier != null) Crew.job(carrier, new Courier(c, choppers));
             Director.log("crew: wood chain, " + choppers.size() + " choppers" + (carrier != null ? ", " + carrier.getCustomNameTag() + " carries" : ""));
         }
     }
@@ -168,9 +174,9 @@ class Day1 {
         Crew.Break br;
         Crew.GoTo walk;
         Steps(int x0, int y0, int z0, int dx, int dz, int n) { this.x0 = x0; this.y0 = y0; this.z0 = z0; this.dx = dx; this.dz = dz; this.n = n; }
-        public boolean step(Agent a, WorldServer w) {
-            if (br != null) { if (br.step(a, w)) { br = null; catchNear(a, w, 1.4); } return false; }
-            if (k > n) { catchNear(a, w, 2.5); return true; }
+        public Result step(Agent a, WorldServer w) {
+            if (br != null) { if (br.step(a, w) != Result.RUNNING) { br = null; catchNear(a, w, 1.4); } return Result.RUNNING; }
+            if (k > n) { catchNear(a, w, 2.5); return Result.OK; }
             int cx = x0 + dx * k, cz = z0 + dz * k, floor = y0 - k;
             // the blocks of this step, the top first (the agent looks down the stairs)
             for (int y = floor + 2; y >= floor; y--) {
@@ -180,22 +186,25 @@ class Day1 {
                 double reach = Crew.eyeDist(a, cx, y, cz);
                 int[] in = Crew.blocker(a, w, cx, y, cz);
                 if (reach <= Crew.REACH && (in == null || in[0] == cx && in[2] == cz)) {
-                    if (in != null && (in[0] != cx || in[1] != y || in[2] != cz)) { br = new Crew.Break(in[0], in[1], in[2], hard(w, in)); return false; }
+                    if (in != null && (in[0] != cx || in[1] != y || in[2] != cz)) { br = new Crew.Break(in[0], in[1], in[2], hard(w, in)); return Result.RUNNING; }
                     br = new Crew.Break(cx, y, cz, hard(w, new int[] { cx, y, cz }));
-                    return false;
+                    return Result.RUNNING;
                 }
                 // not seen from here: stand on the step before
                 int px = x0 + dx * (k - 1), pz = z0 + dz * (k - 1), pf = y0 - (k - 1);
                 if (walk == null) walk = new Crew.GoTo(px + 0.5, pf, pz + 0.5, 0.6);
-                if (walk.step(a, w)) { walk = null; if (++tries > 4) { tries = 0; k++; } }
-                return false;
+                if (walk.step(a, w) != Result.RUNNING) { walk = null; if (++tries > 4) { tries = 0; k++; } }
+                return Result.RUNNING;
             }
             // the step is open: a solid floor under it, or the stairs end here
-            if (Crew.soft(w, cx, floor - 1, cz)) w.setBlock(cx, floor - 1, cz, Blocks.cobblestone, 0, 3);
+            if (Crew.soft(w, cx, floor - 1, cz)) {
+                w.setBlock(cx, floor - 1, cz, Blocks.cobblestone, 0, 3);
+                Ledger.fakeBlock("Day1.Steps floor", new ItemStack(Blocks.cobblestone));
+            }
             k++;
             tries = 0;
             walk = null;
-            return false;
+            return Result.RUNNING;
         }
         static double hard(WorldServer w, int[] b) {
             Block x = w.getBlock(b[0], b[1], b[2]);
@@ -243,14 +252,14 @@ class Day1 {
             for (Agent a : c.agents) {
                 if (k < 2) {   // two dig abreast
                     int sx = m[0] + (m[3] == 0 ? k : 0), sz = m[2] + (m[4] == 0 ? k : 0);
-                    a.jobs.add(new Crew.GoTo(sx + 0.5, m[1], sz + 0.5, 0.8));
-                    a.jobs.add(new Steps(sx, m[1], sz, m[3], m[4], 8));
-                    a.jobs.add(c.new Stash(null, 0));
+                    Crew.job(a, new Crew.GoTo(sx + 0.5, m[1], sz + 0.5, 0.8));
+                    Crew.job(a, new Steps(sx, m[1], sz, m[3], m[4], 8));
+                    Crew.job(a, c.new Stash(null, 0));
                 } else if (k == 2) {   // one carries what comes up
                     List<Agent> diggers = new ArrayList<Agent>(c.agents.subList(0, 2));
-                    a.jobs.add(new Courier(c, diggers));
+                    Crew.job(a, new Courier(c, diggers));
                 } else {   // the rest clear the ground for the house
-                    a.jobs.add(new Crew.Work(c.base[0] + 0.5, c.base[1], c.base[2] + 0.5, 20, null, null));
+                    Crew.job(a, new Crew.Work(c.base[0] + 0.5, c.base[1], c.base[2] + 0.5, 20, null, null));
                 }
                 k++;
             }
@@ -267,21 +276,26 @@ class Day1 {
         int state, ticks;
         Crew.GoTo walk;
         Take(Crew c, Item item, int n) { this.c = c; this.item = item; this.n = n; }
-        public boolean step(Agent a, WorldServer w) {
-            if (c.chest == null) return true;
+        public Result step(Agent a, WorldServer w) {
+            if (c.chest == null) return Result.OK;
             if (state == 0) { walk = new Crew.GoTo(c.chest[0] + 0.5, c.chest[1], c.chest[2] + 0.5, 2.3); state = 1; }
-            if (state == 1) { if (!walk.step(a, w)) return false; state = 2; }
+            if (state == 1) { if (walk.step(a, w) == Result.RUNNING) return Result.RUNNING; state = 2; }
             Crew.face(a, c.chest[0] + 0.5, c.chest[1] + 0.5, c.chest[2] + 0.5);
             ticks++;
             if (ticks == 3) w.addBlockEvent(c.chest[0], c.chest[1], c.chest[2], Blocks.chest, 1, 1);
             if (ticks == 9) {
                 IInventory inv = c.chestInv(w);
                 int got = inv == null ? 0 : Crew.take(inv, item, n);
-                if (got > 0) { Crew.give(a.bag, new ItemStack(item, got)); a.setCurrentItemOrArmor(0, new ItemStack(item, 1)); }
+                if (got > 0) {
+                    Crew.give(a.bag, new ItemStack(item, got));
+                    Ledger.flow(Ledger.Way.CHEST_OUT, new ItemStack(item, got));
+                    Ledger.act(a, "take from chest");
+                    a.setCurrentItemOrArmor(0, new ItemStack(item, 1));
+                }
                 a.swingItem();
             }
             if (ticks == 16) w.addBlockEvent(c.chest[0], c.chest[1], c.chest[2], Blocks.chest, 1, 0);
-            return ticks >= 18;
+            return (ticks >= 18) ? Result.OK : Result.RUNNING;
         }
     }
 
@@ -299,17 +313,17 @@ class Day1 {
             int fy = Crew.ground(w, furnace[0], t[1], furnace[2]);
             if (fy >= 0) furnace[1] = fy;
             Agent smith = c.agents.get(c.agents.size() - 1);
-            smith.jobs.add(new Take(c, Item.getItemFromBlock(Blocks.cobblestone), 8));
-            smith.jobs.add(new Crew.Work(t[0] + 0.5, t[1] + 0.9, t[2] + 0.5, 40, null, "random.wood_click"));
-            smith.jobs.add(new Crew.Place(furnace[0], furnace[1], furnace[2], Blocks.lit_furnace, 2));
-            smith.jobs.add(new Crew.Work(furnace[0] + 0.5, furnace[1] + 0.6, furnace[2] + 0.5, 70, new ItemStack(Blocks.torch, 1), "fire.fire"));
+            Crew.job(smith, new Take(c, Item.getItemFromBlock(Blocks.cobblestone), 8));
+            Crew.job(smith, new Crew.Work(t[0] + 0.5, t[1] + 0.9, t[2] + 0.5, 40, null, "random.wood_click"));
+            Crew.job(smith, new Crew.Place(furnace[0], furnace[1], furnace[2], Blocks.lit_furnace, 2));
+            Crew.job(smith, new Crew.Work(furnace[0] + 0.5, furnace[1] + 0.6, furnace[2] + 0.5, 70, new ItemStack(Blocks.torch, 1), "fire.fire"));
             int k = 0;
             for (Agent a : c.agents) {
                 if (a == smith) continue;
                 double ang = Math.toRadians(k++ * 120 + 30);
-                a.jobs.add(new Take(c, Item.getItemFromBlock(Blocks.cobblestone), 3));
-                a.jobs.add(new Crew.GoTo(t[0] + 0.5 + Math.sin(ang) * 1.7, t[1], t[2] + 0.5 + Math.cos(ang) * 1.7, 0.9));
-                a.jobs.add(new Crew.Work(t[0] + 0.5, t[1] + 0.9, t[2] + 0.5, 60 + 12 * k, new ItemStack(Items.stone_pickaxe), "random.anvil_land"));
+                Crew.job(a, new Take(c, Item.getItemFromBlock(Blocks.cobblestone), 3));
+                Crew.job(a, new Crew.GoTo(t[0] + 0.5 + Math.sin(ang) * 1.7, t[1], t[2] + 0.5 + Math.cos(ang) * 1.7, 0.9));
+                Crew.job(a, new Crew.Work(t[0] + 0.5, t[1] + 0.9, t[2] + 0.5, 60 + 12 * k, new ItemStack(Items.stone_pickaxe), "random.anvil_land"));
             }
         }
     }
@@ -319,28 +333,31 @@ class Day1 {
         void start(Crew c, final WorldServer w, final EntityPlayerMP p) {
             if (c.agents.isEmpty()) return;
             Agent a = c.agents.get(Math.min(1, c.agents.size() - 1));
-            a.jobs.add(new Crew.Task() {
+            Crew.job(a, new Crew.Task() {
                 int state, ticks;
                 Crew.GoTo walk;
-                public boolean step(Agent g, WorldServer ww) {
+                public Result step(Agent g, WorldServer ww) {
                     if (state == 0) { walk = new Crew.GoTo(p.posX, p.boundingBox.minY, p.posZ, 2.4); state = 1; }
                     if (state == 1) {
-                        if (Crew.dist(g, p.posX, p.boundingBox.minY, p.posZ) > 2.6) { if (walk.step(g, ww)) walk = new Crew.GoTo(p.posX, p.boundingBox.minY, p.posZ, 2.4); return false; }
+                        if (Crew.dist(g, p.posX, p.boundingBox.minY, p.posZ) > 2.6) { if (walk.step(g, ww) != Result.RUNNING) walk = new Crew.GoTo(p.posX, p.boundingBox.minY, p.posZ, 2.4); return Result.RUNNING; }
                         state = 2;
                     }
                     g.getNavigator().clearPathEntity();
                     Crew.face(g, p.posX, p.posY + p.getEyeHeight(), p.posZ);
                     if (++ticks == 14) {
+                        for (ItemStack s : g.bag) Ledger.flow(Ledger.Way.INTO_NOTHING, s, "Day1.Gift bag cleared");
                         g.bag.clear();
                         g.bag.add(new ItemStack(Items.stone_pickaxe));
                         g.bag.add(new ItemStack(Blocks.torch, 8));
+                        Ledger.flow(Ledger.Way.FROM_NOTHING, new ItemStack(Items.stone_pickaxe), "Day1.Gift");
+                        Ledger.flow(Ledger.Way.FROM_NOTHING, new ItemStack(Blocks.torch, 8), "Day1.Gift");
                         toss(g, p.posX, p.posY + 1.0, p.posZ, ww, null);
                         g.setCurrentItemOrArmor(0, new ItemStack(Items.stone_pickaxe));
                     }
-                    return ticks > 40;
+                    return (ticks > 40) ? Result.OK : Result.RUNNING;
                 }
             });
-            for (Agent g : c.agents) if (g != a) g.jobs.add(new Crew.Look(p.posX, p.posY + 1.5, p.posZ, 50));
+            for (Agent g : c.agents) if (g != a) Crew.job(g, new Crew.Look(p.posX, p.posY + 1.5, p.posZ, 50));
         }
     }
 
@@ -400,19 +417,23 @@ class Day1 {
             plan.add(new int[] { door[0] + ddx - (ddz != 0 ? 1 : 0), y0, door[2] + ddz - (ddx != 0 ? 1 : 0), 5 });
             doorAt = door;
             show(c, w);
-            for (Agent a : c.agents) a.jobs.add(new Crew.Build(this));
+            for (Agent a : c.agents) Crew.job(a, new Crew.Build(this));
             final Base self = this;
-            c.agents.get(0).jobs.add(new Crew.Task() {   // the door last, by the first agent
-                public boolean step(Agent a, WorldServer ww) {
+            Crew.job(c.agents.get(0), new Crew.Task() {   // the door last, by the first agent
+                public Result step(Agent a, WorldServer ww) {
                     int[] dd = self.doorAt;
-                    if (!Crew.soft(ww, dd[0], dd[1], dd[2])) return true;
+                    if (!Crew.soft(ww, dd[0], dd[1], dd[2])) return Result.OK;
                     int meta = self.doorMeta(c);
                     Crew.face(a, dd[0] + 0.5, dd[1] + 1, dd[2] + 0.5);
                     a.swingItem();
                     ww.setBlock(dd[0], dd[1], dd[2], Blocks.wooden_door, meta, 2);
+                    Ledger.fakeBlock("Day1.Base door", new ItemStack(Items.wooden_door));
+                    Ledger.act(a, "place");
+                    Ledger.fakeBlock("Day1.Base door", new ItemStack(Items.wooden_door));
+                    Ledger.act(a, "place");
                     ww.setBlock(dd[0], dd[1] + 1, dd[2], Blocks.wooden_door, 8, 2);
                     ww.playSoundEffect(dd[0] + 0.5, dd[1] + 0.5, dd[2] + 0.5, "dig.wood", 1F, 0.8F);
-                    return true;
+                    return Result.OK;
                 }
             });
             Director.log("crew: base plan of " + plan.size() + " blocks" + (stone >= 24 ? " (stone footing)" : ""));
@@ -441,9 +462,9 @@ class Day1 {
                 double ang = Math.toRadians(-60 + 120.0 * k / Math.max(1, n - 1)) + Math.atan2(-m[3], -m[4]);
                 double tx = m[0] + 0.5 - m[3] * 1.5 + Math.sin(ang) * 2.2, tz = m[2] + 0.5 - m[4] * 1.5 + Math.cos(ang) * 2.2;
                 int gy = Crew.ground(w, MathHelper.floor_double(tx), m[1], MathHelper.floor_double(tz));
-                a.jobs.add(new Crew.GoTo(tx, gy < 0 ? m[1] : gy, tz, 0.7));
-                if (k == 0) a.jobs.add(new Crew.Place(m[0] - m[3] + (m[3] == 0 ? -1 : 0), m[1], m[2] - m[4] + (m[4] == 0 ? -1 : 0), Blocks.torch, 5));
-                a.jobs.add(new Crew.Look(mx, m[1] - 2.5, mz, 20 * 30));
+                Crew.job(a, new Crew.GoTo(tx, gy < 0 ? m[1] : gy, tz, 0.7));
+                if (k == 0) Crew.job(a, new Crew.Place(m[0] - m[3] + (m[3] == 0 ? -1 : 0), m[1], m[2] - m[4] + (m[4] == 0 ? -1 : 0), Blocks.torch, 5));
+                Crew.job(a, new Crew.Look(mx, m[1] - 2.5, mz, 20 * 30));
                 k++;
             }
         }

@@ -65,12 +65,31 @@ public class Crew {
     final Set<String> ordered = java.util.Collections.synchronizedSet(new java.util.LinkedHashSet<String>());   // the kinds of the orders given
 
     interface Task {
-        /** one tick; true when done */
-        boolean step(Agent a, WorldServer w);
+        /** one tick: RUNNING, or how it ended */
+        Result step(Agent a, WorldServer w);
+    }
+
+    /** where the jobs given now come from (set around an order's phase start; the board sets its own) */
+    static Origin originNow = Origin.SCRIPT;
+
+    /** a job for an agent, tagged with where it came from */
+    static void job(Agent a, Task t) {
+        job(a, t, originNow);
+    }
+
+    static void job(Agent a, Task t, Origin o) {
+        a.jobs.add(t);
+        a.origins.add(o);
+    }
+
+    static void clearJobs(Agent a) {
+        a.jobs.clear();
+        a.origins.clear();
     }
 
     abstract static class Phase {
         String name, kind = "";
+        Origin origin = Origin.SCRIPT;
         int ticks, max = 20 * 150;
         abstract void start(Crew c, WorldServer w, EntityPlayerMP p);
         boolean done(Crew c) {
@@ -91,7 +110,12 @@ public class Crew {
         return instance;
     }
 
+    /** an order from the guide's tool (the model): its origin is the plan */
     public static String order(final String player, final String what, final int count) {
+        return order(player, what, count, Origin.LLM_PLAN);
+    }
+
+    public static String order(final String player, final String what, final int count, Origin origin) {
         ensure();
         final Crew c = instance;
         String w = what.trim().toLowerCase();
@@ -110,6 +134,7 @@ public class Crew {
         String kind = ph instanceof Summon ? "summon" : ph instanceof Day1.WoodChain ? "wood" : ph instanceof Tools ? "tools" : ph instanceof Day1.Mine ? "mine"
                 : ph instanceof Day1.Upgrade ? "upgrade" : ph instanceof Day1.Gift ? "gift" : ph instanceof House ? "house" : ph instanceof Day1.Gather ? "gather" : "cheer";
         ph.kind = kind;
+        ph.origin = origin;
         if (c.ordered.contains(kind) && !kind.equals("cheer")) return "Already ordered: " + kind + ".";
         c.ordered.add(kind);
         c.queue.add(new Runnable() {
@@ -138,9 +163,9 @@ public class Crew {
         if (current != null && current.ticks > current.max) {   // too long: what is carried goes to the chest, the phase ends
             Director.log("crew phase " + current.name + ": out of time");
             for (Agent a : agents) {
-                a.jobs.clear();
+                clearJobs(a);
                 a.getNavigator().clearPathEntity();
-                if (!a.bag.isEmpty() && chest != null) a.jobs.add(new Stash(Item.getItemFromBlock(Blocks.log), 1));
+                if (!a.bag.isEmpty() && chest != null) Crew.job(a, new Stash(Item.getItemFromBlock(Blocks.log), 1));
             }
             current.max = Integer.MAX_VALUE;
         }
@@ -152,6 +177,8 @@ public class Crew {
                 finished.add(current.kind);
                 current = null;
                 save(w);
+                Ledger.save(w.getSaveHandler().getWorldDirectory());
+                Director.log(Ledger.report());
             }
         }
         while (current == null && !phases.isEmpty() && skip.contains(phases.peek().kind)) {
@@ -162,7 +189,9 @@ public class Crew {
             Director.log("crew phase: " + current.name);
             status = current.name;
             started.add(current.kind);
+            originNow = current.origin;
             current.start(this, w, p);
+            originNow = Origin.AUTO_DEFAULT;
         }
         if (!loaded) load(w);
         if (w.getTotalWorldTime() % 40 == 0) adopt(w);
@@ -174,11 +203,19 @@ public class Crew {
                 continue;
             }
             a.idle = 0;
+            a.origin = a.origins.isEmpty() ? Origin.SCRIPT : a.origins.peek();
+            Result r;
             try {
-                if (t.step(a, w)) a.jobs.poll();
+                r = t.step(a, w);
             } catch (Exception ex) {
                 Director.log("crew task failed: " + ex);
+                r = Result.BLOCKED;
+            }
+            if (r.done()) {
                 a.jobs.poll();
+                a.origins.poll();
+                Ledger.result(r);
+                if (r.failed()) Director.log("crew: " + a.getCustomNameTag() + " " + t.getClass().getSimpleName() + " -> " + r);
             }
         }
     }
@@ -357,13 +394,13 @@ public class Crew {
         double x, y, z, within;
         int ticks, tries;
         GoTo(double x, double y, double z, double within) { this.x = x; this.y = y; this.z = z; this.within = within; }
-        public boolean step(Agent a, WorldServer w) {
+        public Result step(Agent a, WorldServer w) {
             ticks++;
-            if (dist(a, x, y, z) <= within) { a.getNavigator().clearPathEntity(); return true; }
+            if (dist(a, x, y, z) <= within) { a.getNavigator().clearPathEntity(); return Result.OK; }
             if (ticks % 20 == 1 || a.getNavigator().noPath()) {
                 if (!a.getNavigator().tryMoveToXYZ(x, y, z, 1.0D) && ++tries > 12) {   // no way: a step closer by itself
                     Director.log("crew: " + a.getCustomNameTag() + " has no way to " + (int) x + " " + (int) y + " " + (int) z);
-                    return true;
+                    return Result.NO_PATH;
                 }
             }
             if (ticks % 40 == 0) {
@@ -371,9 +408,9 @@ public class Crew {
                 else a.stuck = 0;
                 a.lastX = a.posX;
                 a.lastZ = a.posZ;
-                if (a.stuck > 3) { a.stuck = 0; return true; }
+                if (a.stuck > 3) { a.stuck = 0; return Result.NO_PATH; }
             }
-            return ticks > 20 * 40;
+            return (ticks > 20 * 40) ? Result.TIMEOUT : Result.RUNNING;
         }
     }
 
@@ -382,9 +419,9 @@ public class Crew {
         double x, y, z;
         int ticks, len;
         Look(double x, double y, double z, int len) { this.x = x; this.y = y; this.z = z; this.len = len; }
-        public boolean step(Agent a, WorldServer w) {
+        public Result step(Agent a, WorldServer w) {
             face(a, x, y, z);
-            return ++ticks >= len;
+            return (++ticks >= len) ? Result.OK : Result.RUNNING;
         }
     }
 
@@ -394,26 +431,30 @@ public class Crew {
         double seconds;
         Break(int x, int y, int z, double seconds) { this.x = x; this.y = y; this.z = z; this.seconds = seconds; }
         /** true when the block is gone */
-        boolean step(Agent a, WorldServer w) {
+        Result step(Agent a, WorldServer w) {
             Block b = w.getBlock(x, y, z);
-            if (b.getMaterial() == Material.air) return true;
+            if (b.getMaterial() == Material.air) return Result.OK;
             face(a, x + 0.5, y + 0.5, z + 0.5);
             a.act(x, y, z, 1);
             ticks++;
-            if (ticks < 6) return false;   // turn to it first
+            if (ticks < 6) return Result.RUNNING;   // turn to it first
             if (ticks % 5 == 0) {
                 a.swingItem();
                 w.playSoundEffect(x + 0.5, y + 0.5, z + 0.5, b.stepSound.getStepSound(), 0.35F, 0.6F);
             }
             double k = (ticks - 6) / (seconds * 20);
             w.destroyBlockInWorldPartially(a.getEntityId(), x, y, z, Math.min(9, (int) (k * 10)));
-            if (k < 1) return false;
+            if (k < 1) return Result.RUNNING;
             int meta = w.getBlockMetadata(x, y, z);
+            ItemStack held = a.getHeldItem();
+            boolean tool = b.getMaterial().isToolNotRequired() || held != null && held.canItemHarvestBlock(b);
+            if (!tool) Ledger.flow(Ledger.Way.FROM_NOTHING, new ItemStack(b, 1, b.damageDropped(meta)), "Crew.Break drop without the tool");
+            Ledger.act(a, "break " + b.getUnlocalizedName().replace("tile.", ""));
             b.dropBlockAsItem(w, x, y, z, meta, 0);
             w.playAuxSFX(2001, x, y, z, Block.getIdFromBlock(b) + (meta << 12));
             w.setBlockToAir(x, y, z);
             w.destroyBlockInWorldPartially(a.getEntityId(), x, y, z, -1);
-            return true;
+            return Result.OK;
         }
     }
 
@@ -424,7 +465,7 @@ public class Crew {
         GoTo walk;
         Break br;
         Chop(int tx, int ty, int tz) { this.tx = tx; this.ty = ty; this.tz = tz; }
-        public boolean step(Agent a, WorldServer w) {
+        public Result step(Agent a, WorldServer w) {
             if (state == 0) {   // a spot beside the trunk, the nearest free one
                 int[][] around = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 }, { 2, 0 }, { -2, 0 }, { 0, 2 }, { 0, -2 } };
                 double best = 1e9;
@@ -436,38 +477,38 @@ public class Crew {
                     double d = dist(a, sx + 0.5, sy, sz + 0.5) + (i >= 8 ? 3 : 0);
                     if (d < best) { best = d; pick = new int[] { sx, sy, sz, i + 1 }; }
                 }
-                if (pick == null || ++tries > 4) return true;
+                if (pick == null || ++tries > 4) return Result.NO_PATH;
                 spot = pick[3];
                 walk = new GoTo(pick[0] + 0.5, pick[1], pick[2] + 0.5, 0.6);
                 state = 1;
-                return false;
+                return Result.RUNNING;
             }
             if (state == 1) {
-                if (!walk.step(a, w)) return false;
+                if (walk.step(a, w) == Result.RUNNING) return Result.RUNNING;
                 state = 2;
-                return false;
+                return Result.RUNNING;
             }
             if (br != null) {   // breaking something
-                if (br.step(a, w)) br = null;
-                return false;
+                if (br.step(a, w) != Result.RUNNING) br = null;
+                return Result.RUNNING;
             }
             int y = -1;   // the lowest log left of this trunk
             for (int k = ty; k < ty + 12; k++) {
                 Block b = w.getBlock(tx, k, tz);
                 if (b == Blocks.log || b == Blocks.log2) { y = k; break; }
             }
-            if (y < 0) return true;
-            if (eyeDist(a, tx, y, tz) > REACH) { state = 0; return false; }   // out of reach from here
+            if (y < 0) return Result.OK;
+            if (eyeDist(a, tx, y, tz) > REACH) { state = 0; return Result.RUNNING; }   // out of reach from here
             int[] in = blocker(a, w, tx, y, tz);
             if (in != null) {
                 Block b = w.getBlock(in[0], in[1], in[2]);
                 Material m = b.getMaterial();
-                if (m == Material.leaves || m == Material.plants || m == Material.vine) { br = new Break(in[0], in[1], in[2], 0.2); return false; }
+                if (m == Material.leaves || m == Material.plants || m == Material.vine) { br = new Break(in[0], in[1], in[2], 0.2); return Result.RUNNING; }
                 state = 0;   // something firm in the way: another side
-                return false;
+                return Result.RUNNING;
             }
             br = new Break(tx, y, tz, 0.9);
-            return false;
+            return Result.RUNNING;
         }
     }
 
@@ -479,15 +520,17 @@ public class Crew {
         EntityItem target;
         Collect(double x, double y, double z, double r) { this.x = x; this.y = y; this.z = z; this.r = r; }
         @SuppressWarnings("unchecked")
-        public boolean step(Agent a, WorldServer w) {
+        public Result step(Agent a, WorldServer w) {
             ticks++;
-            if (ticks < 14) return false;   // the drops fall first
+            if (ticks < 14) return Result.RUNNING;   // the drops fall first
             for (Object o : w.getEntitiesWithinAABB(EntityItem.class, a.boundingBox.expand(1.3, 0.8, 1.3))) {
                 EntityItem it = (EntityItem) o;
                 if (it.isDead || it.delayBeforeCanPickup > 0) continue;
                 ItemStack s = it.getEntityItem();
                 a.onItemPickup(it, s.stackSize);
                 give(a.bag, s);
+                Ledger.flow(Ledger.Way.DROP, s);
+                Ledger.act(a, "pick up");
                 it.setDead();
                 if (a.getHeldItem() == null || a.getHeldItem().getItem() == s.getItem() || !(a.getHeldItem().getItem() instanceof net.minecraft.item.ItemTool))
                     a.setCurrentItemOrArmor(0, new ItemStack(s.getItem(), 1, s.getMetadata()));
@@ -501,11 +544,11 @@ public class Crew {
                     double d = dist(a, it.posX, it.posY, it.posZ);
                     if (d < best) { best = d; target = it; }
                 }
-                if (target == null) return ticks > 40;
+                if (target == null) return (ticks > 40) ? Result.OK : Result.RUNNING;
                 walk = new GoTo(target.posX, target.posY, target.posZ, 0.7);
             }
-            if (walk.step(a, w)) target = null;
-            return ticks > 20 * 30;
+            if (walk.step(a, w) != Result.RUNNING) target = null;
+            return (ticks > 20 * 30) ? Result.OK : Result.RUNNING;
         }
     }
 
@@ -516,10 +559,10 @@ public class Crew {
         int state, ticks;
         GoTo walk;
         Stash(Item keep, int keepN) { this.keep = keep; this.keepN = keepN; }
-        public boolean step(Agent a, WorldServer w) {
-            if (chest == null) return true;
+        public Result step(Agent a, WorldServer w) {
+            if (chest == null) return Result.GONE;
             if (state == 0) { walk = new GoTo(chest[0] + 0.5, chest[1], chest[2] + 0.5, 2.3); state = 1; }
-            if (state == 1) { if (!walk.step(a, w)) return false; state = 2; }
+            if (state == 1) { if (walk.step(a, w) == Result.RUNNING) return Result.RUNNING; state = 2; }
             face(a, chest[0] + 0.5, chest[1] + 0.5, chest[2] + 0.5);
             ticks++;
             IInventory inv = chestInv(w);
@@ -535,6 +578,7 @@ public class Crew {
                         s.stackSize -= k;
                         if (s.stackSize <= 0) { it.remove(); continue; }
                     }
+                    ItemStack before = s.copy();
                     for (int i = 0; i < inv.getSizeInventory() && s.stackSize > 0; i++) {
                         ItemStack c = inv.getStackInSlot(i);
                         if (c == null) { inv.setInventorySlotContents(i, s.copy()); s.stackSize = 0; }
@@ -544,15 +588,19 @@ public class Crew {
                             s.stackSize -= m;
                         }
                     }
+                    before.stackSize -= s.stackSize;
+                    Ledger.flow(Ledger.Way.CHEST_IN, before);
+                    if (s.stackSize > 0) Ledger.flow(Ledger.Way.INTO_NOTHING, s, "Crew.Stash chest full");
                     it.remove();
                 }
                 a.bag.clear();
+                Ledger.act(a, "stash");
                 if (kept > 0 && keep != null) a.bag.add(new ItemStack(keep, kept));
                 inv.markDirty();
                 if (a.getHeldItem() != null && !(a.getHeldItem().getItem() instanceof net.minecraft.item.ItemTool)) a.setCurrentItemOrArmor(0, null);
             }
             if (ticks == 22) { w.addBlockEvent(chest[0], chest[1], chest[2], Blocks.chest, 1, 0); w.playSoundEffect(chest[0] + 0.5, chest[1] + 0.5, chest[2] + 0.5, "random.chestclosed", 0.5F, 1.0F); }
-            return ticks >= 26;
+            return (ticks >= 26) ? Result.OK : Result.RUNNING;
         }
     }
 
@@ -563,17 +611,18 @@ public class Crew {
         int ticks;
         GoTo walk;
         Place(int x, int y, int z, Block block, int meta) { this.x = x; this.y = y; this.z = z; this.block = block; this.meta = meta; }
-        public boolean step(Agent a, WorldServer w) {
+        public Result step(Agent a, WorldServer w) {
             if (walk == null) walk = new GoTo(x + 0.5, y, z + 0.5, 2.6);
-            if (eyeDist(a, x, y, z) > 3.2 && !walk.step(a, w)) return false;
+            if (eyeDist(a, x, y, z) > 3.2 && walk.step(a, w) == Result.RUNNING) return Result.RUNNING;
             face(a, x + 0.5, y + 0.5, z + 0.5);
-            if (++ticks < 8) return false;
+            if (++ticks < 8) return Result.RUNNING;
             a.swingItem();
-            if (soft(w, x, y, z)) {
-                w.setBlock(x, y, z, block, meta, 3);
-                w.playSoundEffect(x + 0.5, y + 0.5, z + 0.5, block.stepSound.getPlaceSound(), 1.0F, 0.8F);
-            }
-            return true;
+            if (!soft(w, x, y, z)) return Result.GONE;
+            w.setBlock(x, y, z, block, meta, 3);
+            w.playSoundEffect(x + 0.5, y + 0.5, z + 0.5, block.stepSound.getPlaceSound(), 1.0F, 0.8F);
+            Ledger.fakeBlock("Crew.Place " + block.getUnlocalizedName().replace("tile.", ""), new ItemStack(block, 1, meta));
+            Ledger.act(a, "place");
+            return Result.OK;
         }
     }
 
@@ -585,7 +634,7 @@ public class Crew {
         final String sound;
         int ticks;
         Work(double x, double y, double z, int len, ItemStack made, String sound) { this.x = x; this.y = y; this.z = z; this.len = len; this.made = made; this.sound = sound; }
-        public boolean step(Agent a, WorldServer w) {
+        public Result step(Agent a, WorldServer w) {
             face(a, x, y, z);
             a.act((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z), 2);
             ticks++;
@@ -596,11 +645,13 @@ public class Crew {
             if (ticks >= len) {
                 if (made != null) {
                     a.setCurrentItemOrArmor(0, made.copy());
+                    Ledger.flow(Ledger.Way.FROM_NOTHING, made, "Crew.Work made in hand");
+                    Ledger.act(a, "craft (pretend)");
                     w.func_147487_a("happyVillager", x, y + 0.6, z, 6, 0.3, 0.2, 0.3, 0.0);
                 }
-                return true;
+                return Result.OK;
             }
-            return false;
+            return Result.RUNNING;
         }
     }
 
@@ -610,12 +661,12 @@ public class Crew {
         int ticks;
         final int len, phase;
         Celebrate(double x, double y, double z, int len, int phase) { this.x = x; this.y = y; this.z = z; this.len = len; this.phase = phase; }
-        public boolean step(Agent a, WorldServer w) {
+        public Result step(Agent a, WorldServer w) {
             face(a, x, y, z);
             ticks++;
             if ((ticks + phase) % 16 == 0 && a.onGround) a.getJumpHelper().setJumping();
             if ((ticks + phase) % 9 == 0) a.swingItem();
-            return ticks >= len;
+            return (ticks >= len) ? Result.OK : Result.RUNNING;
         }
     }
 
@@ -624,11 +675,11 @@ public class Crew {
         final java.util.concurrent.Callable<Boolean> until;
         int ticks;
         Wait(java.util.concurrent.Callable<Boolean> until) { this.until = until; }
-        public boolean step(Agent a, WorldServer w) {
+        public Result step(Agent a, WorldServer w) {
             try {
-                return until.call() || ++ticks > 20 * 60;
+                return (until.call() || ++ticks > 20 * 60) ? Result.OK : Result.RUNNING;
             } catch (Exception e) {
-                return true;
+                return Result.OK;
             }
         }
     }
@@ -663,8 +714,8 @@ public class Crew {
                 double off = (k++ - (c.agents.size() - 1) / 2.0) * 1.6;
                 double tx = p.posX + fx * 3.2 + fz * -off, tz = p.posZ + fz * 3.2 + fx * off;
                 int gy = ground(w, MathHelper.floor_double(tx), py, MathHelper.floor_double(tz));
-                a.jobs.add(new GoTo(tx, gy < 0 ? py : gy, tz, 0.8));
-                a.jobs.add(new Look(p.posX, p.posY + 1.2, p.posZ, 30 + 6 * k));
+                Crew.job(a, new GoTo(tx, gy < 0 ? py : gy, tz, 0.8));
+                Crew.job(a, new Look(p.posX, p.posY + 1.2, p.posZ, 30 + 6 * k));
             }
             w.playSoundEffect(p.posX, p.posY, p.posZ, "random.levelup", 0.4F, 1.4F);
         }
@@ -695,10 +746,10 @@ public class Crew {
                     mine.add(best);
                 }
                 for (int[] t : mine) {
-                    a.jobs.add(new Chop(t[0], t[1], t[2]));
-                    a.jobs.add(new Collect(t[0] + 0.5, t[1], t[2] + 0.5, 5));
+                    Crew.job(a, new Chop(t[0], t[1], t[2]));
+                    Crew.job(a, new Collect(t[0] + 0.5, t[1], t[2] + 0.5, 5));
                 }
-                a.jobs.add(c.new Stash(Item.getItemFromBlock(Blocks.log), 1));
+                Crew.job(a, c.new Stash(Item.getItemFromBlock(Blocks.log), 1));
             }
         }
     }
@@ -744,6 +795,7 @@ public class Crew {
         if (table[1] < 0) table[1] = sy;
         Agent a = agents.isEmpty() ? null : agents.get(0);
         w.setBlock(chest[0], chest[1], chest[2], Blocks.chest, 0, 3);
+        Ledger.fakeBlock("Crew.placeChest", new ItemStack(Blocks.chest));
         w.func_147487_a("cloud", chest[0] + 0.5, chest[1] + 0.5, chest[2] + 0.5, 8, 0.3, 0.3, 0.3, 0.01);
         Director.log("crew: house site " + sx + " " + sy + " " + sz + ", chest " + chest[0] + " " + chest[1] + " " + chest[2] + (a == null ? "" : ""));
     }
@@ -792,18 +844,18 @@ public class Crew {
             if (c.agents.isEmpty()) return;
             final int[] t = c.table;
             Agent first = c.agents.get(0);
-            first.jobs.add(new GoTo(t[0] + 0.5, t[1], t[2] + 0.5 + 1.6, 1.2));
-            first.jobs.add(new Work(t[0] + 0.5, t[1] + 0.2, t[2] + 0.5, 50, null, "dig.wood"));
-            first.jobs.add(new Place(t[0], t[1], t[2], Blocks.crafting_table, 0));
+            Crew.job(first, new GoTo(t[0] + 0.5, t[1], t[2] + 0.5 + 1.6, 1.2));
+            Crew.job(first, new Work(t[0] + 0.5, t[1] + 0.2, t[2] + 0.5, 50, null, "dig.wood"));
+            Crew.job(first, new Place(t[0], t[1], t[2], Blocks.crafting_table, 0));
             int k = 0;
             for (Agent a : c.agents) {
                 double ang = Math.toRadians(k++ * 360.0 / c.agents.size());
                 double sx = t[0] + 0.5 + Math.sin(ang) * 1.7, sz = t[2] + 0.5 + Math.cos(ang) * 1.7;
-                if (a != first) a.jobs.add(new Wait(new java.util.concurrent.Callable<Boolean>() {
+                if (a != first) Crew.job(a, new Wait(new java.util.concurrent.Callable<Boolean>() {
                     public Boolean call() { return MinecraftServer.getServer().worldServers[0].getBlock(t[0], t[1], t[2]) == Blocks.crafting_table; }
                 }));
-                a.jobs.add(new GoTo(sx, t[1], sz, 0.9));
-                a.jobs.add(new Work(t[0] + 0.5, t[1] + 0.9, t[2] + 0.5, 70 + 16 * k, new ItemStack(Items.wooden_pickaxe), "random.wood_click"));
+                Crew.job(a, new GoTo(sx, t[1], sz, 0.9));
+                Crew.job(a, new Work(t[0] + 0.5, t[1] + 0.9, t[2] + 0.5, 70 + 16 * k, new ItemStack(Items.wooden_pickaxe), "random.wood_click"));
             }
         }
     }
@@ -847,9 +899,9 @@ public class Crew {
                 });
                 while (mine.size() > perAgent) mine.remove(mine.size() - 1);
                 for (int[] s : mine) c.taken.add(key(s[0], s[1], s[2]));
-                a.jobs.add(new Mine(mine));
-                a.jobs.add(new Collect(seed[0] + 0.5, seed[1], seed[2] + 0.5, 5));
-                a.jobs.add(c.new Stash(null, 0));
+                Crew.job(a, new Mine(mine));
+                Crew.job(a, new Collect(seed[0] + 0.5, seed[1], seed[2] + 0.5, 5));
+                Crew.job(a, c.new Stash(null, 0));
             }
         }
     }
@@ -861,20 +913,20 @@ public class Crew {
         GoTo walk;
         Break br;
         Mine(List<int[]> blocks) { this.blocks = blocks; }
-        public boolean step(Agent a, WorldServer w) {
-            if (i >= blocks.size()) return true;
+        public Result step(Agent a, WorldServer w) {
+            if (i >= blocks.size()) return Result.OK;
             int[] b = blocks.get(i);
-            if (br != null) { if (br.step(a, w)) { br = null; } return false; }
-            if (w.getBlock(b[0], b[1], b[2]) != Blocks.stone) { i++; tries = 0; walk = null; return false; }
+            if (br != null) { if (br.step(a, w) != Result.RUNNING) { br = null; } return Result.RUNNING; }
+            if (w.getBlock(b[0], b[1], b[2]) != Blocks.stone) { i++; tries = 0; walk = null; return Result.RUNNING; }
             boolean seen = eyeDist(a, b[0], b[1], b[2]) <= REACH && blocker(a, w, b[0], b[1], b[2]) == null;
-            if (seen) { br = new Break(b[0], b[1], b[2], 0.75); return false; }
+            if (seen) { br = new Break(b[0], b[1], b[2], 0.75); return Result.RUNNING; }
             if (walk == null) {
-                if (++tries > 3) { i++; tries = 0; return false; }
+                if (++tries > 3) { i++; tries = 0; return Result.RUNNING; }
                 walk = b.length > 5 && tries == 1 ? new GoTo(b[3] + 0.5, b[4], b[5] + 0.5, 0.7)
                         : new GoTo(b[0] + 0.5, b[1] + 1, b[2] + 0.5 + (tries == 3 ? 1.5 : 0), 1.8);
             }
-            if (walk.step(a, w)) walk = null;
-            return false;
+            if (walk.step(a, w) != Result.RUNNING) walk = null;
+            return Result.RUNNING;
         }
     }
 
@@ -910,7 +962,7 @@ public class Crew {
             plan.add(new int[] { x0 + 2, y0 + 5, z0 + 2, 1 });
             show(c, w);
            Director.log("crew: house plan of " + plan.size() + " blocks at " + x0 + " " + y0 + " " + z0 + (roof == 2 ? " (stone roof)" : ""));
-            for (Agent a : c.agents) a.jobs.add(new Build(this));
+            for (Agent a : c.agents) Crew.job(a, new Build(this));
         }
         /** the see-through plan for the camera (the client draws it) */
         void show(Crew c, WorldServer w) {
@@ -967,13 +1019,13 @@ public class Crew {
         GoTo walk;
         int ticks, wait;
         Build(House h) { this.h = h; }
-        public boolean step(Agent a, WorldServer w) {
-            if (h.ticks - h.shownAt < 50) { face(a, site[0] + 2.5, site[1] + 1.5, site[2] + 2.5); return false; }   // everyone looks at the plan first
+        public Result step(Agent a, WorldServer w) {
+            if (h.ticks - h.shownAt < 50) { face(a, site[0] + 2.5, site[1] + 1.5, site[2] + 2.5); return Result.RUNNING; }   // everyone looks at the plan first
             if (cur == null) {
                 cur = h.next(a, w);
                 if (cur == null) {
-                    for (int[] b : h.plan) if (soft(w, b[0], b[1], b[2])) { if (++wait > 200) return true; return false; }
-                    return true;
+                    for (int[] b : h.plan) if (soft(w, b[0], b[1], b[2])) { if (++wait > 200) return Result.OK; return Result.RUNNING; }
+                    return Result.OK;
                 }
                 h.claimed.add(key(cur[0], cur[1], cur[2]));
                 a.setCurrentItemOrArmor(0, new ItemStack(block(cur[3])));
@@ -988,30 +1040,36 @@ public class Crew {
                 if (eyeDist(a, cur[0], cur[1], cur[2]) <= 6.0 && !inside(a)) walk = null;   // in reach from here: no walk
                 ticks = 0;
             }
-            if (!soft(w, cur[0], cur[1], cur[2])) { h.claimed.remove(key(cur[0], cur[1], cur[2])); cur = null; return false; }
+            if (!soft(w, cur[0], cur[1], cur[2])) { h.claimed.remove(key(cur[0], cur[1], cur[2])); cur = null; return Result.RUNNING; }
             double reach = 6.4;
             if (eyeDist(a, cur[0], cur[1], cur[2]) > reach && walk != null) {
-                if (walk.step(a, w)) {   // arrived and still far: closer
+                if (walk.step(a, w) != Result.RUNNING) {   // arrived and still far: closer
                     walk = new GoTo(cur[0] + 0.5, a.posY, cur[2] + 0.5, 2.0);
                 }
-                return false;
+                return Result.RUNNING;
             }
             a.getNavigator().clearPathEntity();
             face(a, cur[0] + 0.5, cur[1] + 0.5, cur[2] + 0.5);
             a.act(cur[0], cur[1], cur[2], 3);
-            if (++ticks < 4) return false;
+            if (++ticks < 4) return Result.RUNNING;
             a.swingItem();
             Block b = block(cur[3]);
             w.setBlock(cur[0], cur[1], cur[2], b, cur[3] == 5 ? 5 : 0, 3);
             w.playSoundEffect(cur[0] + 0.5, cur[1] + 0.5, cur[2] + 0.5, b.stepSound.getPlaceSound(), 0.9F, 0.8F);
+            Ledger.act(a, "place");
             IInventory inv = instance.chestInv(w);   // what goes into the walls comes from the chest
+            boolean paid = false;
             if (inv != null) {
-                if (cur[3] == 2) take(inv, Item.getItemFromBlock(Blocks.cobblestone), 1);
-                else if (cur[3] == 1 || w.rand.nextInt(4) == 0) take(inv, Item.getItemFromBlock(Blocks.log), 1);   // a log is four planks
+                if (cur[3] == 2) paid = take(inv, Item.getItemFromBlock(Blocks.cobblestone), 1) > 0;
+                else if (cur[3] == 1) paid = take(inv, Item.getItemFromBlock(Blocks.log), 1) > 0;
+                else if (w.rand.nextInt(4) == 0 && take(inv, Item.getItemFromBlock(Blocks.log), 1) > 0)   // a log is four planks
+                    Ledger.flow(Ledger.Way.INTO_NOTHING, new ItemStack(Blocks.log), "Crew.Build random log for planks");
             }
+            if (paid) { Ledger.flow(Ledger.Way.CHEST_OUT, new ItemStack(b)); Ledger.flow(Ledger.Way.PLACED, new ItemStack(b)); }
+            else Ledger.fakeBlock("Crew.Build " + b.getUnlocalizedName().replace("tile.", ""), new ItemStack(b));
             h.claimed.remove(key(cur[0], cur[1], cur[2]));
             cur = null;
-            return false;
+            return Result.RUNNING;
         }
     }
 
@@ -1041,8 +1099,8 @@ public class Crew {
                 double off = (k - (n - 1) / 2.0) * 1.5;
                 double tx = fx + d[1] * off, tz = fz + d[0] * off;
                 int gy = ground(w, MathHelper.floor_double(tx), s != null ? s[1] : (int) p.posY, MathHelper.floor_double(tz));
-                a.jobs.add(new GoTo(tx, gy < 0 ? (s != null ? s[1] : p.posY) : gy, tz, 0.8));
-                a.jobs.add(new Celebrate(lx, ly, lz, 20 * 8, k * 4));
+                Crew.job(a, new GoTo(tx, gy < 0 ? (s != null ? s[1] : p.posY) : gy, tz, 0.8));
+                Crew.job(a, new Celebrate(lx, ly, lz, 20 * 8, k * 4));
                 k++;
             }
         }

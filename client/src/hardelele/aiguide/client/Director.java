@@ -241,7 +241,7 @@ public class Director {
         if (cmd.equals("recstop")) { Recorder.stop(); return true; }
         if (cmd.equals("crew")) {   // an order for the crew straight from the script (the guide's tool does the same)
             String[] a = arg.split(" ");
-            Crew.order(mc.thePlayer.getCommandSenderName(), a[0], a.length > 1 ? num(a[1], 0) : 0);
+            Crew.order(mc.thePlayer.getCommandSenderName(), a[0], a.length > 1 ? num(a[1], 0) : 0, Origin.SCRIPT);
             return true;
         }
         if (cmd.equals("shot") || cmd.equals("shots")) {   // the second camera: shot <kind> <len> [args] | shots <kind> <total> <len>
@@ -376,7 +376,7 @@ public class Director {
                 for (String h : had) if (a[0].startsWith(h.substring(0, Math.min(3, h.length())))) done = true;
                 if (!done) {
                     event("crewfallback: the script orders " + o.trim());
-                    Crew.order(mc.thePlayer.getCommandSenderName(), a[0], a.length > 1 ? num(a[1], 0) : 0);
+                    Crew.order(mc.thePlayer.getCommandSenderName(), a[0], a.length > 1 ? num(a[1], 0) : 0, Origin.FALLBACK);
                 }
             }
             return true;
@@ -460,7 +460,19 @@ public class Director {
             if (t == 0 || autoT >= shot) autoShot();
             autoT++;
             return t >= total;
-        }        if (cmd.equals("quit")) { Recorder.stop(); event("quit"); mc.shutdown(); return true; }
+        }        if (cmd.equals("quit")) {
+            Recorder.stop();
+            try {   // the crew's books, for the measure of what was real
+                net.minecraft.server.MinecraftServer s = net.minecraft.server.MinecraftServer.getServer();
+                if (s != null && s.worldServers != null) Ledger.save(s.worldServers[0].getSaveHandler().getWorldDirectory());
+                event(Ledger.report());
+            } catch (Exception e) {
+                event("ledger: " + e);
+            }
+            event("quit");
+            mc.shutdown();
+            return true;
+        }
         event("unknown command " + cmd);
         return true;
     }

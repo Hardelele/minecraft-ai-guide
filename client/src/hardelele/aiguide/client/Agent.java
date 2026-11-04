@@ -20,6 +20,8 @@ import net.minecraft.world.World;
  */
 public class Agent extends EntityCreature {
     final Deque<Crew.Task> jobs = new ArrayDeque<Crew.Task>();
+    final Deque<Origin> origins = new ArrayDeque<Origin>();   // where each job came from
+    Origin origin = Origin.SCRIPT;   // of the job it does now
     final List<ItemStack> bag = new ArrayList<ItemStack>();
     int number, idle, stuck;
     /** what it works on now (for the camera): the block, the kind (1 breaks, 2 crafts, 3 places), when */
