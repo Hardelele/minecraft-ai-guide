@@ -366,6 +366,15 @@ public class Director {
             if (t > 20 * (a.length > 1 ? num(a[1], 600) : 600)) { event("crewat: gave up"); return true; }
             return Crew.started.contains(a[0]);
         }
+        if (cmd.equals("crewplan") || cmd.equals("crewplanfallback")) {   // goals (a|b|c) straight, or only if the guide gave none
+            if (cmd.equals("crewplanfallback") && t < 20 * 4) return false;
+            if (cmd.equals("crewplanfallback") && Compiler.last != null) { event("crewplanfallback: the guide gave goals"); return true; }
+            final String goals = arg.replace("|", "\n"), who = mc.thePlayer.getCommandSenderName();
+            final Origin o = cmd.equals("crewplan") ? Origin.SCRIPT : Origin.FALLBACK;
+            event(cmd + ": " + arg);
+            new Thread(() -> event("crewplan: " + Compiler.plan(who, goals, o)), "crewplan").start();
+            return true;
+        }
         if (cmd.equals("crewfallback")) {   // the orders the guide did not give (a|b|c), in this order
             if (t < 20 * 4) return false;
             java.util.Set<String> had = Crew.instance == null ? new java.util.HashSet<String>() : Crew.instance.ordered;

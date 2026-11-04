@@ -94,6 +94,12 @@ class Skills {
         FakePlayer p = hands.get(a.getEntityId());
         if (p == null || p.worldObj != w) {
             p = FakePlayerFactory.get(w, new GameProfile(UUID.nameUUIDFromBytes(("aiguide-agent-" + a.skin()).getBytes()), "[Agent " + a.skin() + "]"));
+            if (p.playerNetServerHandler == null) {   // the game's hooks send a fake player packets (a block back, a slot): to nowhere
+                final net.minecraft.server.MinecraftServer srv = net.minecraft.server.MinecraftServer.getServer();
+                new net.minecraft.network.NetHandlerPlayServer(srv, new net.minecraft.network.NetworkManager(false), p) {
+                    @Override public void sendPacket(net.minecraft.network.Packet pk) { }
+                };
+            }
             hands.put(a.getEntityId(), p);
         }
         p.setLocationAndAngles(a.posX, a.posY, a.posZ, a.rotationYawHead, a.rotationPitch);

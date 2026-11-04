@@ -231,7 +231,8 @@ class Day1 {
 
     static class WoodChain extends Crew.Phase {
         final int target;
-        WoodChain(int perAgent) { this.target = Base.woodNeeded(); max = 20 * 300; }
+        WoodChain(int perAgent) { this(perAgent, Base.woodNeeded()); }
+        WoodChain(int perAgent, int target) { this.target = target; max = 20 * 300; }
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             if (c.base == null) c.base = new int[] { (int) Math.floor(p.posX), (int) Math.floor(p.boundingBox.minY), (int) Math.floor(p.posZ) };
             c.planSite(w);
@@ -453,8 +454,11 @@ class Day1 {
      * charcoal out, torches of charcoal and sticks; a stone pickaxe for the player. The others: a stone pickaxe each.
      */
     static class Upgrade extends Crew.Phase {
+        int torches = 16;
+        boolean crewStone = true, giftPickaxe = true;
         Upgrade() { max = 20 * 180; }
-        void start(final Crew c, WorldServer w, EntityPlayerMP p) {
+        Upgrade(int torches, boolean crewStone, boolean giftPickaxe) { this(); this.torches = torches; this.crewStone = crewStone; this.giftPickaxe = giftPickaxe; }
+        void start(final Crew c, final WorldServer w, EntityPlayerMP p) {
             c.planSite(w);
             final int[] t = c.table;
             if (t == null || c.agents.isEmpty()) return;
@@ -466,11 +470,30 @@ class Day1 {
             }
             final int[] f = furnace;
             // the smith's card: the furnace, charcoal, torches and the player's pickaxe
-            c.board.post("furnace", () -> new TaskBoard.Seq(new Take(c, COBBLE, 8 + 3), new Take(c, Items.stick, 2 + 4), new Skills.Craft(FURNACE, -1, 1),
-                    new Skills.PlaceFrom(f[0], f[1], f[2], FURNACE, -1), new Take(c, LOG, 6), new Skills.Craft(PLANKS, -1, 8),   // the fuel: 8 planks burn 12 items
-                    new Skills.Smelt(LOG, -1, 4, PLANKS), new Skills.Craft(TORCH, -1, 16), new Skills.Craft(Items.stone_pickaxe, -1, 1)))
-                    .wants(COBBLE, 11).wants(Items.stick, 6).wants(LOG, 6).prio(3).at(f[0], f[1], f[2]);
-            for (int k = 0; k < c.agents.size() - 1; k++)   // a stone pickaxe for each of the others, made by himself
+            final int smelt = (torches + 3) / 4, fuelPlanks = Math.max(4, (smelt * 2 + 2) / 3 + 3) / 4 * 4, cobble = 8 + (giftPickaxe ? 3 : 0),
+                    sticks = smelt + (giftPickaxe ? 2 : 0), logs = smelt + fuelPlanks / 4;
+            final int torchN = torches;
+            final boolean gp = giftPickaxe;
+            TaskBoard.Card fc = c.board.post("furnace", () -> {
+                List<Crew.Task> s = new ArrayList<Crew.Task>();
+                s.add(new Take(c, COBBLE, cobble));
+                if (sticks > 0) s.add(new Take(c, Items.stick, sticks));
+                if (w.getBlock(f[0], f[1], f[2]) != Blocks.furnace) {
+                    s.add(new Skills.Craft(FURNACE, -1, 1));
+                    s.add(new Skills.PlaceFrom(f[0], f[1], f[2], FURNACE, -1));
+                }
+                if (torchN > 0) {
+                    s.add(new Take(c, LOG, logs));
+                    s.add(new Skills.Craft(PLANKS, -1, fuelPlanks));   // the fuel: a plank burns 1.5 items
+                    s.add(new Skills.Smelt(LOG, -1, smelt, PLANKS));
+                    s.add(new Skills.Craft(TORCH, -1, torchN));
+                }
+                if (gp) s.add(new Skills.Craft(Items.stone_pickaxe, -1, 1));
+                return new TaskBoard.Seq(s.toArray(new Crew.Task[0]));
+            }).wants(COBBLE, cobble).prio(3).at(f[0], f[1], f[2]);
+            if (sticks > 0) fc.wants(Items.stick, sticks);
+            if (torches > 0) fc.wants(LOG, logs);
+            if (crewStone) for (int k = 0; k < c.agents.size() - 1; k++)   // a stone pickaxe for each of the others, made by himself
                 c.board.post("stone pickaxe", () -> new TaskBoard.Seq(new Take(c, COBBLE, 3), new Take(c, Items.stick, 2), new Skills.Craft(Items.stone_pickaxe, -1, 1)))
                         .need(a -> Skills.count(a.bag, Items.stone_pickaxe, -1) == 0).wants(COBBLE, 3).wants(Items.stick, 2).prio(2).at(t[0], t[1], t[2]);
         }
@@ -478,12 +501,19 @@ class Day1 {
 
     /** the smith brings the player the stone pickaxe it made, and torches */
     static class Gift extends Crew.Phase {
+        List<ItemStack> items = new ArrayList<ItemStack>(java.util.Arrays.asList(new ItemStack(Items.stone_pickaxe), new ItemStack(TORCH, 8)));
+        Gift() { }
+        Gift(List<ItemStack> items) { this.items = items; }
         void start(Crew c, final WorldServer w, final EntityPlayerMP p) {
             if (c.agents.isEmpty()) return;
             final double px = p.posX, py = p.posY, pz = p.posZ;
             // whoever made the torches (and so the player's pickaxe) brings them; the others turn to look
-            final TaskBoard.Card gift = c.board.post("gift", () -> new TaskBoard.Seq(new Skills.Give(Items.stone_pickaxe, 1), new Skills.Give(TORCH, 8)).lenient())
-                    .need(a -> Skills.count(a.bag, TORCH, -1) > 0 && Skills.count(a.bag, Items.stone_pickaxe, -1) > 0).prio(4);
+            final List<ItemStack> give = items;
+            final TaskBoard.Card gift = c.board.post("gift", () -> {
+                Crew.Task[] s = new Crew.Task[give.size()];
+                for (int i = 0; i < s.length; i++) s[i] = new Skills.Give(give.get(i).getItem(), give.get(i).stackSize);
+                return new TaskBoard.Seq(s).lenient();
+            }).need(a -> { for (ItemStack g : give) if (Skills.count(a.bag, g.getItem(), -1) == 0) return false; return true; }).prio(4);
             for (Agent g : c.agents)
                 c.board.post("watch", () -> new Crew.Look(px, py + 1.5, pz, 50)).need(a -> gift.state != TaskBoard.State.OPEN).pin(g).prio(1).lease(20 * 30);
         }
@@ -517,7 +547,9 @@ class Day1 {
 
     static class Base extends Crew.House {
         int[] doorAt;
+        int maxSize = 2;   // the biggest asked for (the wood may make it smaller)
         Base() { max = 20 * 360; }
+        Base(int maxSize) { this(); this.maxSize = maxSize; }
 
         static int woodNeeded() {
             return Day1.woodNeeded();
@@ -580,7 +612,7 @@ class Day1 {
             int wood = crewLogs(c, w), torches = 0;
             if (inv != null) torches = Crew.count(inv, TORCH);
             for (Agent a : c.agents) torches += Skills.count(a.bag, TORCH, -1);
-            int size = 2;   // the biggest the wood allows
+            int size = maxSize;   // the biggest the wood allows
             for (; size > 0; size--) {
                 lay(c, w, size, stone);
                 if (logsFor(bill(plan, true)) <= wood) break;

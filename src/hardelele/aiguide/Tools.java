@@ -28,8 +28,17 @@ class Tools {
     final AIGuide mod;
     List<String[]> names;   // key, lowercase searchable text, display name
 
+    static Tools instance;
+
     Tools(AIGuide mod) {
         this.mod = mod;
+        instance = this;
+    }
+
+    /** the crew (client mod, by reflection) tells the guide what it could not mend; the guide may answer with crew_plan */
+    static String crewEvent(String player, String text) {
+        if (instance == null || instance.mod.assistant == null) return "no guide";
+        return instance.mod.assistant.ask(player, "[crew event, not from the player] " + text) ? "asked" : "busy";
     }
 
     /** the tools; over MCP the ones about a player take the player's name */
@@ -76,7 +85,15 @@ class Tools {
                     "place", "one block a line: x y z item (item: an id from find_items, or a name); empty if none",
                     "dig", "one block a line: x y z; empty if none"));
             if (crewAvailable())
-                a.add(tool("helpers", "Your crew: helper agents with players' bodies who do the early game for the player, together and on their "
+                a.add(tool("crew_plan", "Your crew: helper agents with players' bodies who do the early game for the player, on their own (no yes "
+                        + "needed). Give only GOALS, one a line, from this list: summon N (1-5 agents); shelter auto|hut|house|fenced; tools "
+                        + "wood|stone; torches N; gift ITEM [N], ITEM [N] (stone_pickaxe, torch, wooden_pickaxe); mine; gather (at nightfall at "
+                        + "the mine). Never coordinates, never which agent does what: the crew works out the quantities (wood, stone, crafts) "
+                        + "and shares the work itself, and tells you if something cannot be mended. For 'a base by night' e.g.: summon 4, "
+                        + "shelter auto, tools stone, torches 16, gift stone_pickaxe, torch 8, gather. Call it again with new goals to change the plan.",
+                        P, PD, "goals", "one goal a line"));
+            if (false && crewAvailable())
+                a.add(tool("helpers","Your crew: helper agents with players' bodies who do the early game for the player, together and on their "
                         + "own (no yes needed). Tasks run one after another in the order you call them, so call several in one answer for a "
                         + "whole plan, e.g. summon, wood, tools, mine, upgrade, gift, house, gather. summon: the agents come running (count: "
                         + "how many, 1-5); wood: they chop trees in a chain, one carries the logs to a chest (count: trees per agent, 1-4); "
@@ -138,6 +155,16 @@ class Tools {
             else if (name.equals("what_uses")) r = recipes(str(args, "item"), false);
             else if (name.equals("player_status")) r = playerStatus(player);
             else if (name.equals("find_blocks")) r = findBlocks(player, str(args, "query"), num(args, "radius", 24));
+            else if (name.equals("crew_plan")) {
+                if (!crewAvailable()) r = "No crew here.";
+                else {
+                    Class<?> origin = Class.forName("hardelele.aiguide.client.Origin");
+                    Object llm = origin.getField("LLM_PLAN").get(null);
+                    java.lang.reflect.Method plan = Class.forName("hardelele.aiguide.client.Compiler").getDeclaredMethod("plan", String.class, String.class, origin);
+                    plan.setAccessible(true);
+                    r = (String) plan.invoke(null, player, str(args, "goals"), llm);
+                }
+            }
             else if (name.equals("helpers")) {
                 if (!crewAvailable()) r = "No crew here.";
                 else r = (String) Class.forName("hardelele.aiguide.client.Crew").getMethod("order", String.class, String.class, int.class)

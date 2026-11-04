@@ -92,6 +92,7 @@ public class Crew {
         String name, kind = "";
         Origin origin = Origin.SCRIPT;
         int ticks, max = 20 * 150;
+        boolean timedOut;
         abstract void start(Crew c, WorldServer w, EntityPlayerMP p);
         /** done: no card of it left on the board, no agent on a job given outside the board's defaults */
         boolean done(Crew c) {
@@ -173,6 +174,7 @@ public class Crew {
                 if (!a.bag.isEmpty() && chest != null) Crew.job(a, new Stash(Item.getItemFromBlock(Blocks.log), 1));
             }
             current.max = Integer.MAX_VALUE;
+            current.timedOut = true;
         }
         if (current != null) {
             current.ticks++;
@@ -180,6 +182,11 @@ public class Crew {
                 Director.log("crew phase done: " + current.name + " in " + current.ticks / 20 + " s");
                 status = "done " + current.name;
                 finished.add(current.kind);
+                try {
+                    Compiler.afterPhase(this, current, w, current.timedOut);
+                } catch (Exception ex) {
+                    Director.log("replan failed: " + ex);
+                }
                 current = null;
                 save(w);
                 Ledger.save(w.getSaveHandler().getWorldDirectory());
@@ -218,7 +225,10 @@ public class Crew {
             try {
                 r = t.step(a, w);
             } catch (Exception ex) {
-                Director.log("crew task failed: " + ex);
+                StringBuilder at = new StringBuilder();
+                StackTraceElement[] st = ex.getStackTrace();
+                for (int i = 0; i < Math.min(4, st.length); i++) at.append(" @ ").append(st[i].getClassName().replace("hardelele.aiguide.client.", "")).append(':').append(st[i].getLineNumber());
+                Director.log("crew task failed: " + ex + at);
                 r = Result.BLOCKED;
             }
             if (r.done()) {
