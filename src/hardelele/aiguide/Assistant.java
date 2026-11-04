@@ -70,7 +70,7 @@ class Assistant {
     String answer(String player, String question) throws Exception {
         if (mod.config.key().isEmpty()) return mod.msg("nokey");
         JsonArray messages = new JsonArray();
-        messages.add(message("system", systemPrompt(player)));
+        messages.add(message("system", systemPrompt(player) + area(player)));
         List<JsonObject> past;
         synchronized (history) {
             past = history.containsKey(player) ? new ArrayList<JsonObject>(history.get(player)) : new ArrayList<JsonObject>();
@@ -89,6 +89,13 @@ class Assistant {
                 String text = msg.has("content") && !msg.get("content").isJsonNull() ? msg.get("content").getAsString().trim() : "";
                 // a model that still wants a tool may write the call as text: that is not for the chat
                 text = text.replaceAll("(?s)<[｜|]+DSML.*", "").replaceAll("(?s)<tool_call>.*", "").trim();
+                if (text.isEmpty() && last) {   // it still wanted to look: once more, with no tools declared at all
+                    messages.add(message("system", "Write the answer to the player now, in plain text, from what the lookups above found. "
+                            + "Say what you are not sure of."));
+                    JsonObject again = request(messages, null, mod.config.model, mod.config.maxTokens, extra(), mod.config.timeoutSeconds);
+                    text = again.has("content") && !again.get("content").isJsonNull() ? again.get("content").getAsString().trim() : "";
+                    text = text.replaceAll("(?s)<[｜|]+DSML.*", "").replaceAll("(?s)<tool_call>.*", "").trim();
+                }
                 AIGuide.LOG.info("{} asked ({} lookups, {} ms): {}", player, calls, System.currentTimeMillis() - t0, question);
                 if (mod.config.logTools) AIGuide.LOG.info("answer to {}: {}", player, text.replace('\n', ' '));
                 remember(player, user, message("assistant", text));
@@ -140,14 +147,39 @@ class Assistant {
                 .replace("{notes}", notes.isEmpty() ? "(none yet)" : notes);
     }
 
-    JsonObject complete(JsonArray messages, boolean tools) throws Exception {
-        JsonObject extra;
+    /** the area around the player in brief, for the system prompt: most questions about the world need no lookup then */
+    String area(final String player) {
+        if (!mod.config.areaBrief) return "";
         try {
-            extra = new JsonParser().parse(mod.config.extraBody).getAsJsonObject();
+            String brief = mod.onMain(new java.util.concurrent.Callable<String>() {
+                @Override public String call() {
+                    net.minecraft.entity.player.EntityPlayerMP p = AIGuide.player(player);
+                    if (p == null) return "";
+                    int[] at = { (int) Math.floor(p.field_70165_t), (int) Math.floor(p.field_70163_u), (int) Math.floor(p.field_70161_v) };
+                    return new Area(mod).describe(p, at, mod.config.areaRadius, "brief");
+                }
+            });
+            if (brief.trim().isEmpty()) return "";
+            return "\n\nThe world around the player, as your own map sees it now (labels from the blocks; distances on foot come from a walk search):\n"
+                    + brief.trim() + "\nFor questions about the world (where something is, how to get there, what is around, what is built here) "
+                    + "use describe_area (focus on what you need, or a block name). Never say something is not around before you looked.";
+        } catch (Exception e) {
+            AIGuide.LOG.warn("area of " + player + " not described: " + e);
+            return "";
+        }
+    }
+
+    JsonObject extra() {
+        try {
+            return new JsonParser().parse(mod.config.extraBody).getAsJsonObject();
         } catch (Exception e) {
             AIGuide.LOG.warn("extraBody is not a JSON object: " + mod.config.extraBody);
-            extra = new JsonObject();
+            return new JsonObject();
         }
+    }
+
+    JsonObject complete(JsonArray messages, boolean tools) throws Exception {
+        JsonObject extra = extra();
         // tools stay declared on the last round (some models write calls as text otherwise), but may not be called
         if (!tools) extra.addProperty("tool_choice", "none");
         return request(messages, mod.tools.definitions(), mod.config.model, mod.config.maxTokens, extra, mod.config.timeoutSeconds);

@@ -50,7 +50,8 @@ class GuideConfig {
     String baseUrl, model, apiKey, apiKeyFile, proxy, prefix, language, assistantName, extraBody;
     int timeoutSeconds, maxToolRounds, maxTokens, historyMessages, scanRadius, maxNotes, maxLines;
     double temperature;
-    boolean logTools, actions, mcpEnabled;
+    boolean logTools, actions, mcpEnabled, areaBrief, labelUnknown;
+    int areaRadius;
     int storageRadius, fetchRadius, mcpPort, learnMaxChars, learnMaxTokens;
     String mcpHost, mcpTokenFile, learnModel, learnExtraBody;
     List<String> sources;
@@ -83,6 +84,11 @@ class GuideConfig {
         storageRadius = c.getInt("storageRadius", "world", 48, 0, 256, "How far around the player the assistant looks into chests, barrels, drawers and AE2 networks");
         fetchRadius = c.getInt("fetchRadius", "world", 16, 0, 64, "How far the assistant may bring things from (0: it never takes anything)");
         actions = c.getBoolean("actions", "world", true, "Let the assistant act for the player: bring things from inventories near them, craft from what they carry, mark blocks");
+        areaBrief = c.getBoolean("areaBrief", "world", true, "Give the assistant a short description of the area around the player with every question "
+                + "(trees, ores, dangers, the way out, what is built; with distances on foot). Answers about the world get much better");
+        areaRadius = c.getInt("areaRadius", "world", 48, 16, 64, "How far around the player that description looks");
+        labelUnknown = c.getBoolean("labelUnknown", "world", true, "Once, ask the model what the blocks are that the rules cannot tell (ore, wood, machine...), "
+                + "by their names; kept in config/aiguide/labels-llm.json. Costs a fraction of a cent for a modpack");
         mcpEnabled = c.getBoolean("enabled", "mcp", false, "Serve the assistant's tools over MCP (Streamable HTTP), for agents outside the game");
         mcpHost = c.getString("host", "mcp", "127.0.0.1", "Where MCP listens: 127.0.0.1 for this computer only, 0.0.0.0 for everyone (then keep the token secret)");
         mcpPort = c.getInt("port", "mcp", 25580, 1, 65535, "The MCP port; the endpoint is http://<host>:<port>/mcp");
