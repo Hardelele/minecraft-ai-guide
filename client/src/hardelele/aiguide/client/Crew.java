@@ -884,6 +884,17 @@ public class Crew {
         }
     }
 
+    /** within the mine's stairs (two lanes, ten steps, a block either side): those blocks are the way up */
+    static boolean nearMine(int x, int y, int z) {
+        int[] m = Day1.mine;
+        if (m == null) return false;
+        for (int k = -1; k <= 10; k++) {
+            int cx = m[0] + m[3] * k, cz = m[2] + m[4] * k;
+            if (Math.abs(x - cx) <= (m[3] == 0 ? 2 : 0) + 1 && Math.abs(z - cz) <= (m[4] == 0 ? 2 : 0) + 1 && y <= m[1] + 1) return true;
+        }
+        return false;
+    }
+
     /** stone open to the air near the base, a few together near the agent, not reserved by another (reserved for it) */
     static List<int[]> openStone(Crew c, WorldServer w, Agent a, int n) {
         int bx = c.base[0], by = c.base[1], bz = c.base[2];
@@ -892,6 +903,7 @@ public class Crew {
             for (int z = bz - 24; z <= bz + 24; z++)
                 for (int y = by - 6; y <= by + 10; y++) {
                     if (w.getBlock(x, y, z) != Blocks.stone || !w.isAirBlock(x, y + 1, z) || c.board.reserved(a, x, y, z)) continue;
+                    if (y < by - 2 || nearMine(x, y, z) || site != null && x >= site[0] - 7 && x <= site[0] + 11 && z >= site[2] - 7 && z <= site[2] + 11) continue;   // not the stairs, not under the base, no pits
                     int[] spot = null;
                     for (int[] d : new int[][] { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } })
                         for (int dy = 0; dy >= -1 && spot == null; dy--)

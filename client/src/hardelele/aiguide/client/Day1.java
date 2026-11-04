@@ -384,7 +384,9 @@ class Day1 {
     }
 
     static class Mine extends Crew.Phase {
+        int depth = 8;   // steps down (a second mine goes on deeper: the steps already dug give nothing)
         Mine() { max = 20 * 200; }
+        Mine(int depth) { this(); this.depth = depth; }
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             c.planSite(w);
             int[] m = mine != null ? mine : mineSpot(c, w);
@@ -393,8 +395,8 @@ class Day1 {
             Director.log("crew: mine at " + m[0] + " " + m[1] + " " + m[2] + " going " + m[3] + " " + m[4]);
             c.board.goals.put(COBBLE, 32);   // the rest of the crew: wood still short, or stone near the base
             for (int k = 0; k < 2; k++) {   // two lanes abreast, for whoever has a pickaxe
-                final int sx = m[0] + (m[3] == 0 ? k : 0), sz = m[2] + (m[4] == 0 ? k : 0), y = m[1], dx = m[3], dz = m[4];
-                c.board.post("dig", () -> new TaskBoard.Seq(new Crew.GoTo(sx + 0.5, y, sz + 0.5, 0.8), new Steps(sx, y, sz, dx, dz, 8), c.new Stash(null, 0)))
+                final int sx = m[0] + (m[3] == 0 ? k : 0), sz = m[2] + (m[4] == 0 ? k : 0), y = m[1], dx = m[3], dz = m[4], n = depth;
+                c.board.post("dig", () -> new TaskBoard.Seq(new Crew.GoTo(sx + 0.5, y, sz + 0.5, 0.8), new Steps(sx, y, sz, dx, dz, n), c.new Stash(null, 0)))
                         .need(Day1::hasPickaxe).prio(3).at(sx, y, sz);
             }
             if (c.agents.size() >= 3) c.board.post("carry", () -> new Courier(c, "dig")).prio(2);   // what comes up goes to the chest
@@ -476,7 +478,8 @@ class Day1 {
             }
             final int[] f = furnace;
             // the smith's card: the furnace, charcoal, torches and the player's pickaxe
-            final int smelt = (torches + 3) / 4, fuelPlanks = Math.max(4, (smelt * 2 + 2) / 3 + 3) / 4 * 4, cobble = 8 + (giftPickaxe ? 3 : 0),
+            final boolean built = w.getBlock(furnace[0], furnace[1], furnace[2]) == Blocks.furnace;   // a furnace from before: no cobblestone for it
+            final int smelt = (torches + 3) / 4, fuelPlanks = Math.max(4, (smelt * 2 + 2) / 3 + 3) / 4 * 4, cobble = (built ? 0 : 8) + (giftPickaxe ? 3 : 0),
                     sticks = smelt + (giftPickaxe ? 2 : 0), logs = smelt + fuelPlanks / 4;
             final int torchN = torches;
             final boolean gp = giftPickaxe;
@@ -499,7 +502,9 @@ class Day1 {
             }).wants(COBBLE, cobble).prio(3).at(f[0], f[1], f[2]);
             if (sticks > 0) fc.wants(Items.stick, sticks);
             if (torches > 0) fc.wants(LOG, logs);
-            if (crewStone) for (int k = 0; k < c.agents.size() - 1; k++)   // a stone pickaxe for each of the others, made by himself
+            int without = 0;
+            for (Agent a : c.agents) if (Skills.count(a.bag, Items.stone_pickaxe, -1) == 0) without++;
+            if (crewStone) for (int k = 0; k < Math.min(without, c.agents.size() - 1); k++)   // a stone pickaxe for each of the others who has none, made by himself
                 c.board.post("stone pickaxe", () -> new TaskBoard.Seq(new Take(c, COBBLE, 3), new Take(c, Items.stick, 2), new Skills.Craft(Items.stone_pickaxe, -1, 1)))
                         .need(a -> Skills.count(a.bag, Items.stone_pickaxe, -1) == 0).wants(COBBLE, 3).wants(Items.stick, 2).prio(2).at(t[0], t[1], t[2]);
         }

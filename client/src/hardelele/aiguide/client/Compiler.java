@@ -250,7 +250,10 @@ class Compiler {
                 mend.add(named(new Day1.WoodChain(3, Day1.crewLogs(c, w) + 24), "wood"));
                 mend.add(named(new Day1.Base(((Day1.Base) ph).maxSize), "house"));
             }
-            if (k.kind.equals("furnace") && k.last == Result.NO_ITEMS && !has(mend, "mine")) { mend.add(named(new Day1.Mine(), "mine")); mend.add(named(new Day1.Upgrade(), "upgrade")); }
+            if (k.kind.equals("furnace") && k.last == Result.NO_ITEMS && !has(mend, "mine")) {   // stone short: the mine deeper, then the same upgrade
+                mend.add(named(new Day1.Mine(mineDepth += 6), "mine"));
+                mend.add(named(again(ph), "upgrade"));
+            }
             if (k.kind.equals("pickaxes") && k.last == Result.NO_ITEMS && !has(mend, "wood")) { mend.add(named(new Day1.WoodChain(3, Day1.crewLogs(c, w) + 12), "wood")); mend.add(named(new Day1.Tools(), "tools")); }
             if (k.kind.equals("gift") && !succeeded.contains("upgrade") && !has(mend, "upgrade") && !retried.contains("upgrade")) {   // nothing to give: the upgrade first
                 retried.add("upgrade");
@@ -289,10 +292,12 @@ class Compiler {
         if (ph instanceof Day1.Gift) return new Day1.Gift(((Day1.Gift) ph).items);
         if (ph instanceof Day1.Base) return new Day1.Base(((Day1.Base) ph).maxSize);
         if (ph instanceof Day1.Tools) return new Day1.Tools();
-        if (ph instanceof Day1.Mine) return new Day1.Mine();
+        if (ph instanceof Day1.Mine) return new Day1.Mine(mineDepth += 6);
         if (ph instanceof Day1.Gather) return new Day1.Gather();
         return null;
     }
+
+    static int mineDepth = 8;
 
     static boolean has(List<Crew.Phase> l, String kind) {
         for (Crew.Phase p : l) if (p.kind.equals(kind)) return true;

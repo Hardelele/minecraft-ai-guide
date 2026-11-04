@@ -421,7 +421,7 @@ class Skills {
     static class PlaceFrom implements Crew.Task {
         final int x, y, z, meta;
         final Item item;
-        int ticks;
+        int ticks, aside;
         Crew.GoTo walk;
         PlaceFrom(int x, int y, int z, Item item, int meta) { this.x = x; this.y = y; this.z = z; this.item = item; this.meta = meta; }
         public Result step(Agent a, WorldServer w) {
@@ -432,10 +432,20 @@ class Skills {
                 walk = null;
                 if (r != Result.OK && Crew.eyeDist(a, x, y, z) > 5.0) return r;
             }
+            if (a.boundingBox.intersectsWith(net.minecraft.util.AxisAlignedBB.getBoundingBox(x, y, z, x + 1, y + 2, z + 1))) {   // standing on the spot: a step back first
+                if (walk == null || walk.step(a, w).done()) {
+                    double dx = a.posX - (x + 0.5), dz = a.posZ - (z + 0.5), d = Math.max(0.3, Math.hypot(dx, dz));
+                    walk = new Crew.GoTo(x + 0.5 + dx / d * 1.8, y, z + 0.5 + dz / d * 1.8, 0.4);
+                }
+                if (++aside > 20 * 6) return Result.BLOCKED;
+                return Result.RUNNING;
+            }
             Crew.face(a, x + 0.5, y + 0.5, z + 0.5);
             a.act(x, y, z, 3);
             if (++ticks < 6) return Result.RUNNING;
-            return placeFromBag(a, w, x, y, z, item, meta);
+            Result r = placeFromBag(a, w, x, y, z, item, meta);
+            if (r == Result.BLOCKED) Director.log("crew: " + a.getCustomNameTag() + " cannot put " + Ledger.name(new ItemStack(item)) + " at " + x + " " + y + " " + z + " (" + Ledger.name(new ItemStack(w.getBlock(x, y, z))) + " there)");
+            return r;
         }
     }
 
