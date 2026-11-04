@@ -983,7 +983,12 @@ public class Crew {
     /** a 5x5 house by a see-through plan: walls of planks with log corners, a door and windows, a roof */
     static class House extends Phase {
         final List<int[]> plan = new ArrayList<int[]>();   // x, y, z, kind (0 planks, 1 log, 2 cobblestone)
-        final Set<Long> claimed = new HashSet<Long>(), skipped = new HashSet<Long>();
+        final Set<Long> claimed = new HashSet<Long>();
+        final java.util.Map<Long, Integer> skipped = new java.util.HashMap<Long, Integer>();   // block -> phase tick it may be tried again
+        boolean skipping(int x, int y, int z) {
+            Integer until = skipped.get(key(x, y, z));
+            return until != null && until > ticks;
+        }
         final Set<Integer> missing = new HashSet<Integer>();   // kinds the chest ran out of
         int shownAt = -1;
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
@@ -1042,13 +1047,13 @@ public class Crew {
         int[] next(Agent a, WorldServer w) {
             int low = Integer.MAX_VALUE;
             for (int[] b : plan)
-                if (soft(w, b[0], b[1], b[2]) && b[1] < low && !skipped.contains(key(b[0], b[1], b[2])) && !(missing.contains(b[3]) && Build.item(a, b[3]) == null)) low = b[1];
+                if (soft(w, b[0], b[1], b[2]) && b[1] < low && !skipping(b[0], b[1], b[2]) && !(missing.contains(b[3]) && Build.item(a, b[3]) == null)) low = b[1];
             if (low == Integer.MAX_VALUE) return null;
             int[] best = null;
             double bd = 1e9;
             for (int[] b : plan) {
                 if (b[1] > low + 1 || !soft(w, b[0], b[1], b[2]) || claimed.contains(key(b[0], b[1], b[2]))) continue;
-                if (missing.contains(b[3]) && Build.item(a, b[3]) == null || skipped.contains(key(b[0], b[1], b[2]))) continue;
+                if (missing.contains(b[3]) && Build.item(a, b[3]) == null || skipping(b[0], b[1], b[2])) continue;
                 boolean rests = !soft(w, b[0], b[1] - 1, b[2]) || !soft(w, b[0] + 1, b[1], b[2]) || !soft(w, b[0] - 1, b[1], b[2])
                         || !soft(w, b[0], b[1], b[2] + 1) || !soft(w, b[0], b[1], b[2] - 1);
                 if (!rests) continue;
@@ -1093,13 +1098,18 @@ public class Crew {
             if (cur == null) {
                 cur = h.next(a, w);
                 if (cur == null) {
-                    boolean left = false, short_ = false;
-                    for (int[] b : h.plan) if (soft(w, b[0], b[1], b[2])) { left = true; if (h.missing.contains(b[3])) short_ = true; }
+                    boolean left = false, possible = false;   // blocks left at all; blocks left this agent could still put
+                    for (int[] b : h.plan) {
+                        if (!soft(w, b[0], b[1], b[2])) continue;
+                        left = true;
+                        if (!h.missing.contains(b[3]) || item(a, b[3]) != null) possible = true;
+                    }
                     if (!left) return Result.OK;
-                    if (short_ && h.claimed.isEmpty()) return Result.NO_ITEMS;   // what is left needs what the crew has not got
-                    if (++wait > 200) return short_ ? Result.NO_ITEMS : Result.OK;
+                    if (!possible) return Result.NO_ITEMS;   // all that is left needs what neither it nor the chest has
+                    if (++wait > 20 * 30) return Result.OK;   // the rest waits on others (a layer below, a cell someone stands in)
                     return Result.RUNNING;
                 }
+                wait = 0;
                 if (item(a, cur[3]) == null) {   // not in the bag: a load from the chest (or this kind is out)
                     fetchKind = cur[3];
                     int want = 0;
@@ -1136,7 +1146,7 @@ public class Crew {
             ItemStack in = item(a, cur[3]);   // what is put comes out of the bag (Skills: the right item, its own place sound)
             Result r = in == null ? Result.NO_ITEMS : Skills.placeFromBag(a, w, cur[0], cur[1], cur[2], in.getItem(), in.getMetadata());
             if (r != Result.OK) Director.log("crew: " + a.getCustomNameTag() + " build " + Ledger.name(in) + " at " + cur[0] + " " + cur[1] + " " + cur[2] + " -> " + r);
-            if (r == Result.BLOCKED) h.skipped.add(key(cur[0], cur[1], cur[2]));   // nothing to put it against: later, or never
+            if (r == Result.BLOCKED) h.skipped.put(key(cur[0], cur[1], cur[2]), h.ticks + 200);   // someone stands there, or nothing to put it against: in 10 s again
             h.claimed.remove(key(cur[0], cur[1], cur[2]));
             cur = null;
             return Result.RUNNING;

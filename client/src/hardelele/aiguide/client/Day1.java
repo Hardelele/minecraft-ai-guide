@@ -616,6 +616,30 @@ class Day1 {
                 }
         }
 
+        /** the bill of what is still to be made for the laid plan: blocks not standing yet, less what the crew has made already */
+        Map<String, Integer> toMake(Crew c, WorldServer w) {
+            List<int[]> left = new ArrayList<int[]>();
+            for (int[] b : plan) if (Crew.soft(w, b[0], b[1], b[2])) left.add(b);
+            boolean door = doorAt == null || w.getBlock(doorAt[0], doorAt[1], doorAt[2]) != Blocks.wooden_door;
+            Map<String, Integer> m = bill(left, door);
+            less(m, "planks", have(c, w, PLANKS));
+            less(m, "fence", have(c, w, FENCE));
+            less(m, "door", have(c, w, Items.wooden_door));
+            less(m, "torch", have(c, w, TORCH));
+            return m;
+        }
+
+        static void less(Map<String, Integer> m, String k, int n) {
+            if (m.containsKey(k)) m.put(k, Math.max(0, m.get(k) - n));
+        }
+
+        static int have(Crew c, WorldServer w, Item item) {
+            IInventory inv = c.chestInv(w);
+            int n = inv == null ? 0 : Crew.count(inv, item);
+            for (Agent a : c.agents) n += Skills.count(a.bag, item, -1);
+            return n;
+        }
+
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             c.planSite(w);
             IInventory inv = c.chestInv(w);
@@ -623,13 +647,13 @@ class Day1 {
             int wood = crewLogs(c, w), torches = 0;
             if (inv != null) torches = Crew.count(inv, TORCH);
             for (Agent a : c.agents) torches += Skills.count(a.bag, TORCH, -1);
-            int size = maxSize;   // the biggest the wood allows
+            int size = maxSize;   // the biggest the wood allows (what stands already and what is made already do not count)
             for (; size > 0; size--) {
                 lay(c, w, size, stone);
-                if (logsFor(bill(plan, true)) <= wood) break;
+                if (logsFor(toMake(c, w)) <= wood) break;
             }
             if (size == 0) lay(c, w, 0, stone);
-            Map<String, Integer> b = bill(plan, true);
+            Map<String, Integer> b = toMake(c, w);
             Director.log("crew: base of size " + size + ", " + plan.size() + " blocks, bill " + b + ", wood " + wood + " logs (needs " + logsFor(b) + "), torches " + torches);
             show(c, w);
             final Base self = this;
