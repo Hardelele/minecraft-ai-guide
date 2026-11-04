@@ -125,13 +125,13 @@ public class Crew {
         else if (w.startsWith("upgrade") || w.startsWith("stonetool") || w.startsWith("furnace")) ph = new Day1.Upgrade();
         else if (w.startsWith("gift") || w.startsWith("give")) ph = new Day1.Gift();
         else if (w.startsWith("gather") || w.startsWith("night")) ph = new Day1.Gather();
-        else if (w.startsWith("tool") || w.startsWith("craft") || w.startsWith("инстр")) ph = new Tools();
+        else if (w.startsWith("tool") || w.startsWith("craft") || w.startsWith("инстр")) ph = new Day1.Tools();
         else if (w.startsWith("stone") || w.startsWith("mine") || w.startsWith("кам") || w.startsWith("шахт")) ph = new Day1.Mine();
         else if (w.startsWith("house") || w.startsWith("build") || w.startsWith("base") || w.startsWith("дом")) ph = new Day1.Base();
         else if (w.startsWith("cheer") || w.startsWith("done") || w.startsWith("рад")) ph = new Cheer();
         else return "Unknown crew task '" + what + "': summon, wood, tools, mine, upgrade, gift, house, gather or cheer.";
         ph.name = w;
-        String kind = ph instanceof Summon ? "summon" : ph instanceof Day1.WoodChain ? "wood" : ph instanceof Tools ? "tools" : ph instanceof Day1.Mine ? "mine"
+        String kind = ph instanceof Summon ? "summon" : ph instanceof Day1.WoodChain ? "wood" : ph instanceof Day1.Tools ? "tools" : ph instanceof Day1.Mine ? "mine"
                 : ph instanceof Day1.Upgrade ? "upgrade" : ph instanceof Day1.Gift ? "gift" : ph instanceof House ? "house" : ph instanceof Day1.Gather ? "gather" : "cheer";
         ph.kind = kind;
         ph.origin = origin;
@@ -425,39 +425,42 @@ public class Crew {
         }
     }
 
-    /** break one block as a player: looking at it, the arm swinging, the cracks growing */
+    /**
+     * break one block as a player: the best tool of the bag in hand, looking at it, the arm swinging, the cracks
+     * growing for as long as the game says that tool takes, then the game's own harvest (BreakEvent, drops, wear).
+     * A block that gives nothing without the right tool (stone without a pickaxe) is not broken: NO_TOOL.
+     */
     static class Break {
-        int x, y, z, ticks;
-        double seconds;
-        Break(int x, int y, int z, double seconds) { this.x = x; this.y = y; this.z = z; this.seconds = seconds; }
-        /** true when the block is gone */
+        int x, y, z, ticks, need = -2;
+        Break(int x, int y, int z, double seconds) { this.x = x; this.y = y; this.z = z; }
         Result step(Agent a, WorldServer w) {
             Block b = w.getBlock(x, y, z);
             if (b.getMaterial() == Material.air) return Result.OK;
             face(a, x + 0.5, y + 0.5, z + 0.5);
             a.act(x, y, z, 1);
+            if (need == -2) {   // the tool for it, and how long
+                int meta = w.getBlockMetadata(x, y, z);
+                ItemStack tool = Skills.bestTool(a, b, meta);
+                ItemStack held = a.getHeldItem();
+                if (tool != null && tool != held) a.setCurrentItemOrArmor(0, tool);
+                else if (tool == null && held != null && !held.isStackable() && a.bag.contains(held)) a.setCurrentItemOrArmor(0, null);   // a tool that does not help: bare hands
+                need = Skills.breakTicks(a, w, x, y, z);
+                if (need < 0) return Result.NO_TOOL;
+            }
             ticks++;
             if (ticks < 6) return Result.RUNNING;   // turn to it first
             if (ticks % 5 == 0) {
                 a.swingItem();
                 w.playSoundEffect(x + 0.5, y + 0.5, z + 0.5, b.stepSound.getStepSound(), 0.35F, 0.6F);
             }
-            double k = (ticks - 6) / (seconds * 20);
+            double k = (ticks - 6) / (double) need;
             w.destroyBlockInWorldPartially(a.getEntityId(), x, y, z, Math.min(9, (int) (k * 10)));
             if (k < 1) return Result.RUNNING;
-            int meta = w.getBlockMetadata(x, y, z);
-            ItemStack held = a.getHeldItem();
-            boolean tool = b.getMaterial().isToolNotRequired() || held != null && held.canItemHarvestBlock(b);
-            if (!tool) Ledger.flow(Ledger.Way.FROM_NOTHING, new ItemStack(b, 1, b.damageDropped(meta)), "Crew.Break drop without the tool");
-            Ledger.act(a, "break " + b.getUnlocalizedName().replace("tile.", ""));
-            b.dropBlockAsItem(w, x, y, z, meta, 0);
-            w.playAuxSFX(2001, x, y, z, Block.getIdFromBlock(b) + (meta << 12));
-            w.setBlockToAir(x, y, z);
             w.destroyBlockInWorldPartially(a.getEntityId(), x, y, z, -1);
-            return Result.OK;
+            Ledger.act(a, "break " + b.getUnlocalizedName().replace("tile.", ""));
+            return Skills.harvest(a, w, x, y, z) ? Result.OK : Result.BLOCKED;
         }
     }
-
     /** a tree: from a spot beside the trunk, the logs bottom up, each only when seen; leaves in the way first */
     static class Chop implements Task {
         final int tx, ty, tz;
@@ -560,7 +563,7 @@ public class Crew {
         GoTo walk;
         Stash(Item keep, int keepN) { this.keep = keep; this.keepN = keepN; }
         public Result step(Agent a, WorldServer w) {
-            if (chest == null) return Result.GONE;
+            if (chest == null || w.getBlock(chest[0], chest[1], chest[2]) != Blocks.chest) return Result.GONE;
             if (state == 0) { walk = new GoTo(chest[0] + 0.5, chest[1], chest[2] + 0.5, 2.3); state = 1; }
             if (state == 1) { if (walk.step(a, w) == Result.RUNNING) return Result.RUNNING; state = 2; }
             face(a, chest[0] + 0.5, chest[1] + 0.5, chest[2] + 0.5);
@@ -572,6 +575,7 @@ public class Crew {
                 int kept = 0;
                 for (java.util.Iterator<ItemStack> it = a.bag.iterator(); it.hasNext(); ) {
                     ItemStack s = it.next();
+                    if (s.getItem() instanceof net.minecraft.item.ItemTool) continue;   // tools stay with the agent
                     if (s.getItem() == keep && kept < keepN) {
                         int k = Math.min(keepN - kept, s.stackSize);
                         kept += k;
@@ -593,7 +597,6 @@ public class Crew {
                     if (s.stackSize > 0) Ledger.flow(Ledger.Way.INTO_NOTHING, s, "Crew.Stash chest full");
                     it.remove();
                 }
-                a.bag.clear();
                 Ledger.act(a, "stash");
                 if (kept > 0 && keep != null) a.bag.add(new ItemStack(keep, kept));
                 inv.markDirty();
@@ -601,57 +604,6 @@ public class Crew {
             }
             if (ticks == 22) { w.addBlockEvent(chest[0], chest[1], chest[2], Blocks.chest, 1, 0); w.playSoundEffect(chest[0] + 0.5, chest[1] + 0.5, chest[2] + 0.5, "random.chestclosed", 0.5F, 1.0F); }
             return (ticks >= 26) ? Result.OK : Result.RUNNING;
-        }
-    }
-
-    /** put a block: walk near, look at it, swing, it is there */
-    static class Place implements Task {
-        final int x, y, z, meta;
-        final Block block;
-        int ticks;
-        GoTo walk;
-        Place(int x, int y, int z, Block block, int meta) { this.x = x; this.y = y; this.z = z; this.block = block; this.meta = meta; }
-        public Result step(Agent a, WorldServer w) {
-            if (walk == null) walk = new GoTo(x + 0.5, y, z + 0.5, 2.6);
-            if (eyeDist(a, x, y, z) > 3.2 && walk.step(a, w) == Result.RUNNING) return Result.RUNNING;
-            face(a, x + 0.5, y + 0.5, z + 0.5);
-            if (++ticks < 8) return Result.RUNNING;
-            a.swingItem();
-            if (!soft(w, x, y, z)) return Result.GONE;
-            w.setBlock(x, y, z, block, meta, 3);
-            w.playSoundEffect(x + 0.5, y + 0.5, z + 0.5, block.stepSound.getPlaceSound(), 1.0F, 0.8F);
-            Ledger.fakeBlock("Crew.Place " + block.getUnlocalizedName().replace("tile.", ""), new ItemStack(block, 1, meta));
-            Ledger.act(a, "place");
-            return Result.OK;
-        }
-    }
-
-    /** work at something: swing the arm for a while, a sound now and then, then hold what was made */
-    static class Work implements Task {
-        final double x, y, z;
-        final int len;
-        final ItemStack made;
-        final String sound;
-        int ticks;
-        Work(double x, double y, double z, int len, ItemStack made, String sound) { this.x = x; this.y = y; this.z = z; this.len = len; this.made = made; this.sound = sound; }
-        public Result step(Agent a, WorldServer w) {
-            face(a, x, y, z);
-            a.act((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z), 2);
-            ticks++;
-            if (ticks % 7 == 0) {
-                a.swingItem();
-                if (sound != null) w.playSoundEffect(x, y, z, sound, 0.5F, 0.9F + w.rand.nextFloat() * 0.3F);
-            }
-            if (ticks >= len) {
-                if (made != null) {
-                    a.setCurrentItemOrArmor(0, made.copy());
-                    Ledger.flow(Ledger.Way.FROM_NOTHING, made, "Crew.Work made in hand");
-                    Ledger.act(a, "craft (pretend)");
-                    w.func_147487_a("happyVillager", x, y + 0.6, z, 6, 0.3, 0.2, 0.3, 0.0);
-                }
-                return Result.OK;
-            }
-            return Result.RUNNING;
         }
     }
 
@@ -727,7 +679,7 @@ public class Crew {
         Wood(int perAgent) { this.perAgent = perAgent; }
         void start(Crew c, WorldServer w, EntityPlayerMP p) {
             if (c.base == null) c.base = new int[] { (int) Math.floor(p.posX), (int) Math.floor(p.boundingBox.minY), (int) Math.floor(p.posZ) };
-            c.placeChest(w);
+            c.planSite(w);
             List<int[]> trees = trunks(w, c.base[0], c.base[1], c.base[2], 36);
             for (Agent a : c.agents) {
                 final double ax = a.posX, az = a.posZ;
@@ -780,8 +732,13 @@ public class Crew {
         return out;
     }
 
-    /** the chest for the crew's things, by the place the crew was called to */
-    void placeChest(WorldServer w) {
+    /** the trunks the crew may chop, around the base */
+    List<int[]> trees(WorldServer w) {
+        return trunks(w, base[0], base[1], base[2], 40);
+    }
+
+    /** where the house, the chest and the crafting table go (planned only: the blocks are made and put by agents) */
+    void planSite(WorldServer w) {
         if (chest != null) return;
         int[] s = findSite(w);
         int sx = s[0], sy = s[1], sz = s[2];
@@ -793,11 +750,7 @@ public class Crew {
         table = new int[] { fx + d[1] * 2, ground(w, fx + d[1] * 2, sy, fz - d[0] * 2), fz - d[0] * 2 };
         if (chest[1] < 0) chest[1] = sy;
         if (table[1] < 0) table[1] = sy;
-        Agent a = agents.isEmpty() ? null : agents.get(0);
-        w.setBlock(chest[0], chest[1], chest[2], Blocks.chest, 0, 3);
-        Ledger.fakeBlock("Crew.placeChest", new ItemStack(Blocks.chest));
-        w.func_147487_a("cloud", chest[0] + 0.5, chest[1] + 0.5, chest[2] + 0.5, 8, 0.3, 0.3, 0.3, 0.01);
-        Director.log("crew: house site " + sx + " " + sy + " " + sz + ", chest " + chest[0] + " " + chest[1] + " " + chest[2] + (a == null ? "" : ""));
+        Director.log("crew: house site " + sx + " " + sy + " " + sz + ", chest at " + chest[0] + " " + chest[1] + " " + chest[2] + ", table at " + table[0] + " " + table[1] + " " + table[2]);
     }
 
     /** the house's door looks from the site to the base */
@@ -837,35 +790,12 @@ public class Crew {
         return best;
     }
 
-    /** a crafting table by the chest, then every helper makes its own wooden pickaxe at it */
-    static class Tools extends Phase {
-        void start(final Crew c, WorldServer w, EntityPlayerMP p) {
-            c.placeChest(w);
-            if (c.agents.isEmpty()) return;
-            final int[] t = c.table;
-            Agent first = c.agents.get(0);
-            Crew.job(first, new GoTo(t[0] + 0.5, t[1], t[2] + 0.5 + 1.6, 1.2));
-            Crew.job(first, new Work(t[0] + 0.5, t[1] + 0.2, t[2] + 0.5, 50, null, "dig.wood"));
-            Crew.job(first, new Place(t[0], t[1], t[2], Blocks.crafting_table, 0));
-            int k = 0;
-            for (Agent a : c.agents) {
-                double ang = Math.toRadians(k++ * 360.0 / c.agents.size());
-                double sx = t[0] + 0.5 + Math.sin(ang) * 1.7, sz = t[2] + 0.5 + Math.cos(ang) * 1.7;
-                if (a != first) Crew.job(a, new Wait(new java.util.concurrent.Callable<Boolean>() {
-                    public Boolean call() { return MinecraftServer.getServer().worldServers[0].getBlock(t[0], t[1], t[2]) == Blocks.crafting_table; }
-                }));
-                Crew.job(a, new GoTo(sx, t[1], sz, 0.9));
-                Crew.job(a, new Work(t[0] + 0.5, t[1] + 0.9, t[2] + 0.5, 70 + 16 * k, new ItemStack(Items.wooden_pickaxe), "random.wood_click"));
-            }
-        }
-    }
-
     /** stone open to the air near the base: every helper digs a few with its pickaxe and brings them */
     static class Stone extends Phase {
         final int perAgent;
         Stone(int perAgent) { this.perAgent = perAgent; max = 20 * 55; }
         void start(Crew c, WorldServer w, EntityPlayerMP p) {
-            c.placeChest(w);
+            c.planSite(w);
             int bx = c.base[0], by = c.base[1], bz = c.base[2];
             List<int[]> stones = new ArrayList<int[]>();
             for (int x = bx - 28; x <= bx + 28; x++)
@@ -933,10 +863,11 @@ public class Crew {
     /** a 5x5 house by a see-through plan: walls of planks with log corners, a door and windows, a roof */
     static class House extends Phase {
         final List<int[]> plan = new ArrayList<int[]>();   // x, y, z, kind (0 planks, 1 log, 2 cobblestone)
-        final Set<Long> claimed = new HashSet<Long>();
+        final Set<Long> claimed = new HashSet<Long>(), skipped = new HashSet<Long>();
+        final Set<Integer> missing = new HashSet<Integer>();   // kinds the chest ran out of
         int shownAt = -1;
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
-            c.placeChest(w);
+            c.planSite(w);
             int[] s = site;
             int x0 = s[0], y0 = s[1], z0 = s[2];
             int[] d = c.doorDir();
@@ -990,12 +921,14 @@ public class Crew {
         /** the next block for an agent: the lowest not done and not claimed, resting on something, nearest */
         int[] next(Agent a, WorldServer w) {
             int low = Integer.MAX_VALUE;
-            for (int[] b : plan) if (soft(w, b[0], b[1], b[2]) && b[1] < low) low = b[1];
+            for (int[] b : plan)
+                if (soft(w, b[0], b[1], b[2]) && b[1] < low && !skipped.contains(key(b[0], b[1], b[2])) && !(missing.contains(b[3]) && Build.item(a, b[3]) == null)) low = b[1];
             if (low == Integer.MAX_VALUE) return null;
             int[] best = null;
             double bd = 1e9;
             for (int[] b : plan) {
                 if (b[1] > low + 1 || !soft(w, b[0], b[1], b[2]) || claimed.contains(key(b[0], b[1], b[2]))) continue;
+                if (missing.contains(b[3]) && Build.item(a, b[3]) == null || skipped.contains(key(b[0], b[1], b[2]))) continue;
                 boolean rests = !soft(w, b[0], b[1] - 1, b[2]) || !soft(w, b[0] + 1, b[1], b[2]) || !soft(w, b[0] - 1, b[1], b[2])
                         || !soft(w, b[0], b[1], b[2] + 1) || !soft(w, b[0], b[1], b[2] - 1);
                 if (!rests) continue;
@@ -1017,18 +950,45 @@ public class Crew {
         final House h;
         int[] cur;
         GoTo walk;
-        int ticks, wait;
+        Task fetch;
+        int ticks, wait, fetchKind;
         Build(House h) { this.h = h; }
+        /** the stack in the bag for a kind of block of the plan (any wood for a log), or null */
+        static ItemStack item(Agent a, int kind) {
+            Item want = Item.getItemFromBlock(block(kind));
+            for (ItemStack s : a.bag)
+                if (s.getItem() == want || kind == 1 && s.getItem() == Item.getItemFromBlock(Blocks.log2)) return s;
+            return null;
+        }
         public Result step(Agent a, WorldServer w) {
             if (h.ticks - h.shownAt < 50) { face(a, site[0] + 2.5, site[1] + 1.5, site[2] + 2.5); return Result.RUNNING; }   // everyone looks at the plan first
+            if (fetch != null) {   // to the chest for more of what the walls take
+                Result r = fetch.step(a, w);
+                if (r == Result.RUNNING) return r;
+                if (r != Result.OK) h.missing.add(fetchKind);
+                fetch = null;
+                return Result.RUNNING;
+            }
             if (cur == null) {
                 cur = h.next(a, w);
                 if (cur == null) {
-                    for (int[] b : h.plan) if (soft(w, b[0], b[1], b[2])) { if (++wait > 200) return Result.OK; return Result.RUNNING; }
-                    return Result.OK;
+                    boolean left = false, short_ = false;
+                    for (int[] b : h.plan) if (soft(w, b[0], b[1], b[2])) { left = true; if (h.missing.contains(b[3])) short_ = true; }
+                    if (!left) return Result.OK;
+                    if (short_ && h.claimed.isEmpty()) return Result.NO_ITEMS;   // what is left needs what the crew has not got
+                    if (++wait > 200) return short_ ? Result.NO_ITEMS : Result.OK;
+                    return Result.RUNNING;
+                }
+                if (item(a, cur[3]) == null) {   // not in the bag: a load from the chest (or this kind is out)
+                    fetchKind = cur[3];
+                    int want = 0;
+                    for (int[] b : h.plan) if (b[3] == cur[3] && soft(w, b[0], b[1], b[2])) want++;
+                    fetch = new Day1.Take(instance, cur[3] == 1 ? Day1.LOG : Item.getItemFromBlock(block(cur[3])), Math.max(1, Math.min(16, want / Math.max(1, instance.agents.size()) + 1)));
+                    cur = null;
+                    return Result.RUNNING;
                 }
                 h.claimed.add(key(cur[0], cur[1], cur[2]));
-                a.setCurrentItemOrArmor(0, new ItemStack(block(cur[3])));
+                a.setCurrentItemOrArmor(0, item(a, cur[3]));
                 // a spot outside the house, toward the agent, on the ground
                 int[] s = site;
                 double cx = s[0] + 2.5, cz = s[2] + 2.5, dx = cur[0] + 0.5 - cx, dz = cur[2] + 0.5 - cz, dl = Math.max(0.5, Math.hypot(dx, dz));
@@ -1052,21 +1012,10 @@ public class Crew {
             face(a, cur[0] + 0.5, cur[1] + 0.5, cur[2] + 0.5);
             a.act(cur[0], cur[1], cur[2], 3);
             if (++ticks < 4) return Result.RUNNING;
-            a.swingItem();
-            Block b = block(cur[3]);
-            w.setBlock(cur[0], cur[1], cur[2], b, cur[3] == 5 ? 5 : 0, 3);
-            w.playSoundEffect(cur[0] + 0.5, cur[1] + 0.5, cur[2] + 0.5, b.stepSound.getPlaceSound(), 0.9F, 0.8F);
-            Ledger.act(a, "place");
-            IInventory inv = instance.chestInv(w);   // what goes into the walls comes from the chest
-            boolean paid = false;
-            if (inv != null) {
-                if (cur[3] == 2) paid = take(inv, Item.getItemFromBlock(Blocks.cobblestone), 1) > 0;
-                else if (cur[3] == 1) paid = take(inv, Item.getItemFromBlock(Blocks.log), 1) > 0;
-                else if (w.rand.nextInt(4) == 0 && take(inv, Item.getItemFromBlock(Blocks.log), 1) > 0)   // a log is four planks
-                    Ledger.flow(Ledger.Way.INTO_NOTHING, new ItemStack(Blocks.log), "Crew.Build random log for planks");
-            }
-            if (paid) { Ledger.flow(Ledger.Way.CHEST_OUT, new ItemStack(b)); Ledger.flow(Ledger.Way.PLACED, new ItemStack(b)); }
-            else Ledger.fakeBlock("Crew.Build " + b.getUnlocalizedName().replace("tile.", ""), new ItemStack(b));
+            ItemStack in = item(a, cur[3]);   // what is put comes out of the bag (Skills: the right item, its own place sound)
+            Result r = in == null ? Result.NO_ITEMS : Skills.placeFromBag(a, w, cur[0], cur[1], cur[2], in.getItem(), in.getMetadata());
+            if (r != Result.OK) Director.log("crew: " + a.getCustomNameTag() + " build " + Ledger.name(in) + " at " + cur[0] + " " + cur[1] + " " + cur[2] + " -> " + r);
+            if (r == Result.BLOCKED) h.skipped.add(key(cur[0], cur[1], cur[2]));   // nothing to put it against: later, or never
             h.claimed.remove(key(cur[0], cur[1], cur[2]));
             cur = null;
             return Result.RUNNING;
