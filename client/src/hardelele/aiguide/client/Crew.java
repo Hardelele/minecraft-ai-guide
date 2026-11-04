@@ -192,6 +192,10 @@ public class Crew {
                 Ledger.save(w.getSaveHandler().getWorldDirectory());
                 Director.log(Ledger.report());
                 Director.log(board.summary());
+                StringBuilder at = new StringBuilder("crew at:");
+                for (Agent a : agents) at.append(' ').append(a.getCustomNameTag()).append(' ').append((int) Math.floor(a.posX)).append(' ').append((int) Math.floor(a.posY)).append(' ').append((int) Math.floor(a.posZ))
+                        .append(" on ").append(Ledger.name(new ItemStack(w.getBlock(MathHelper.floor_double(a.posX), MathHelper.floor_double(a.posY) - 1, MathHelper.floor_double(a.posZ))))).append(';');
+                Director.log(at.toString());
             }
         }
         while (current == null && !phases.isEmpty() && skip.contains(phases.peek().kind)) {
@@ -412,14 +416,38 @@ public class Crew {
     /** walk (run) to a point with the game's path finder */
     static class GoTo implements Task {
         double x, y, z, within;
-        int ticks, tries;
+        int ticks, tries, lastTry = -100, direct;
         GoTo(double x, double y, double z, double within) { this.x = x; this.y = y; this.z = z; this.within = within; }
         public Result step(Agent a, WorldServer w) {
             ticks++;
             if (dist(a, x, y, z) <= within) { a.getNavigator().clearPathEntity(); return Result.OK; }
-            if (ticks % 20 == 1 || a.getNavigator().noPath()) {
-                if (!a.getNavigator().tryMoveToXYZ(x, y, z, 1.0D) && ++tries > 12) {   // no way: a step closer by itself
-                    Director.log("crew: " + a.getCustomNameTag() + " has no way to " + (int) x + " " + (int) y + " " + (int) z);
+            if (direct > 0) {   // going straight: keep at it, jumping where it is blocked
+                direct--;
+                double dx = x - a.posX, dz = z - a.posZ, d = Math.max(0.5, Math.hypot(dx, dz)), s = Math.min(3, d);
+                a.getMoveHelper().setMoveTo(a.posX + dx / d * s, y, a.posZ + dz / d * s, 1.0D);
+                if (a.isInWater() || a.isCollidedHorizontally) a.getJumpHelper().setJumping();
+                if (direct > 0) return Result.RUNNING;
+            }
+            if (ticks % 20 == 1 || a.getNavigator().noPath() && ticks - lastTry >= 10) {   // a new path now and then, not every tick
+                lastTry = ticks;
+                boolean ok = a.getNavigator().tryMoveToXYZ(x, y, z, 1.0D);
+                if (!ok) {   // no whole way: a waypoint on the way there (out of a pit, round a hill)
+                    double dx = x - a.posX, dz = z - a.posZ, d = Math.hypot(dx, dz);
+                    for (double s : new double[] { 12, 8, 5, 3 }) {
+                        if (d <= s) continue;
+                        int wx = MathHelper.floor_double(a.posX + dx / d * s), wz = MathHelper.floor_double(a.posZ + dz / d * s);
+                        int wy = ground(w, wx, MathHelper.floor_double(y + (a.posY - y) * (1 - s / d)), wz);
+                        if (wy >= 0 && a.getNavigator().tryMoveToXYZ(wx + 0.5, wy, wz + 0.5, 1.0D)) { ok = true; break; }
+                    }
+                }
+                if (!ok) {   // no path at all (in the stairs of a mine, in a pond): straight toward it, jumping, as a player would
+                    double dx = x - a.posX, dz = z - a.posZ, d = Math.max(0.5, Math.hypot(dx, dz)), s = Math.min(3, d);
+                    a.getMoveHelper().setMoveTo(a.posX + dx / d * s, y, a.posZ + dz / d * s, 1.0D);
+                    if (a.isInWater() || a.isCollidedHorizontally || y > a.posY + 0.5) a.getJumpHelper().setJumping();
+                    direct = 10;
+                }
+                if (!ok && ++tries > 12) {
+                    Director.log("crew: " + a.getCustomNameTag() + " has no way to " + (int) x + " " + (int) y + " " + (int) z + " from " + (int) a.posX + " " + (int) a.posY + " " + (int) a.posZ);
                     return Result.NO_PATH;
                 }
             }
@@ -552,7 +580,7 @@ public class Crew {
                 ItemStack s = it.getEntityItem();
                 a.onItemPickup(it, s.stackSize);
                 give(a.bag, s);
-                Ledger.flow(Ledger.Way.DROP, s);
+                Ledger.flow(Day1.HANDED.containsKey(it) ? Ledger.Way.HANDED_IN : Ledger.Way.DROP, s);
                 Ledger.act(a, "pick up");
                 it.setDead();
                 if (a.getHeldItem() == null || a.getHeldItem().getItem() == s.getItem() || !(a.getHeldItem().getItem() instanceof net.minecraft.item.ItemTool))
@@ -740,7 +768,7 @@ public class Crew {
                     if (under != Blocks.grass && under != Blocks.dirt) break;
                     int h = 0;
                     while (w.getBlock(x, y + h, z) == b) h++;
-                    if (h >= 4 && h <= 5 && Math.abs(y - cy) <= 6 && w.getBlock(x + 1, y, z) != b && w.getBlock(x - 1, y, z) != b
+                    if (h >= 4 && h <= 7 && Math.abs(y - cy) <= 6 && w.getBlock(x + 1, y, z) != b && w.getBlock(x - 1, y, z) != b
                             && w.getBlock(x, y, z + 1) != b && w.getBlock(x, y, z - 1) != b && w.getBlock(x, y + h + 1, z) != b)
                         out.add(new int[] { x, y, z, h });
                     break;

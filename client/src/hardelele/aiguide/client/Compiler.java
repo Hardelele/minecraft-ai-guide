@@ -147,6 +147,8 @@ class Compiler {
         if (p == null) return "The player is not in the world.";
         if (c.base == null) { c.base = new int[] { (int) Math.floor(p.posX), (int) Math.floor(p.boundingBox.minY), (int) Math.floor(p.posZ) }; c.baseYaw = p.rotationYaw; }
         c.planSite(w);
+        boolean again = last != null;   // new goals replace the plan: what is queued goes, what is done stays done
+        if (again) c.phases.clear();
         last = g;
         int n = g.summon ? g.agents : Math.max(1, c.agents.size());
         boolean stone = "stone".equals(g.tools) || !g.gift.isEmpty() && giftHas(g, Items.stone_pickaxe);
@@ -159,16 +161,25 @@ class Compiler {
         if (stone) unfold(Items.stone_pickaxe, Math.max(0, n - 1) + (giftPick ? 1 : 0), raw, steps, 0);
         if (torches > 0) { unfold(Day1.FURNACE, 1, raw, steps, 0); unfold(Day1.TORCH, torches, raw, steps, 0); }
         for (ItemStack it : g.gift) if (it.getItem() == Items.wooden_pickaxe) unfold(Items.wooden_pickaxe, it.stackSize, raw, steps, 0);
-        int baseLogs = 0, baseStone = 0;
+        int baseLogs = 0, baseStone = 0, toolLogs = raw.containsKey(Day1.LOG) ? raw.get(Day1.LOG) : 0;
+        int standing = 0;   // the wood there is: in the crew's hands and chest, and the trunks around the base
+        for (int[] t : c.trees(w)) standing += t[3];
+        int avail = Day1.crewLogs(c, w) + standing;
         String baseNote = "";
-        if (g.shelter >= 0) {   // the base's bill, laid on the real site
-            Day1.Base b = new Day1.Base(g.shelter);
-            b.lay(c, w, g.shelter, 0);
+        if (g.shelter >= 0) {   // the base's bill, laid on the real site; smaller when the wood around is short
+            int size = g.shelter;
+            Day1.Base b = new Day1.Base(size);
+            for (; ; size--) {
+                b.lay(c, w, size, 0);
+                baseLogs = Day1.logsFor(Day1.bill(b.plan, true));
+                if (size == 0 || (int) Math.ceil((toolLogs + baseLogs) * 1.1) <= avail) break;
+            }
+            if (size < g.shelter) baseNote = "smaller than asked: only about " + avail + " logs of wood around; ";
+            g.shelter = size;
             Map<String, Integer> bill = Day1.bill(b.plan, true);
-            baseLogs = Day1.logsFor(bill);
-            baseNote = (g.shelter == 2 ? "house with a fence" : g.shelter == 1 ? "house" : "hut") + " " + b.plan.size() + " blocks, " + bill;
+            baseNote += (size == 2 ? "house with a fence" : size == 1 ? "house" : "hut") + " " + b.plan.size() + " blocks, " + bill;
         }
-        int logs = (int) Math.ceil(((raw.containsKey(Day1.LOG) ? raw.get(Day1.LOG) : 0) + baseLogs) * 1.1);
+        int logs = Math.min(avail, (int) Math.ceil((toolLogs + baseLogs) * 1.1));
         int cobble = (raw.containsKey(Day1.COBBLE) ? raw.get(Day1.COBBLE) : 0) + baseStone;
         List<Crew.Phase> ph = new ArrayList<Crew.Phase>();
         if (g.summon && c.agents.size() < n) ph.add(named(new Crew.Summon(n), "summon"));
@@ -179,6 +190,13 @@ class Compiler {
         if (!g.gift.isEmpty()) ph.add(named(new Day1.Gift(g.gift), "gift"));
         if (g.shelter >= 0) ph.add(named(new Day1.Base(g.shelter), "house"));
         if (g.gather) ph.add(named(new Day1.Gather(), "gather"));
+        if (again) {
+            for (java.util.Iterator<Crew.Phase> it = ph.iterator(); it.hasNext(); ) {
+                Crew.Phase x = it.next();
+                boolean done = x.kind.equals("wood") ? Day1.crewLogs(c, w) >= logs : succeeded.contains(x.kind);
+                if (done || c.current != null && c.current.kind.equals(x.kind)) it.remove();
+            }
+        }
         StringBuilder kinds = new StringBuilder();
         for (Crew.Phase x : ph) {
             x.origin = origin;
@@ -187,7 +205,7 @@ class Compiler {
             kinds.append(kinds.length() > 0 ? ", " : "").append(x.kind);
         }
         if (cobble > 0) c.board.goals.put(Day1.COBBLE, cobble + 8);
-        String sum = "The crew's plan: " + kinds + ". Wood " + logs + " logs" + (baseLogs > 0 ? " (the base " + baseLogs + ")" : "") + ", stone " + cobble
+        String sum = (again ? "The crew's plan, changed (done stays done): " : "The crew's plan: ") + (kinds.length() == 0 ? "nothing left to do" : kinds.toString()) + ". Wood " + logs + " logs" + (baseLogs > 0 ? " (the base " + baseLogs + ")" : "") + ", stone " + cobble
                 + (baseNote.isEmpty() ? "" : "; base: " + baseNote) + "; crafts and smelts " + steps + ". The crew shares the work itself; "
                 + "if something fails it is mended or you are told.";
         Director.log("compiler: goals " + g + " -> " + sum);
@@ -219,7 +237,7 @@ class Compiler {
     static void afterPhase(Crew c, Crew.Phase ph, WorldServer w, boolean outOfTime) {
         List<TaskBoard.Card> failed = new ArrayList<TaskBoard.Card>();
         for (TaskBoard.Card k : c.board.cards) if (k.phase == ph && k.state == TaskBoard.State.FAILED) failed.add(k);
-        if (failed.isEmpty() && !outOfTime) return;
+        if (failed.isEmpty() && !outOfTime) { succeeded.add(ph.kind); return; }
         StringBuilder what = new StringBuilder();
         for (TaskBoard.Card k : failed) what.append(what.length() > 0 ? ", " : "").append(k.kind).append(" -> ").append(k.last);
         Director.log("replan: after " + ph.kind + (outOfTime ? " (out of time)" : "") + ": " + what);
@@ -234,6 +252,18 @@ class Compiler {
             }
             if (k.kind.equals("furnace") && k.last == Result.NO_ITEMS && !has(mend, "mine")) { mend.add(named(new Day1.Mine(), "mine")); mend.add(named(new Day1.Upgrade(), "upgrade")); }
             if (k.kind.equals("pickaxes") && k.last == Result.NO_ITEMS && !has(mend, "wood")) { mend.add(named(new Day1.WoodChain(3, Day1.crewLogs(c, w) + 12), "wood")); mend.add(named(new Day1.Tools(), "tools")); }
+            if (k.kind.equals("gift") && !succeeded.contains("upgrade") && !has(mend, "upgrade") && !retried.contains("upgrade")) {   // nothing to give: the upgrade first
+                retried.add("upgrade");
+                mend.add(named(new Day1.Upgrade(), "upgrade"));
+                mend.add(named(again(ph), ph.kind));
+            }
+        }
+        boolean wayFail = outOfTime;
+        for (TaskBoard.Card k : failed) if (k.last == Result.NO_PATH || k.last == Result.TIMEOUT || k.last == Result.BLOCKED) wayFail = true;
+        if (mend.isEmpty() && wayFail && !retried.contains(ph.kind)) {   // the way, not the means: the same phase once more
+            retried.add(ph.kind);
+            Crew.Phase p2 = again(ph);
+            if (p2 != null) mend.add(named(p2, ph.kind));
         }
         if (!mend.isEmpty() && replans < 3) {
             replans++;
@@ -248,6 +278,20 @@ class Compiler {
         }
         tellGuide(c, "The crew's " + ph.kind + " ended" + (outOfTime ? " out of time" : "") + " with: " + what
                 + ". Stock: logs " + Day1.crewLogs(c, w) + ". If the goals should change, call crew_plan with the new goals; otherwise say nothing about it.");
+    }
+
+    static final java.util.Set<String> succeeded = new java.util.HashSet<String>(), retried = new java.util.HashSet<String>();
+
+    /** a fresh phase like this one (same parameters) */
+    static Crew.Phase again(Crew.Phase ph) {
+        if (ph instanceof Day1.WoodChain) return new Day1.WoodChain(3, ((Day1.WoodChain) ph).target);
+        if (ph instanceof Day1.Upgrade) { Day1.Upgrade u = (Day1.Upgrade) ph; return new Day1.Upgrade(u.torches, u.crewStone, u.giftPickaxe); }
+        if (ph instanceof Day1.Gift) return new Day1.Gift(((Day1.Gift) ph).items);
+        if (ph instanceof Day1.Base) return new Day1.Base(((Day1.Base) ph).maxSize);
+        if (ph instanceof Day1.Tools) return new Day1.Tools();
+        if (ph instanceof Day1.Mine) return new Day1.Mine();
+        if (ph instanceof Day1.Gather) return new Day1.Gather();
+        return null;
     }
 
     static boolean has(List<Crew.Phase> l, String kind) {

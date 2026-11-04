@@ -30,6 +30,9 @@ class Day1 {
 
     // ---- handing things over: a throw, the other one catches ------------------------------------------
 
+    /** the items in the air from a hand-over (caught, they are booked as handed, not found) */
+    static final Map<EntityItem, Boolean> HANDED = java.util.Collections.synchronizedMap(new java.util.WeakHashMap<EntityItem, Boolean>());
+
     /** throw the giver's bag (but what it keeps) to someone; the items fly and are caught where they land */
     static void toss(Agent from, double tx, double ty, double tz, WorldServer w, Item keep) {
         from.swingItem();
@@ -45,6 +48,7 @@ class Day1 {
             e.motionZ = dz / d * Math.min(0.42, d * 0.1);
             e.motionY = 0.22 + dy * 0.04;
             e.delayBeforeCanPickup = 12;
+            HANDED.put(e, Boolean.TRUE);   // caught, it is a hand-over, not a find
             w.spawnEntityInWorld(e);
             if (s == from.getHeldItem()) from.setCurrentItemOrArmor(0, null);
             it.remove();
@@ -62,7 +66,7 @@ class Day1 {
             if (it.isDead || it.age < 8) continue;
             ItemStack s = it.getEntityItem();
             a.onItemPickup(it, s.stackSize);
-            Skills.put(a, s, Ledger.Way.DROP);
+            Skills.put(a, s, HANDED.containsKey(it) ? Ledger.Way.HANDED_IN : Ledger.Way.DROP);
             Ledger.act(a, "pick up");
             it.setDead();
             got += s.stackSize;
@@ -189,12 +193,14 @@ class Day1 {
             if ((own ? logs(a.bag) : crewLogs(c, w)) >= target) return Result.OK;
             int[] best = null;
             double bd = 1e9;
+            boolean others = false;   // trees left, but others are on them
             for (int[] t : c.trees(w)) {
-                if (c.taken.contains(Crew.key(t[0], t[1], t[2])) || c.board.reserved(a, t[0], t[1], t[2])) continue;
+                if (c.taken.contains(Crew.key(t[0], t[1], t[2]))) continue;
+                if (c.board.reserved(a, t[0], t[1], t[2])) { others = true; continue; }
                 double d = Math.hypot(t[0] - a.posX, t[2] - a.posZ) + Math.hypot(t[0] - c.base[0], t[2] - c.base[2]) * 0.5;
                 if (d < bd) { bd = d; best = t; }
             }
-            if (best == null) return done > 0 ? Result.OK : Result.GONE;
+            if (best == null) return done > 0 || others ? Result.OK : Result.GONE;   // GONE: no wood left around at all
             c.board.reserve(a, best[0], best[1], best[2]);
             cur = new Crew.Chop(best[0], best[1], best[2]);
             done++;
@@ -241,7 +247,7 @@ class Day1 {
             boolean carry = n >= 3;
             int[] t = c.table;
             // the camp first (its logs are its own, the carrier leaves them), then wood; one carries for the choppers
-            c.board.post("camp", () -> new TaskBoard.Seq(new ChopMore(c, 3, true), new Camp(c), new ChopMore(c, target), c.new Stash(null, 0))).prio(3).at(t[0], t[1], t[2]);
+            c.board.post("camp", () -> new TaskBoard.Seq(new ChopMore(c, 3, true), new Camp(c), new TaskBoard.Seq(new ChopMore(c, target), c.new Stash(null, 0)).lenient())).prio(3).at(t[0], t[1], t[2]);
             for (int i = 0; i < n - 1 - (carry ? 1 : 0); i++)
                 c.board.post("chop", () -> carry ? new ChopMore(c, target) : new TaskBoard.Seq(new ChopMore(c, target), c.new Stash(null, 0))).prio(2);
             if (carry) c.board.post("carry", () -> new Courier(c, "chop")).prio(1.5);
