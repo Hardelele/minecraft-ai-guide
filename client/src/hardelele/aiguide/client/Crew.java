@@ -58,6 +58,7 @@ public class Crew {
     static volatile String status = "";
     static volatile double[] front;   // where the crew looks when it cheers (the camera goes there)
     final Set<Long> taken = new HashSet<Long>();
+    final TaskBoard board = new TaskBoard(this);
     static final Set<String> skip = java.util.Collections.synchronizedSet(new HashSet<String>());   // kinds the director leaves out
     static volatile boolean gated;   // the director lets each phase start (for the camera), off in a normal game
     static final Set<String> allowed = java.util.Collections.synchronizedSet(new HashSet<String>());
@@ -92,8 +93,11 @@ public class Crew {
         Origin origin = Origin.SCRIPT;
         int ticks, max = 20 * 150;
         abstract void start(Crew c, WorldServer w, EntityPlayerMP p);
+        /** done: no card of it left on the board, no agent on a job given outside the board's defaults */
         boolean done(Crew c) {
-            for (Agent a : c.agents) if (!a.jobs.isEmpty()) return false;
+            if (c.board.pending(this)) return false;
+            for (Agent a : c.agents)
+                for (Origin o : a.origins) if (o != Origin.AUTO_DEFAULT) return false;
             return true;
         }
     }
@@ -162,6 +166,7 @@ public class Crew {
         for (java.util.Iterator<Agent> it = agents.iterator(); it.hasNext(); ) if (it.next().isDead) it.remove();
         if (current != null && current.ticks > current.max) {   // too long: what is carried goes to the chest, the phase ends
             Director.log("crew phase " + current.name + ": out of time");
+            board.cancel(current);
             for (Agent a : agents) {
                 clearJobs(a);
                 a.getNavigator().clearPathEntity();
@@ -179,6 +184,7 @@ public class Crew {
                 save(w);
                 Ledger.save(w.getSaveHandler().getWorldDirectory());
                 Director.log(Ledger.report());
+                Director.log(board.summary());
             }
         }
         while (current == null && !phases.isEmpty() && skip.contains(phases.peek().kind)) {
@@ -195,8 +201,12 @@ public class Crew {
         }
         if (!loaded) load(w);
         if (w.getTotalWorldTime() % 40 == 0) adopt(w);
+        board.tick(w);
         for (Agent a : agents) {
             Task t = a.jobs.peek();
+            if (t == null && board.feed(a, w)) t = a.jobs.peek();   // idle: the board gives it something
+            else if (t != null && w.getTotalWorldTime() % 20 == a.skin() && !a.origins.isEmpty() && a.origins.peek() == Origin.AUTO_DEFAULT
+                    && !board.leased.containsKey(a) && board.preempt(a, w)) t = a.jobs.peek();   // a card waits: the default work stops
             if (t == null) {   // nothing to do: it looks at the player when the player is near
                 a.idle++;
                 if (p != null && dist(a, p.posX, p.posY, p.posZ) < 20) face(a, p.posX, p.posY + 1.5, p.posZ);
@@ -836,6 +846,34 @@ public class Crew {
         }
     }
 
+    /** stone open to the air near the base, a few together near the agent, not reserved by another (reserved for it) */
+    static List<int[]> openStone(Crew c, WorldServer w, Agent a, int n) {
+        int bx = c.base[0], by = c.base[1], bz = c.base[2];
+        List<int[]> stones = new ArrayList<int[]>();
+        for (int x = bx - 24; x <= bx + 24; x++)
+            for (int z = bz - 24; z <= bz + 24; z++)
+                for (int y = by - 6; y <= by + 10; y++) {
+                    if (w.getBlock(x, y, z) != Blocks.stone || !w.isAirBlock(x, y + 1, z) || c.board.reserved(a, x, y, z)) continue;
+                    int[] spot = null;
+                    for (int[] d : new int[][] { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } })
+                        for (int dy = 0; dy >= -1 && spot == null; dy--)
+                            if (stand(w, x + d[0], y + dy, z + d[1])) spot = new int[] { x + d[0], y + dy, z + d[1] };
+                    if (spot != null) stones.add(new int[] { x, y, z, spot[0], spot[1], spot[2] });
+                }
+        final double ax = a.posX, az = a.posZ;
+        Collections.sort(stones, new Comparator<int[]>() {
+            @Override public int compare(int[] x, int[] y) { return Double.compare(Math.hypot(x[0] - ax, x[2] - az), Math.hypot(y[0] - ax, y[2] - az)); }
+        });
+        List<int[]> out = new ArrayList<int[]>();
+        for (int[] s : stones) {
+            if (out.size() >= n) break;
+            if (!out.isEmpty() && Math.hypot(s[0] - out.get(0)[0], s[2] - out.get(0)[2]) > 3.5) continue;
+            c.board.reserve(a, s[0], s[1], s[2]);
+            out.add(s);
+        }
+        return out;
+    }
+
     /** dig blocks one after another, each from where it is seen and reached */
     static class Mine implements Task {
         final List<int[]> blocks;
@@ -1025,6 +1063,7 @@ public class Crew {
     /** everyone in front of the house (or the player), jumping */
     static class Cheer extends Phase {
         void start(Crew c, WorldServer w, EntityPlayerMP p) {
+            c.board.goals.clear();
             int[] s = site;
             double fx, fz, lx, ly, lz;
             if (s != null) {

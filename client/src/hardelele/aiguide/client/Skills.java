@@ -317,8 +317,9 @@ class Skills {
             int[] t = Crew.instance == null ? null : Crew.instance.table;
             if (!l.small()) {   // the 3x3 grid: at the table
                 if (t == null || w.getBlock(t[0], t[1], t[2]) != Blocks.crafting_table) return Result.NO_ITEMS;   // a station is missing
-                if (!nearBlock(a, w, t, Blocks.crafting_table, 2.8)) {
-                    if (walk == null) walk = new Crew.GoTo(t[0] + 0.5, t[1], t[2] + 0.5, 2.3);
+                if (!nearBlock(a, w, t, Blocks.crafting_table, 2.8)) {   // a table is everyone's at once: each stands at its own side
+                    double ang = Math.toRadians(a.skin() * 72 + 20);
+                    if (walk == null) walk = new Crew.GoTo(t[0] + 0.5 + Math.sin(ang) * 1.6, t[1], t[2] + 0.5 + Math.cos(ang) * 1.6, 0.6);
                     Result r = walk.step(a, w);
                     if (r == Result.RUNNING) return r;
                     walk = null;
@@ -375,7 +376,8 @@ class Skills {
             a.act(f[0], f[1], f[2], 2);
             ticks++;
             if (state == 0) {   // in go the input and the fuel for all of it
-                if (fu.getStackInSlot(0) != null) return Result.BLOCKED;   // someone else's smelt
+                if (!Crew.instance.board.station("furnace", a, 1)) return ticks > 20 * 60 ? Result.BLOCKED : Result.RUNNING;   // one inventory: one at a time
+                if (fu.getStackInSlot(0) != null) { Crew.instance.board.leave("furnace", a); return Result.BLOCKED; }   // something else smelts
                 int put = take(a, in, inMeta, n, Ledger.Way.INGREDIENT);
                 if (put == 0) return Result.NO_ITEMS;
                 fu.setInventorySlotContents(0, new ItemStack(in, put, Math.max(0, inMeta)));
@@ -402,6 +404,7 @@ class Skills {
                     Ledger.act(a, "take from the furnace");
                 }
                 fu.markDirty();
+                Crew.instance.board.leave("furnace", a);
                 return out == null ? Result.TIMEOUT : Result.OK;
             }
             return Result.RUNNING;

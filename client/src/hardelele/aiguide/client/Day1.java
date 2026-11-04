@@ -92,12 +92,14 @@ class Day1 {
     /** the carrier: runs to whichever worker has the most, takes it (thrown over), carries it to the chest */
     static class Courier implements Crew.Task {
         final Crew c;
-        final List<Agent> workers;
+        final List<String> kinds;
+        List<Agent> workers = new ArrayList<Agent>();
         Agent from;
         Crew.GoTo walk;
         Crew.Task stash;
-        int state, ticks, idle;
-        Courier(Crew c, List<Agent> workers) { this.c = c; this.workers = workers; }
+        int state, ticks, idle, age;
+        /** carries for whoever holds a card of these kinds on the board */
+        Courier(Crew c, String... kinds) { this.c = c; this.kinds = java.util.Arrays.asList(kinds); }
         static int load(Agent g) {
             int n = 0;
             for (ItemStack s : g.bag) if (s.isStackable()) n += s.stackSize;
@@ -105,13 +107,18 @@ class Day1 {
         }
         public Result step(Agent a, WorldServer w) {
             ticks++;
+            age++;
             if (stash != null) { if (stash.step(a, w).done()) stash = null; return Result.RUNNING; }
             if (state == 0) {   // whom to go to
+                workers = new ArrayList<Agent>();
+                for (Agent g : c.agents) {
+                    TaskBoard.Card k = c.board.leased.get(g);
+                    if (g != a && k != null && kinds.contains(k.kind)) workers.add(g);
+                }
                 from = null;
                 int most = 0;
                 for (Agent g : workers) { int n = load(g); if (n > most) { most = n; from = g; } }
-                boolean working = false;
-                for (Agent g : workers) if (!g.jobs.isEmpty()) working = true;
+                boolean working = !workers.isEmpty() || age < 20 * 8;   // at first the others are still taking their cards
                 int mine = load(a);
                 if (from == null || most < 3 && working) {
                     if (mine > 0 && (!working || mine >= 12)) { stash = c.new Stash(null, 0); return Result.RUNNING; }
@@ -171,19 +178,24 @@ class Day1 {
             if (cur != null) {
                 Result r = cur.step(a, w);
                 if (r == Result.RUNNING) return r;
-                cur = cur instanceof Crew.Chop ? new Crew.Collect(((Crew.Chop) cur).tx + 0.5, ((Crew.Chop) cur).ty, ((Crew.Chop) cur).tz + 0.5, 5) : null;
+                if (cur instanceof Crew.Chop) {
+                    Crew.Chop ch = (Crew.Chop) cur;
+                    c.board.unreserve(ch.tx, ch.ty, ch.tz);
+                    if (r != Result.OK) c.taken.add(Crew.key(ch.tx, ch.ty, ch.tz));   // could not get at it: not this one again
+                    cur = new Crew.Collect(ch.tx + 0.5, ch.ty, ch.tz + 0.5, 5);
+                } else cur = null;
                 return Result.RUNNING;
             }
             if ((own ? logs(a.bag) : crewLogs(c, w)) >= target) return Result.OK;
             int[] best = null;
             double bd = 1e9;
             for (int[] t : c.trees(w)) {
-                if (c.taken.contains(Crew.key(t[0], t[1], t[2]))) continue;
+                if (c.taken.contains(Crew.key(t[0], t[1], t[2])) || c.board.reserved(a, t[0], t[1], t[2])) continue;
                 double d = Math.hypot(t[0] - a.posX, t[2] - a.posZ) + Math.hypot(t[0] - c.base[0], t[2] - c.base[2]) * 0.5;
                 if (d < bd) { bd = d; best = t; }
             }
             if (best == null) return done > 0 ? Result.OK : Result.GONE;
-            c.taken.add(Crew.key(best[0], best[1], best[2]));
+            c.board.reserve(a, best[0], best[1], best[2]);
             cur = new Crew.Chop(best[0], best[1], best[2]);
             done++;
             say(a, done == 1 ? "Беру дерево" : "Ещё одно");
@@ -220,24 +232,19 @@ class Day1 {
     static class WoodChain extends Crew.Phase {
         final int target;
         WoodChain(int perAgent) { this.target = Base.woodNeeded(); max = 20 * 300; }
-        void start(Crew c, WorldServer w, EntityPlayerMP p) {
+        void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             if (c.base == null) c.base = new int[] { (int) Math.floor(p.posX), (int) Math.floor(p.boundingBox.minY), (int) Math.floor(p.posZ) };
             c.planSite(w);
-            List<Agent> choppers = new ArrayList<Agent>(c.agents);
-            Agent carrier = choppers.size() >= 3 ? choppers.remove(choppers.size() - 1) : null;
-            Agent camper = choppers.isEmpty() ? null : choppers.get(0);
-            for (Agent a : choppers) {
-                if (a == camper) {   // the first tree's logs make the camp, then on with the wood
-                    Crew.job(a, new ChopMore(c, 3, true));
-                    Crew.job(a, new Camp(c));
-                }
-                Crew.job(a, new ChopMore(c, target));
-                if (carrier == null || a == camper) Crew.job(a, c.new Stash(null, 0));
-            }
-            List<Agent> carried = new ArrayList<Agent>(choppers);
-            carried.remove(camper);   // its logs are the camp's: the carrier leaves it alone
-            if (carrier != null) Crew.job(carrier, new Courier(c, carried.isEmpty() ? choppers : carried));
-            Director.log("crew: wood chain for " + target + " logs, " + choppers.size() + " choppers" + (carrier != null ? ", " + carrier.getCustomNameTag() + " carries" : ""));
+            c.board.goals.put(LOG, target);
+            int n = c.agents.size();
+            boolean carry = n >= 3;
+            int[] t = c.table;
+            // the camp first (its logs are its own, the carrier leaves them), then wood; one carries for the choppers
+            c.board.post("camp", () -> new TaskBoard.Seq(new ChopMore(c, 3, true), new Camp(c), new ChopMore(c, target), c.new Stash(null, 0))).prio(3).at(t[0], t[1], t[2]);
+            for (int i = 0; i < n - 1 - (carry ? 1 : 0); i++)
+                c.board.post("chop", () -> carry ? new ChopMore(c, target) : new TaskBoard.Seq(new ChopMore(c, target), c.new Stash(null, 0))).prio(2);
+            if (carry) c.board.post("carry", () -> new Courier(c, "chop")).prio(1.5);
+            Director.log("crew: wood chain for " + target + " logs: camp, " + (n - 1 - (carry ? 1 : 0)) + " chop" + (carry ? ", carry" : "") + " cards");
         }
     }
 
@@ -249,18 +256,44 @@ class Day1 {
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             c.planSite(w);
             if (c.agents.isEmpty()) return;
-            int n = c.agents.size();
-            Agent crafter = c.agents.get(0);
+            final int n = c.agents.size();
             // a pickaxe is 3 planks and 2 sticks; 2 planks make 4 sticks; to spare: the stone pickaxes' (n + the player's) and 4 for torches
-            int sticks = 2 * n + 2 * (n + 1) + 4, planks = 3 * n + (sticks + 3) / 4 * 2;
-            Crew.job(crafter, new Take(c, LOG, (planks + 3) / 4));
-            Crew.job(crafter, new Skills.Craft(PLANKS, -1, planks));
-            Crew.job(crafter, new Skills.Craft(Items.stick, -1, sticks));
-            Crew.job(crafter, new Skills.Craft(Items.wooden_pickaxe, -1, n));
-            for (Agent a : c.agents)
-                if (a != crafter) Crew.job(crafter, new Skills.Give(a, Items.wooden_pickaxe, 1));
-            Crew.job(crafter, c.new Stash(Items.wooden_pickaxe, 1));   // the spare sticks go to the chest
-            say(crafter, "Сделаю всем кирки");
+            final int sticks = 2 * n + 2 * (n + 1) + 4, planks = 3 * n + (sticks + 3) / 4 * 2, logs = (planks + 3) / 4;
+            int[] t = c.table;
+            c.board.post("pickaxes", () -> {
+                List<Crew.Task> s = new ArrayList<Crew.Task>();
+                s.add(new Take(c, LOG, logs));
+                s.add(new Skills.Craft(PLANKS, -1, planks));
+                s.add(new Skills.Craft(Items.stick, -1, sticks));
+                s.add(new Skills.Craft(Items.wooden_pickaxe, -1, n));
+                s.add(new GiveRound(c, Items.wooden_pickaxe));
+                s.add(c.new Stash(null, 0));   // the spare sticks go to the chest
+                return new TaskBoard.Seq(s.toArray(new Crew.Task[0]));
+            }).wants(LOG, logs).prio(3).at(t[0], t[1], t[2]);
+        }
+    }
+
+    /** hand one of an item to every agent who has none (the giver keeps one) */
+    static class GiveRound implements Crew.Task {
+        final Crew c;
+        final Item item;
+        Crew.Task cur;
+        final java.util.Set<Agent> tried = new java.util.HashSet<Agent>();
+        GiveRound(Crew c, Item item) { this.c = c; this.item = item; }
+        public Result step(Agent a, WorldServer w) {
+            if (cur != null) {
+                Result r = cur.step(a, w);
+                if (r == Result.RUNNING) return r;
+                cur = null;
+            }
+            for (Agent g : c.agents)
+                if (g != a && !tried.contains(g) && Skills.count(g.bag, item, -1) == 0 && Skills.count(a.bag, item, -1) > 1) {
+                    tried.add(g);
+                    say(a, "Держи, " + g.getCustomNameTag());
+                    cur = new Skills.Give(g, item, 1);
+                    return Result.RUNNING;
+                }
+            return Result.OK;
         }
     }
 
@@ -345,29 +378,19 @@ class Day1 {
 
     static class Mine extends Crew.Phase {
         Mine() { max = 20 * 200; }
-        void start(Crew c, WorldServer w, EntityPlayerMP p) {
+        void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             c.planSite(w);
             int[] m = mine != null ? mine : mineSpot(c, w);
             if (m == null) { Director.log("crew: no place for a mine"); return; }
             mine = m;
             Director.log("crew: mine at " + m[0] + " " + m[1] + " " + m[2] + " going " + m[3] + " " + m[4]);
-            List<Agent> diggers = new ArrayList<Agent>();
-            for (Agent a : c.agents) if (hasPickaxe(a) && diggers.size() < 2) diggers.add(a);
-            int k = 0;
-            for (Agent a : diggers) {   // two dig abreast
-                int sx = m[0] + (m[3] == 0 ? k : 0), sz = m[2] + (m[4] == 0 ? k : 0);
-                Crew.job(a, new Crew.GoTo(sx + 0.5, m[1], sz + 0.5, 0.8));
-                Crew.job(a, new Steps(sx, m[1], sz, m[3], m[4], 8));
-                Crew.job(a, c.new Stash(Items.wooden_pickaxe, 1));
-                say(a, k == 0 ? "Копаю шахту" : "И я с тобой");
-                k++;
+            c.board.goals.put(COBBLE, 32);   // the rest of the crew: wood still short, or stone near the base
+            for (int k = 0; k < 2; k++) {   // two lanes abreast, for whoever has a pickaxe
+                final int sx = m[0] + (m[3] == 0 ? k : 0), sz = m[2] + (m[4] == 0 ? k : 0), y = m[1], dx = m[3], dz = m[4];
+                c.board.post("dig", () -> new TaskBoard.Seq(new Crew.GoTo(sx + 0.5, y, sz + 0.5, 0.8), new Steps(sx, y, sz, dx, dz, 8), c.new Stash(null, 0)))
+                        .need(Day1::hasPickaxe).prio(3).at(sx, y, sz);
             }
-            int left = 0;
-            for (Agent a : c.agents) {
-                if (diggers.contains(a)) continue;
-                if (left++ == 0 && !diggers.isEmpty()) Crew.job(a, new Courier(c, diggers));   // one carries what comes up
-                else { Crew.job(a, new ChopMore(c, Base.woodNeeded())); Crew.job(a, c.new Stash(Items.wooden_pickaxe, 1)); }   // the rest: more wood
-            }
+            if (c.agents.size() >= 3) c.board.post("carry", () -> new Courier(c, "dig")).prio(2);   // what comes up goes to the chest
         }
     }
 
@@ -396,10 +419,12 @@ class Day1 {
             if (ticks == 3) w.addBlockEvent(c.chest[0], c.chest[1], c.chest[2], Blocks.chest, 1, 1);
             if (ticks == 9) {
                 IInventory inv = c.chestInv(w);
+                int may = Math.min(n, c.board.chestFree(w, item, a));   // not what another card counts on
                 if (item == LOG) {   // any wood
-                    got = takeAny(inv, a, LOG, n);
-                    got += takeAny(inv, a, LOG2, n - got);
-                } else got = takeAny(inv, a, item, n);
+                    got = takeAny(inv, a, LOG, may);
+                    got += takeAny(inv, a, LOG2, may - got);
+                } else got = takeAny(inv, a, item, may);
+                c.board.took(a, item, got);
                 if (got > 0) Ledger.act(a, "take from chest");
                 a.swingItem();
             }
@@ -439,26 +464,15 @@ class Day1 {
                 int fy = Crew.ground(w, furnace[0], t[1], furnace[2]);
                 if (fy >= 0) furnace[1] = fy;
             }
-            Agent smith = c.agents.get(c.agents.size() - 1);
-            Crew.job(smith, new Take(c, COBBLE, 8 + 3));
-            Crew.job(smith, new Take(c, Items.stick, 2 + 4));
-            Crew.job(smith, new Skills.Craft(FURNACE, -1, 1));
-            Crew.job(smith, new Skills.PlaceFrom(furnace[0], furnace[1], furnace[2], FURNACE, -1));
-            Crew.job(smith, new Take(c, LOG, 6));
-            Crew.job(smith, new Skills.Craft(PLANKS, -1, 8));   // the fuel: 8 planks burn 12 items
-            Crew.job(smith, new Skills.Smelt(LOG, -1, 4, PLANKS));
-            Crew.job(smith, new Skills.Craft(TORCH, -1, 16));
-            Crew.job(smith, new Skills.Craft(Items.stone_pickaxe, -1, 1));   // for the player
-            say(smith, "Сложу печь и нажгу угля на факелы");
-            int k = 0;
-            for (Agent a : c.agents) {
-                if (a == smith) continue;
-                double ang = Math.toRadians(k++ * 120 + 30);
-                Crew.job(a, new Take(c, COBBLE, 3));
-                Crew.job(a, new Take(c, Items.stick, 2));
-                Crew.job(a, new Crew.GoTo(t[0] + 0.5 + Math.sin(ang) * 1.7, t[1], t[2] + 0.5 + Math.cos(ang) * 1.7, 0.9));
-                Crew.job(a, new Skills.Craft(Items.stone_pickaxe, -1, 1));
-            }
+            final int[] f = furnace;
+            // the smith's card: the furnace, charcoal, torches and the player's pickaxe
+            c.board.post("furnace", () -> new TaskBoard.Seq(new Take(c, COBBLE, 8 + 3), new Take(c, Items.stick, 2 + 4), new Skills.Craft(FURNACE, -1, 1),
+                    new Skills.PlaceFrom(f[0], f[1], f[2], FURNACE, -1), new Take(c, LOG, 6), new Skills.Craft(PLANKS, -1, 8),   // the fuel: 8 planks burn 12 items
+                    new Skills.Smelt(LOG, -1, 4, PLANKS), new Skills.Craft(TORCH, -1, 16), new Skills.Craft(Items.stone_pickaxe, -1, 1)))
+                    .wants(COBBLE, 11).wants(Items.stick, 6).wants(LOG, 6).prio(3).at(f[0], f[1], f[2]);
+            for (int k = 0; k < c.agents.size() - 1; k++)   // a stone pickaxe for each of the others, made by himself
+                c.board.post("stone pickaxe", () -> new TaskBoard.Seq(new Take(c, COBBLE, 3), new Take(c, Items.stick, 2), new Skills.Craft(Items.stone_pickaxe, -1, 1)))
+                        .need(a -> Skills.count(a.bag, Items.stone_pickaxe, -1) == 0).wants(COBBLE, 3).wants(Items.stick, 2).prio(2).at(t[0], t[1], t[2]);
         }
     }
 
@@ -466,11 +480,12 @@ class Day1 {
     static class Gift extends Crew.Phase {
         void start(Crew c, final WorldServer w, final EntityPlayerMP p) {
             if (c.agents.isEmpty()) return;
-            Agent smith = c.agents.get(c.agents.size() - 1);
-            say(smith, "Это тебе!");
-            Crew.job(smith, new Skills.Give(Items.stone_pickaxe, 1));
-            Crew.job(smith, new Skills.Give(TORCH, 8));
-            for (Agent g : c.agents) if (g != smith) Crew.job(g, new Crew.Look(p.posX, p.posY + 1.5, p.posZ, 50));
+            final double px = p.posX, py = p.posY, pz = p.posZ;
+            // whoever made the torches (and so the player's pickaxe) brings them; the others turn to look
+            final TaskBoard.Card gift = c.board.post("gift", () -> new TaskBoard.Seq(new Skills.Give(Items.stone_pickaxe, 1), new Skills.Give(TORCH, 8)).lenient())
+                    .need(a -> Skills.count(a.bag, TORCH, -1) > 0 && Skills.count(a.bag, Items.stone_pickaxe, -1) > 0).prio(4);
+            for (Agent g : c.agents)
+                c.board.post("watch", () -> new Crew.Look(px, py + 1.5, pz, 50)).need(a -> gift.state != TaskBoard.State.OPEN).pin(g).prio(1).lease(20 * 30);
         }
     }
 
@@ -574,26 +589,16 @@ class Day1 {
             Map<String, Integer> b = bill(plan, true);
             Director.log("crew: base of size " + size + ", " + plan.size() + " blocks, bill " + b + ", wood " + wood + " logs (needs " + logsFor(b) + "), torches " + torches);
             show(c, w);
-            Agent crafter = c.agents.get(0);
-            Crew.job(crafter, new Prepare(c, b));   // the materials made at the table, into the chest
-            for (Agent a : c.agents) Crew.job(a, new Crew.Build(this));
             final Base self = this;
-            Crew.job(crafter, new Crew.Task() {   // the door last, by the crafter (from its bag)
-                Crew.Task t;
-                public Result step(Agent a, WorldServer ww) {
-                    if (t == null) {
-                        if (Skills.count(a.bag, Items.wooden_door, -1) == 0) {
-                            Take take = new Take(c, Items.wooden_door, 1);
-                            t = take;
-                        } else t = new Skills.PlaceFrom(self.doorAt[0], self.doorAt[1], self.doorAt[2], Items.wooden_door, -1);
-                    }
-                    Result r = t.step(a, ww);
-                    if (r == Result.RUNNING) return r;
-                    if (t instanceof Take && r == Result.OK) { t = null; return Result.RUNNING; }
-                    return r;
-                }
-            });
-            say(crafter, size == 2 ? "Дерева хватает на дом с оградой" : size == 1 ? "Хватит на дом, ограду потом" : "Дерева мало: строим хижину");
+            final Map<String, Integer> bill = b;
+            final int[] t = c.table, dr = doorAt;
+            int logs = logsFor(b) - get(b, "log");
+            // the materials made at the table, into the chest; then everyone builds; the door last
+            TaskBoard.Card prep = c.board.post("prepare", () -> new Prepare(c, bill)).wants(LOG, Math.min(logs, wood)).prio(4).at(t[0], t[1], t[2]);
+            List<TaskBoard.Card> builds = new ArrayList<TaskBoard.Card>();
+            for (int i = 0; i < c.agents.size(); i++) builds.add(c.board.post("build", () -> new Crew.Build(self)).after(prep).prio(3).at(Crew.site[0] + 2, Crew.site[1], Crew.site[2] + 2).lease(20 * 300));
+            c.board.post("door", () -> new TaskBoard.Seq(new Take(c, Items.wooden_door, 1), new Skills.PlaceFrom(dr[0], dr[1], dr[2], Items.wooden_door, -1))).after(builds).prio(3).at(dr[0], dr[1], dr[2]);
+            Director.log("crew: " + (size == 2 ? "wood enough for a house with a fence" : size == 1 ? "a house, the fence later" : "little wood: a hut"));
         }
     }
 
@@ -632,19 +637,23 @@ class Day1 {
         void start(Crew c, WorldServer w, EntityPlayerMP p) {
             int[] m = mine;
             if (m == null) { new Crew.Cheer().start(c, w, p); return; }
+            c.board.goals.clear();   // the day's work is over: no default work
             int k = 0, n = c.agents.size();
-            double mx = m[0] + 0.5 + m[3] * 2.5 + (m[3] == 0 ? 0.5 : 0), mz = m[2] + 0.5 + m[4] * 2.5 + (m[4] == 0 ? 0.5 : 0);
+            final double mx = m[0] + 0.5 + m[3] * 2.5 + (m[3] == 0 ? 0.5 : 0), mz = m[2] + 0.5 + m[4] * 2.5 + (m[4] == 0 ? 0.5 : 0);
             front = new double[] { mx, m[1] - 2, mz };
             Crew.front = front;
             Agent torcher = null;
             for (Agent a : c.agents) if (Skills.count(a.bag, TORCH, -1) > 0) torcher = a;
-            for (Agent a : c.agents) {
+            final int tx0 = m[0] - m[3] + (m[3] == 0 ? -1 : 0), ty0 = m[1], tz0 = m[2] - m[4] + (m[4] == 0 ? -1 : 0), my = m[1];
+            for (Agent a : c.agents) {   // a place for each round the mouth, pinned to it (the camera knows who stands where)
                 double ang = Math.toRadians(-60 + 120.0 * k / Math.max(1, n - 1)) + Math.atan2(-m[3], -m[4]);
-                double tx = m[0] + 0.5 - m[3] * 1.5 + Math.sin(ang) * 2.2, tz = m[2] + 0.5 - m[4] * 1.5 + Math.cos(ang) * 2.2;
+                final double tx = m[0] + 0.5 - m[3] * 1.5 + Math.sin(ang) * 2.2, tz = m[2] + 0.5 - m[4] * 1.5 + Math.cos(ang) * 2.2;
                 int gy = Crew.ground(w, MathHelper.floor_double(tx), m[1], MathHelper.floor_double(tz));
-                Crew.job(a, new Crew.GoTo(tx, gy < 0 ? m[1] : gy, tz, 0.7));
-                if (a == torcher) Crew.job(a, new Skills.PlaceFrom(m[0] - m[3] + (m[3] == 0 ? -1 : 0), m[1], m[2] - m[4] + (m[4] == 0 ? -1 : 0), TORCH, -1));
-                Crew.job(a, new Crew.Look(mx, m[1] - 2.5, mz, 20 * 30));
+                final int ty = gy < 0 ? m[1] : gy;
+                final boolean torch = a == torcher;
+                c.board.post("gather", () -> torch
+                        ? new TaskBoard.Seq(new Crew.GoTo(tx, ty, tz, 0.7), new Skills.PlaceFrom(tx0, ty0, tz0, TORCH, -1), new Crew.Look(mx, my - 2.5, mz, 20 * 30)).lenient()
+                        : new TaskBoard.Seq(new Crew.GoTo(tx, ty, tz, 0.7), new Crew.Look(mx, my - 2.5, mz, 20 * 30)).lenient()).pin(a).prio(2);
                 k++;
             }
             if (torcher != null) say(torcher, "Посвечу у входа");
