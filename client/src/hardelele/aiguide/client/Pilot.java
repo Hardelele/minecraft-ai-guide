@@ -64,6 +64,28 @@ public class Pilot {
         FMLCommonHandler.instance().bus().register(instance);
         MinecraftForge.EVENT_BUS.register(instance);
         MinecraftForge.EVENT_BUS.register(new Ghosts());
+        shareWithServerMod();
+    }
+
+    /**
+     * Singleplayer with the AI Guide mod in the same game: there is one channel "aiguide" per name, and the one made
+     * here (later) took the server side's packets too. The server mod's line is hooked onto it as well.
+     */
+    static void shareWithServerMod() {
+        try {
+            cpw.mods.fml.common.ModContainer m = cpw.mods.fml.common.Loader.instance().getIndexedModList().get("aiguide");
+            if (m == null || m.getMod() == null) return;
+            java.lang.reflect.Field lf = m.getMod().getClass().getDeclaredField("link");
+            lf.setAccessible(true);
+            Object link = lf.get(m.getMod());
+            java.lang.reflect.Field cf = link.getClass().getDeclaredField("channel");
+            cf.setAccessible(true);
+            cf.set(link, instance.channel);
+            instance.channel.register(link);
+            System.out.println("[AIGuideClient] the server mod's line shares the channel (singleplayer)");
+        } catch (Exception e) {
+            System.out.println("[AIGuideClient] no server mod line to share: " + e);
+        }
     }
 
     // ---- the line to the server --------------------------------------------------------------
@@ -119,6 +141,7 @@ public class Pilot {
             ticks = 0;
             replans = 0;
             hitStarted = false;
+            behind = null;
             if (t.equals("goto") && !plan()) fail("no way there");
         } else if (t.equals("close")) {
             if (mc.currentScreen != null && !(mc.currentScreen instanceof GuiGuide)) mc.thePlayer.closeScreen();
@@ -297,6 +320,7 @@ public class Pilot {
     }
 
     float progress;
+    int[] behind;   // the block the autopilot digs after the leaves in its way
 
     /**
      * Digs as the player does: the best tool of the hotbar in hand, "started digging" to the server, the
@@ -309,6 +333,15 @@ public class Pilot {
         int s = facing(tx, ty, tz);
         if (w.isAirBlock(tx, ty, tz)) {
             w.destroyBlockInWorldPartially(p.getEntityId(), tx, ty, tz, -1);
+            if (behind != null) {   // the leaves in the way are gone: back to the block itself
+                tx = behind[0];
+                ty = behind[1];
+                tz = behind[2];
+                behind = null;
+                hitStarted = false;
+                ticks = 0;
+                return;
+            }
             task = null;
             return;
         }
@@ -316,6 +349,22 @@ public class Pilot {
         boolean looking = aim(tx + 0.5 + SIDE[s][0] * 0.5, ty + 0.5 + SIDE[s][1] * 0.5, tz + 0.5 + SIDE[s][2] * 0.5);
         if (!looking && ticks < 20) return;
         Block b = w.getBlock(tx, ty, tz);
+        if (!hitStarted && looking) {   // only what the eyes meet: leaves in the way go first, anything else firm is a fail
+            net.minecraft.util.MovingObjectPosition hit = w.rayTraceBlocks(Vec3.createVectorHelper(p.posX, p.boundingBox.minY + p.getEyeHeight(), p.posZ),
+                    Vec3.createVectorHelper(tx + 0.5, ty + 0.5, tz + 0.5), false, true, false);
+            if (hit != null && (hit.blockX != tx || hit.blockY != ty || hit.blockZ != tz)) {
+                Block in = w.getBlock(hit.blockX, hit.blockY, hit.blockZ);
+                if (in.getMaterial() == net.minecraft.block.material.Material.leaves && behind == null) {
+                    behind = new int[] { tx, ty, tz };
+                    tx = hit.blockX;
+                    ty = hit.blockY;
+                    tz = hit.blockZ;
+                    ticks = 0;
+                    return;
+                }
+                if (in.getMaterial() != net.minecraft.block.material.Material.leaves) { fail("not in sight"); return; }
+            }
+        }
         if (!hitStarted) {
             int best = p.inventory.currentItem;
             float speed = -1;
