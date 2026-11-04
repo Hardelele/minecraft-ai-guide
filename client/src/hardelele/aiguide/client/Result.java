@@ -13,8 +13,10 @@ public enum Result {
     GONE,
     /** took longer than it may */
     TIMEOUT,
-    /** in the way of something (an entity where a block goes, a station in use) */
-    BLOCKED;
+    /** in the way of something for good (nothing to put the block against, a station in use) */
+    BLOCKED,
+    /** not now: someone stands where the block goes (they are asked to step aside); try again shortly */
+    BUSY;
 
     boolean done() {
         return this != RUNNING;

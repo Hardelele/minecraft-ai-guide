@@ -21,6 +21,7 @@ import net.minecraft.world.World;
 public class Agent extends EntityCreature {
     final Deque<Crew.Task> jobs = new ArrayDeque<Crew.Task>();
     final Deque<Origin> origins = new ArrayDeque<Origin>();   // where each job came from
+    Crew.GoTo aside;   // out of someone's way first (a block goes where it stands): before its jobs, without touching them
     Origin origin = Origin.SCRIPT;   // of the job it does now
     final List<ItemStack> bag = new ArrayList<ItemStack>();
     int number, idle, stuck;

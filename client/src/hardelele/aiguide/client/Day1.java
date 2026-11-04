@@ -329,7 +329,8 @@ class Day1 {
                 if (Crew.soft(w, cx, y, cz) || b == Blocks.bedrock || b.getMaterial().isLiquid()) continue;
                 double reach = Crew.eyeDist(a, cx, y, cz);
                 int[] in = Crew.blocker(a, w, cx, y, cz);
-                if (reach <= Crew.REACH && (in == null || in[0] == cx && in[2] == cz)) {
+                boolean inOk = in == null || in[0] == cx && in[2] == cz && Ground.mayDig(Crew.instance, in[0], in[1], in[2], "mine");
+                if (reach <= Crew.REACH && inOk && Ground.mayDig(Crew.instance, cx, y, cz, "mine")) {
                     br = in != null && (in[0] != cx || in[1] != y || in[2] != cz) ? new Crew.Break(in[0], in[1], in[2], 0) : new Crew.Break(cx, y, cz, 0);
                     return Result.RUNNING;
                 }
@@ -341,7 +342,9 @@ class Day1 {
             // the step is open: a floor under it, from the agent's own cobblestone (or dirt), or the stairs end here
             if (Crew.soft(w, cx, floor - 1, cz)) {
                 Item fill = Skills.count(a.bag, COBBLE, -1) > 0 ? COBBLE : Skills.count(a.bag, Item.getItemFromBlock(Blocks.dirt), -1) > 0 ? Item.getItemFromBlock(Blocks.dirt) : null;
-                if (fill == null || Skills.placeFromBag(a, w, cx, floor - 1, cz, fill, -1) != Result.OK) { catchNear(a, w, 2.5); return Result.OK; }
+                Result put = fill == null ? Result.NO_ITEMS : Skills.placeFromBag(a, w, cx, floor - 1, cz, fill, -1);
+                if (put == Result.BUSY) return Result.RUNNING;   // someone in the cell: they step aside
+                if (put != Result.OK) { catchNear(a, w, 2.5); return Result.OK; }
             }
             k++;
             tries = 0;
@@ -361,8 +364,16 @@ class Day1 {
             for (int oz = -12; oz <= 12; oz += 2) {
                 int x = bx + ox, z = bz + oz, y = Crew.ground(w, x, by, z);
                 if (y < 0) continue;
-                if (s != null && x >= s[0] - 6 && x <= s[0] + 10 && z >= s[2] - 6 && z <= s[2] + 10) continue;   // not under the base
+                Ground.Flood from = Ground.baseFlood(c, w);
+                if (from != null && !from.has(x, y, z)) continue;   // the mouth: where one walks from the base
                 for (int[] d : dirs) {
+                    boolean free = true;   // the stairs may be dug (no protected zone in their way)
+                    for (int k = 1; k <= 10 && free; k++)
+                        for (int dy = 0; dy <= 2; dy++) {
+                            int cx = x + d[0] * k, cz = z + d[1] * k;
+                            if (!Ground.mayDig(c, cx, y - k + dy, cz, "mine") || !Ground.mayDig(c, cx + (d[0] == 0 ? 1 : 0), y - k + dy, cz + (d[1] == 0 ? 1 : 0), "mine")) { free = false; break; }
+                        }
+                    if (!free) continue;
                     int good = 0;
                     for (int k = 0; k < 9; k++)
                         for (int side = 0; side <= 1; side++) {
@@ -377,6 +388,7 @@ class Day1 {
     }
 
     static int[] mine;   // x, y, z, dx, dz of the mouth (for the camera and the next day)
+    static int mineDepth;   // the steps planned so far (the stairs' zone reaches as deep)
 
     static boolean hasPickaxe(Agent a) {
         for (ItemStack s : a.bag) if (s.getItem() instanceof net.minecraft.item.ItemPickaxe) return true;
@@ -392,14 +404,51 @@ class Day1 {
             int[] m = mine != null ? mine : mineSpot(c, w);
             if (m == null) { Director.log("crew: no place for a mine"); return; }
             mine = m;
+            mineDepth = Math.max(mineDepth, depth);
+            Ground.markMineWay(c, w);   // the floor of the way there is kept from now on
             Director.log("crew: mine at " + m[0] + " " + m[1] + " " + m[2] + " going " + m[3] + " " + m[4]);
-            c.board.goals.put(COBBLE, 32);   // the rest of the crew: wood still short, or stone near the base
             for (int k = 0; k < 2; k++) {   // two lanes abreast, for whoever has a pickaxe
                 final int sx = m[0] + (m[3] == 0 ? k : 0), sz = m[2] + (m[4] == 0 ? k : 0), y = m[1], dx = m[3], dz = m[4], n = depth;
                 c.board.post("dig", () -> new TaskBoard.Seq(new Crew.GoTo(sx + 0.5, y, sz + 0.5, 0.8), new Steps(sx, y, sz, dx, dz, n), c.new Stash(null, 0)))
-                        .need(Day1::hasPickaxe).prio(3).at(sx, y, sz);
+                        .need(Day1::hasPickaxe).needs(java.util.Arrays.asList(new ItemStack(Items.wooden_pickaxe))).prio(3).at(sx, y, sz);
             }
             if (c.agents.size() >= 3) c.board.post("carry", () -> new Courier(c, "dig")).prio(2);   // what comes up goes to the chest
+        }
+    }
+
+    /** stone open to the air around the base that may be dug and is in reach of a walk from the base (counted up to n) */
+    static int openRock(Crew c, WorldServer w, int n) {
+        Ground.Flood f = Ground.baseFlood(c, w);
+        int bx = c.base[0], by = c.base[1], bz = c.base[2], found = 0;
+        for (int x = bx - 24; x <= bx + 24 && found < n; x++)
+            for (int z = bz - 24; z <= bz + 24 && found < n; z++)
+                for (int y = by - 6; y <= by + 10; y++) {
+                    if (w.getBlock(x, y, z) != Blocks.stone || !w.isAirBlock(x, y + 1, z)) continue;
+                    if (!Ground.mayDig(c, x, y, z, "gather") || f != null && f.near(x, y, z, Crew.REACH) == null) continue;
+                    found++;
+                }
+        return found;
+    }
+
+    /** stone from rock open to the air: a card for every few blocks, for whoever has a pickaxe */
+    static class Quarry extends Crew.Phase {
+        final int n;
+        Quarry(int n) { this.n = n; max = 20 * 180; }
+        void start(final Crew c, WorldServer w, EntityPlayerMP p) {
+            for (int left = n; left > 0; left -= 6) {
+                final int k = Math.min(6, left);
+                c.board.post("quarry", () -> new Crew.Task() {   // the blocks are picked when an agent takes it (near it, a way back left)
+                    Crew.Task t;
+                    public Result step(Agent a, WorldServer ww) {
+                        if (t == null) {
+                            List<int[]> st = Crew.openStone(c, ww, a, k);
+                            if (st.isEmpty()) return Result.GONE;
+                            t = new TaskBoard.Seq(new Crew.Mine(st), new Crew.Collect(st.get(0)[0] + 0.5, st.get(0)[1], st.get(0)[2] + 0.5, 5), c.new Stash(null, 0));
+                        }
+                        return t.step(a, ww);
+                    }
+                }).need(Day1::hasPickaxe).needs(java.util.Arrays.asList(new ItemStack(Items.wooden_pickaxe))).prio(3);
+            }
         }
     }
 
@@ -434,6 +483,7 @@ class Day1 {
                     got += takeAny(inv, a, LOG2, may - got);
                 } else got = takeAny(inv, a, item, may);
                 c.board.took(a, item, got);
+                if (got < n) c.board.shortage(a, item, n - got);   // the chest had too little: what is missing goes on the card
                 if (got > 0) Ledger.act(a, "take from chest");
                 a.swingItem();
             }
@@ -524,7 +574,7 @@ class Day1 {
                 Crew.Task[] s = new Crew.Task[give.size()];
                 for (int i = 0; i < s.length; i++) s[i] = new Skills.Give(give.get(i).getItem(), give.get(i).stackSize);
                 return new TaskBoard.Seq(s).lenient();
-            }).need(a -> { for (ItemStack g : give) if (Skills.count(a.bag, g.getItem(), -1) == 0) return false; return true; }).prio(4);
+            }).need(a -> { for (ItemStack g : give) if (Skills.count(a.bag, g.getItem(), -1) == 0) return false; return true; }).needs(give).prio(4);
             for (Agent g : c.agents)
                 c.board.post("watch", () -> new Crew.Look(px, py + 1.5, pz, 50)).need(a -> gift.state != TaskBoard.State.OPEN).pin(g).prio(1).lease(20 * 30);
         }

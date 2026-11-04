@@ -45,6 +45,8 @@ class TaskBoard {
         Agent holder, doneBy;
         long since;
         int unfit;
+        boolean placeChecked;
+        final Map<Item, Integer> shortOf = new LinkedHashMap<Item, Integer>();   // what was missing when it failed, and how much
         Result last;
         Card(int id, String kind, Make make) { this.id = id; this.kind = kind; this.make = make; }
         Card pin(Agent a) { only = a; return this; }
@@ -54,6 +56,8 @@ class TaskBoard {
         Card prio(double p) { prio = p; return this; }
         Card at(double x, double y, double z) { at = new double[] { x, y, z }; return this; }
         Card need(Need n) { need = n; return this; }
+        List<ItemStack> needs;   // the things the 'need' asks the agent to hold (for the shortfall when nobody has them)
+        Card needs(List<ItemStack> l) { needs = l; return this; }
         Card wants(Item i, int n) { wants.put(i, n); return this; }
         Card lease(int ticks) { lease = ticks; return this; }
         boolean open() { return state == State.OPEN || state == State.LEASED; }
@@ -113,6 +117,7 @@ class TaskBoard {
         if (k.sameAs != null && k.sameAs.doneBy != null && k.sameAs.doneBy != a) return false;
         if (k.sameAs != null && k.sameAs.doneBy == null && k.sameAs.state != State.FAILED) return false;
         if (k.need != null && !k.need.ok(a)) return false;
+        if (k.at != null && here != null && here.near((int) Math.floor(k.at[0]), (int) Math.floor(k.at[1]), (int) Math.floor(k.at[2]), Crew.REACH + 1) == null) return false;   // it cannot walk there from where it is
         for (Map.Entry<Item, Integer> e : k.wants.entrySet()) if (chestFree(w, e.getKey(), null) < e.getValue()) return false;
         return true;
     }
@@ -123,6 +128,8 @@ class TaskBoard {
         if (k.only == a || k.sameAs != null) u += 3;
         return u;
     }
+
+    Ground.Flood here;   // the walk from the agent being matched (set by feed and preempt)
 
     Card best(Agent a, WorldServer w) {
         Card best = null;
@@ -142,11 +149,12 @@ class TaskBoard {
             Ledger.act(a, "haul");
             return true;
         }
-        Long r = rest.get(a);
-        if (r != null && r > now) {   // resting after a way it could not go: it tries to get out (toward the base) meanwhile
-            if (c.base != null && ((now - r) % 100 == 0)) Crew.job(a, new Crew.GoTo(c.base[0] + 0.5, c.base[1], c.base[2] + 0.5, 3), Origin.AUTO_DEFAULT);
-            return false;
+        here = Ground.flood(w, Ground.feet(w, a.posX, a.posY, a.posZ), 48, null);   // where it can walk from where it is
+        if (c.base != null && here.near(c.base[0], c.base[1], c.base[2], 4) == null) {   // cut off from the base: back first (the stuck machine digs a way)
+            Crew.job(a, new Crew.GoTo(c.base[0] + 0.5, c.base[1], c.base[2] + 0.5, 3), Origin.AUTO_DEFAULT);
+            return true;
         }
+        Long r = rest.get(a);
         Card k = best(a, w);
         if (k != null) { take(k, a, w); return true; }
         final Crew.Task d = r != null && r > now || c.current == null ? null : deficit(a, w);
@@ -169,6 +177,7 @@ class TaskBoard {
 
     /** an agent on a default job leaves it when a card it fits is waiting */
     boolean preempt(Agent a, WorldServer w) {
+        here = Ground.flood(w, Ground.feet(w, a.posX, a.posY, a.posZ), 48, null);
         Card k = best(a, w);
         if (k == null) return false;
         Crew.clearJobs(a);
@@ -204,7 +213,6 @@ class TaskBoard {
         k.last = r;
         if (r == Result.OK) { k.state = State.DONE; k.doneBy = a; return; }
         k.tries++;
-        if (r == Result.NO_PATH) rest.put(a, now + 20 * 15);   // it cannot get out from where it is: not the next card at once
         k.state = k.tries >= k.maxTries || k.only != null && r == Result.NO_TOOL ? State.FAILED : State.OPEN;
         Director.log("board: " + k + " by " + a.getCustomNameTag() + " -> " + r + (k.state == State.OPEN ? ", back on the board" : ", given up"));
     }
@@ -221,15 +229,34 @@ class TaskBoard {
     void tick(WorldServer w) {
         now++;
         for (Card k : cards) {
+            if (k.state == State.OPEN && !k.placeChecked && k.at != null) {   // a place nobody can walk to from the base: NO_PATH before anyone sets off
+                k.placeChecked = true;
+                Ground.Flood f = Ground.baseFlood(c, w);
+                if (f != null && f.near((int) Math.floor(k.at[0]), (int) Math.floor(k.at[1]), (int) Math.floor(k.at[2]), Crew.REACH + 1) == null) {
+                    k.state = State.FAILED;
+                    k.last = Result.NO_PATH;
+                    Ledger.result(Result.NO_PATH);
+                    Director.log("board: " + k + " cannot be reached from the base -> NO_PATH");
+                    continue;
+                }
+            }
             if (k.state == State.OPEN && ready(k) && now % 20 == 0) {   // nobody can take it (no tool, no items, no one pinned): given up after a while
                 boolean someone = false;
+                Ground.Flood keep = here;
+                here = null;   // (where each one could walk is checked when it takes a card, not here)
                 for (Agent a : c.agents) if (!a.isDead && fits(k, a, w)) someone = true;
+                here = keep;
                 if (someone) k.unfit = 0;
                 else if ((k.unfit += 20) > 20 * 30) {
                     k.state = State.FAILED;
                     boolean needOk = false;   // what keeps everyone off it: the agent (a tool, a thing in the bag) or the chest
                     for (Agent a : c.agents) if (k.need == null || k.need.ok(a)) needOk = true;
                     k.last = needOk ? Result.NO_ITEMS : Result.NO_TOOL;
+                    for (Map.Entry<Item, Integer> e : k.wants.entrySet()) {   // the chest's shortfall
+                        int lack = e.getValue() - chestFree(w, e.getKey(), null);
+                        if (lack > 0) k.shortOf.put(e.getKey(), lack);
+                    }
+                    if (!needOk && k.needs != null) for (ItemStack s : k.needs) k.shortOf.put(s.getItem(), s.stackSize);   // what the agent would have to hold
                     Ledger.result(k.last);
                     Director.log("board: " + k + " nobody can take it -> " + k.last);
                 }
@@ -308,6 +335,15 @@ class TaskBoard {
             if (v != null) n -= v;
         }
         return Math.max(0, n);
+    }
+
+    /** an agent's step found too little of something (the chest short): its card remembers what and how much */
+    void shortage(Agent a, Item item, int n) {
+        Card k = leased.get(a);
+        if (k == null || n <= 0) return;
+        Item key = item == Day1.LOG2 ? Day1.LOG : item;
+        Integer o = k.shortOf.get(key);
+        k.shortOf.put(key, (o == null ? 0 : o) + n);
     }
 
     /** an agent took some from the chest: its card's hold on it shrinks */

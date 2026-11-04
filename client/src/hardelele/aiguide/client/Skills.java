@@ -139,11 +139,40 @@ class Skills {
     static final int[][] SIDE = { { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { -1, 0, 0 }, { 1, 0, 0 } };
 
     /** place one of the bag's items at x y z, with the item's own use on a face next to it (the agent looks at it) */
+    /**
+     * Is the cell free for a block now: items lying there are picked up by the placer (they are within its reach),
+     * another agent standing there is asked to step aside, the placer itself or the player there means not now (BUSY).
+     * Every placement of the crew goes through this.
+     */
+    @SuppressWarnings("unchecked")
+    static Result clearCell(Agent a, WorldServer w, int x, int y, int z, int height) {
+        net.minecraft.util.AxisAlignedBB box = net.minecraft.util.AxisAlignedBB.getBoundingBox(x, y, z, x + 1, y + height, z + 1);
+        Result r = Result.OK;
+        for (Object o : w.getEntitiesWithinAABBExcludingEntity(null, box)) {
+            net.minecraft.entity.Entity e = (net.minecraft.entity.Entity) o;
+            if (e.isDead) continue;
+            if (e instanceof net.minecraft.entity.item.EntityItem) {   // a thing lying there: into the placer's bag
+                net.minecraft.entity.item.EntityItem it = (net.minecraft.entity.item.EntityItem) e;
+                ItemStack s = it.getEntityItem();
+                a.onItemPickup(it, s.stackSize);
+                put(a, s, Day1.HANDED.containsKey(it) ? Ledger.Way.HANDED_IN : Ledger.Way.DROP);
+                it.setDead();
+                continue;
+            }
+            if (e instanceof net.minecraft.entity.item.EntityXPOrb) continue;
+            if (e instanceof Agent) Crew.stepAside((Agent) e, x, y, z);   // another agent, or the placer itself
+            r = Result.BUSY;   // the placer, another agent (asked to move), the player or an animal: not now
+        }
+        return r;
+    }
+
     static Result placeFromBag(Agent a, WorldServer w, int x, int y, int z, Item item, int meta) {
         if (!Crew.soft(w, x, y, z)) return Result.GONE;
         ItemStack in = null;
         for (ItemStack s : a.bag) if (same(s, item, meta)) { in = s; break; }
         if (in == null) return Result.NO_ITEMS;
+        Result free = clearCell(a, w, x, y, z, item instanceof net.minecraft.item.ItemDoor ? 2 : 1);
+        if (free != Result.OK) return free;
         FakePlayer p = hands(a, w);
         // where to click: a door on the floor under it (its own use puts both halves), anything else on a solid
         // neighbour's face: the block below first, then the sides, then above
@@ -162,6 +191,7 @@ class Skills {
             boolean ok = one.tryPlaceItemIntoWorld(p, w, c[0], c[1], c[2], face, 0.5F + SIDE[face][0] * 0.5F, 0.5F + SIDE[face][1] * 0.5F, 0.5F + SIDE[face][2] * 0.5F);
             if (ok && one.stackSize == 0) {
                 take(a, item, meta, 1, Ledger.Way.PLACED);
+                Ground.changed();
                 Block placed = w.getBlock(x, y, z);
                 w.playSoundEffect(x + 0.5, y + 0.5, z + 0.5, placed.stepSound.getPlaceSound(), 1.0F, 0.8F);
                 a.swingItem();
@@ -432,18 +462,11 @@ class Skills {
                 walk = null;
                 if (r != Result.OK && Crew.eyeDist(a, x, y, z) > 5.0) return r;
             }
-            if (a.boundingBox.intersectsWith(net.minecraft.util.AxisAlignedBB.getBoundingBox(x, y, z, x + 1, y + 2, z + 1))) {   // standing on the spot: a step back first
-                if (walk == null || walk.step(a, w).done()) {
-                    double dx = a.posX - (x + 0.5), dz = a.posZ - (z + 0.5), d = Math.max(0.3, Math.hypot(dx, dz));
-                    walk = new Crew.GoTo(x + 0.5 + dx / d * 1.8, y, z + 0.5 + dz / d * 1.8, 0.4);
-                }
-                if (++aside > 20 * 6) return Result.BLOCKED;
-                return Result.RUNNING;
-            }
             Crew.face(a, x + 0.5, y + 0.5, z + 0.5);
             a.act(x, y, z, 3);
             if (++ticks < 6) return Result.RUNNING;
             Result r = placeFromBag(a, w, x, y, z, item, meta);
+            if (r == Result.BUSY) return ++aside > 20 * 15 ? Result.BLOCKED : Result.RUNNING;   // someone is moving out of the way
             if (r == Result.BLOCKED) Director.log("crew: " + a.getCustomNameTag() + " cannot put " + Ledger.name(new ItemStack(item)) + " at " + x + " " + y + " " + z + " (" + Ledger.name(new ItemStack(w.getBlock(x, y, z))) + " there)");
             return r;
         }

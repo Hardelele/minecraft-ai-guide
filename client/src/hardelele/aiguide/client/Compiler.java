@@ -185,7 +185,7 @@ class Compiler {
         if (g.summon && c.agents.size() < n) ph.add(named(new Crew.Summon(n), "summon"));
         if (logs > 0) ph.add(named(new Day1.WoodChain(3, logs), "wood"));
         if (pickaxes) ph.add(named(new Day1.Tools(), "tools"));
-        if (cobble > 0 || g.mine) ph.add(named(new Day1.Mine(), "mine"));
+        if (cobble > 0 || g.mine) ph.add(named(new Day1.Mine(Math.max(4, (int) Math.ceil(cobble / 4.0) + 1)), "mine"));   // as deep as the stone wanted takes (two lanes, about 4 a step)
         if (stone || torches > 0) ph.add(named(new Day1.Upgrade(torches, "stone".equals(g.tools), giftPick), "upgrade"));
         if (!g.gift.isEmpty()) ph.add(named(new Day1.Gift(g.gift), "gift"));
         if (g.shelter >= 0) ph.add(named(new Day1.Base(g.shelter), "house"));
@@ -228,62 +228,102 @@ class Compiler {
         return n;
     }
 
-    // ---- replanning on events ---------------------------------------------------------------------------
+    // ---- replanning on events: what is short is worked out and fetched, then the phase goes again ----------
 
     /**
-     * After a phase: what went wrong is mended by rules (a phase again, wood for a base short of it); a gap the rules
-     * do not cover is told to the guide, who may change the goals. At most three mends and two words to the guide a day.
+     * After a phase. A phase whose cards (the optional ones aside) all went through is done. Otherwise what was short
+     * is added up from the cards (each failure says what it lacked and how much; a base says what of its bill is still
+     * to be made), and each shortfall is covered from where it can be had: wood from the trunks one can walk to, stone
+     * from rock open to the air or by the mine's stairs going deeper by just the steps it takes, a made thing by the
+     * phase that makes it (its own raw things first). Then the phase goes again. A phase that failed on the way (no
+     * path, out of time) goes again as it is. What cannot be covered is told to the guide.
      */
     static void afterPhase(Crew c, Crew.Phase ph, WorldServer w, boolean outOfTime) {
         List<TaskBoard.Card> failed = new ArrayList<TaskBoard.Card>();
         for (TaskBoard.Card k : c.board.cards) if (k.phase == ph && k.state == TaskBoard.State.FAILED && !k.optional) failed.add(k);
         if (failed.isEmpty() && !outOfTime) { succeeded.add(ph.kind); return; }
         StringBuilder what = new StringBuilder();
-        for (TaskBoard.Card k : failed) what.append(what.length() > 0 ? ", " : "").append(k.kind).append(" -> ").append(k.last);
-        Director.log("replan: after " + ph.kind + (outOfTime ? " (out of time)" : "") + ": " + what);
-        List<Crew.Phase> mend = new ArrayList<Crew.Phase>();
-        boolean noPickaxe = true;
-        for (Agent a : c.agents) if (Day1.hasPickaxe(a)) noPickaxe = false;
+        Map<Item, Integer> lack = new LinkedHashMap<Item, Integer>();
+        boolean way = outOfTime;
         for (TaskBoard.Card k : failed) {
-            if (k.kind.equals("dig") && noPickaxe && !has(mend, "tools")) { mend.add(named(new Day1.Tools(), "tools")); mend.add(named(new Day1.Mine(), "mine")); }
-            if (k.kind.equals("build") && k.last == Result.NO_ITEMS && !has(mend, "wood")) {   // wood short: more, then on with the same base
-                mend.add(named(new Day1.WoodChain(3, Day1.crewLogs(c, w) + 24), "wood"));
-                mend.add(named(new Day1.Base(((Day1.Base) ph).maxSize), "house"));
-            }
-            if (k.kind.equals("furnace") && k.last == Result.NO_ITEMS && !has(mend, "mine")) {   // stone short: the mine deeper, then the same upgrade
-                mend.add(named(new Day1.Mine(mineDepth += 6), "mine"));
-                mend.add(named(again(ph), "upgrade"));
-            }
-            if (k.kind.equals("pickaxes") && k.last == Result.NO_ITEMS && !has(mend, "wood")) { mend.add(named(new Day1.WoodChain(3, Day1.crewLogs(c, w) + 12), "wood")); mend.add(named(new Day1.Tools(), "tools")); }
-            if (k.kind.equals("gift") && !succeeded.contains("upgrade") && !has(mend, "upgrade") && !retried.contains("upgrade")) {   // nothing to give: the upgrade first
-                retried.add("upgrade");
-                mend.add(named(new Day1.Upgrade(), "upgrade"));
-                mend.add(named(again(ph), ph.kind));
-            }
+            what.append(what.length() > 0 ? ", " : "").append(k.kind).append(" -> ").append(k.last);
+            for (Map.Entry<Item, Integer> e : k.shortOf.entrySet()) lack.put(e.getKey(), Math.max(lack.containsKey(e.getKey()) ? lack.get(e.getKey()) : 0, e.getValue()));
+            if (k.last == Result.NO_PATH || k.last == Result.TIMEOUT || k.last == Result.BLOCKED) way = true;
         }
-        boolean wayFail = outOfTime;
-        for (TaskBoard.Card k : failed) if (k.last == Result.NO_PATH || k.last == Result.TIMEOUT || k.last == Result.BLOCKED) wayFail = true;
-        if (mend.isEmpty() && wayFail && !retried.contains(ph.kind)) {   // the way, not the means: the same phase once more
-            retried.add(ph.kind);
-            Crew.Phase p2 = again(ph);
-            if (p2 != null) mend.add(named(p2, ph.kind));
+        if (ph instanceof Day1.Base) {   // a base: what of its bill is still to be made, in raw things
+            Map<String, Integer> bill = ((Day1.Base) ph).toMake(c, w);
+            int logs = Day1.logsFor(bill) - Day1.crewLogs(c, w);
+            if (logs > 0) lack.put(Day1.LOG, logs);
+            int torches = Day1.get(bill, "torch");
+            if (torches > 0) lack.put(Day1.TORCH, torches);
         }
-        if (!mend.isEmpty() && replans < 3) {
+        Director.log("replan: after " + ph.kind + (outOfTime ? " (out of time)" : "") + ": " + what + "; short of " + names(lack));
+        List<Crew.Phase> mend = new ArrayList<Crew.Phase>();
+        List<String> cannot = new ArrayList<String>();
+        for (Map.Entry<Item, Integer> e : lack.entrySet()) topUp(c, w, e.getKey(), e.getValue(), mend, cannot, 0);
+        if ((!mend.isEmpty() || way) && cannot.isEmpty() && replans < 4 && (repeats.containsKey(ph.kind) ? repeats.get(ph.kind) : 0) < 2) {
             replans++;
+            repeats.put(ph.kind, (repeats.containsKey(ph.kind) ? repeats.get(ph.kind) : 0) + 1);
+            Crew.Phase again = again(ph);
+            if (again != null) mend.add(named(again, ph.kind));
             for (int i = mend.size() - 1; i >= 0; i--) {   // before what was planned next
                 mend.get(i).origin = Origin.REPLAN;
                 c.phases.addFirst(mend.get(i));
             }
             StringBuilder k = new StringBuilder();
             for (Crew.Phase x : mend) k.append(k.length() > 0 ? ", " : "").append(x.kind);
-            Director.log("replan: mended by rules (" + replans + "/3): " + k);
+            Director.log("replan: " + k + " (" + replans + "/4)");
             return;
         }
         tellGuide(c, "The crew's " + ph.kind + " ended" + (outOfTime ? " out of time" : "") + " with: " + what
-                + ". Stock: logs " + Day1.crewLogs(c, w) + ". If the goals should change, call crew_plan with the new goals; otherwise say nothing about it.");
+                + (cannot.isEmpty() ? "" : "; cannot be had near: " + cannot) + ". Stock: logs " + Day1.crewLogs(c, w)
+                + ". If the goals should change, call crew_plan with the new goals; otherwise say nothing about it.");
     }
 
-    static final java.util.Set<String> succeeded = new java.util.HashSet<String>(), retried = new java.util.HashSet<String>();
+    /** the phases that get n more of an item: raw things from the ground, made things by the phase that makes them */
+    static void topUp(Crew c, WorldServer w, Item item, int n, List<Crew.Phase> mend, List<String> cannot, int depth) {
+        if (n <= 0 || depth > 4) return;
+        if (item == Day1.LOG || item == Day1.LOG2) {
+            int standing = 0;
+            Ground.Flood f = Ground.baseFlood(c, w);
+            for (int[] t : c.trees(w)) if (f == null || f.near(t[0], t[1], t[2], Crew.REACH) != null) standing += t[3];
+            if (standing == 0) { cannot.add("wood"); return; }
+            if (!has(mend, "wood")) mend.add(named(new Day1.WoodChain(3, Day1.crewLogs(c, w) + Math.min(n, standing)), "wood"));
+            if (standing < n) cannot.add("wood (" + standing + " of " + n + " logs around)");
+            return;
+        }
+        if (item == Day1.COBBLE) {   // rock open to the air first; what it lacks, from the stairs going deeper
+            int open = Day1.openRock(c, w, n);
+            if (open > 0) mend.add(named(new Day1.Quarry(Math.min(n, open)), "quarry"));
+            if (open < n) {
+                int steps = (int) Math.ceil((n - open) / 4.0);   // a new step of two lanes gives about 4 stone (some is dirt)
+                Day1.mineDepth = Math.max(Day1.mineDepth, 8) + steps;
+                mend.add(named(new Day1.Mine(Day1.mineDepth), "mine"));
+            }
+            return;
+        }
+        // a made thing: its raw things first (less what the crew has), then the phase that makes it
+        Map<Item, Integer> raw = new LinkedHashMap<Item, Integer>();
+        unfold(item, n, raw, new LinkedHashMap<String, Integer>(), 0);
+        for (Map.Entry<Item, Integer> e : raw.entrySet()) {
+            int have = Day1.Base.have(c, w, e.getKey()) + (e.getKey() == Day1.LOG ? Day1.Base.have(c, w, Day1.LOG2) : 0);
+            topUp(c, w, e.getKey(), e.getValue() - have, mend, cannot, depth + 1);
+        }
+        if (item == Day1.TORCH || item == Items.coal) mend.add(named(new Day1.Upgrade(item == Day1.TORCH ? n : n * 4, false, false), "upgrade"));
+        else if (item == Items.stone_pickaxe) mend.add(named(new Day1.Upgrade(0, true, true), "upgrade"));
+        else if (item == Items.wooden_pickaxe || item == Items.stick || item == Day1.PLANKS) { if (!has(mend, "tools")) mend.add(named(new Day1.Tools(), "tools")); }
+        else if (item == Day1.FURNACE) mend.add(named(new Day1.Upgrade(0, false, false), "upgrade"));
+        // the base's own things (fences, a door) are made by its Prepare when it goes again
+    }
+
+    static String names(Map<Item, Integer> m) {
+        StringBuilder b = new StringBuilder("{");
+        for (Map.Entry<Item, Integer> e : m.entrySet()) b.append(b.length() > 1 ? ", " : "").append(Ledger.name(new ItemStack(e.getKey()))).append(' ').append(e.getValue());
+        return b.append('}').toString();
+    }
+
+    static final java.util.Set<String> succeeded = new java.util.HashSet<String>();
+    static final Map<String, Integer> repeats = new java.util.HashMap<String, Integer>();
 
     /** a fresh phase like this one (same parameters) */
     static Crew.Phase again(Crew.Phase ph) {
@@ -292,12 +332,11 @@ class Compiler {
         if (ph instanceof Day1.Gift) return new Day1.Gift(((Day1.Gift) ph).items);
         if (ph instanceof Day1.Base) return new Day1.Base(((Day1.Base) ph).maxSize);
         if (ph instanceof Day1.Tools) return new Day1.Tools();
-        if (ph instanceof Day1.Mine) return new Day1.Mine(mineDepth += 6);
+        if (ph instanceof Day1.Mine) return new Day1.Mine(((Day1.Mine) ph).depth);
+        if (ph instanceof Day1.Quarry) return new Day1.Quarry(((Day1.Quarry) ph).n);
         if (ph instanceof Day1.Gather) return new Day1.Gather();
         return null;
     }
-
-    static int mineDepth = 8;
 
     static boolean has(List<Crew.Phase> l, String kind) {
         for (Crew.Phase p : l) if (p.kind.equals(kind)) return true;

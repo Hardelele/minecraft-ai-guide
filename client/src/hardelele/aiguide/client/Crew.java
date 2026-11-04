@@ -214,6 +214,10 @@ public class Crew {
         if (w.getTotalWorldTime() % 40 == 0) adopt(w);
         board.tick(w);
         for (Agent a : agents) {
+            if (a.aside != null) {   // stepping out of a placement's way comes before anything else
+                if (a.aside.step(a, w).done()) a.aside = null;
+                continue;
+            }
             Task t = a.jobs.peek();
             if (t == null && board.feed(a, w)) t = a.jobs.peek();   // idle: the board gives it something
             else if (t != null && w.getTotalWorldTime() % 20 == a.skin() && !a.origins.isEmpty() && a.origins.peek() == Origin.AUTO_DEFAULT
@@ -413,85 +417,118 @@ public class Crew {
 
     // ---- tasks ----------------------------------------------------------------------------------------
 
-    /** walk (run) to a point with the game's path finder */
+    /**
+     * Go to a point: one way of getting stuck and out of it for every skill. The game's path finder first; with no
+     * progress for a while, the crew's own walk search (Ground) gives a route and the agent follows it waypoint by
+     * waypoint; with no route or no progress on it, it digs its way through blocks it may dig (not a protected zone,
+     * natural ground or rock, a block its tools take) toward the point; and when that does not get it there either,
+     * the task gives up with NO_PATH, which gives its card back to the board.
+     */
     static class GoTo implements Task {
+        static final int NAV = 0, ROUTE = 1, DIG = 2;
         double x, y, z, within;
-        int ticks, tries, lastTry = -100, direct, digs;
+        int ticks, state, lastTry = -100, since, digs, ri, routes;
+        double best = 1e9;
+        List<int[]> route;
         Break br;
         GoTo(double x, double y, double z, double within) { this.x = x; this.y = y; this.z = z; this.within = within; }
 
-        /** the next block to dig on a way out toward the target: headroom, then the step ahead (natural blocks only) */
-        int[] dig(Agent a, WorldServer w) {
+        public Result step(Agent a, WorldServer w) {
+            ticks++;
+            double d = dist(a, x, y, z);
+            if (d <= within) { a.getNavigator().clearPathEntity(); return Result.OK; }
+            if (d < best - 0.4) { best = d; since = 0; } else since++;   // progress: nearer by a bit
+            if (br != null) {
+                Result r = br.step(a, w);
+                if (r == Result.RUNNING) return r;
+                br = null;
+                Ground.changed();
+                Day1.catchNear(a, w, 2.0);
+                since = 0;
+                state = ROUTE;   // through the gap: a route again
+                route = null;
+            }
+            if (ticks > 20 * 90) return Result.TIMEOUT;
+            switch (state) {
+                case NAV:
+                    if (ticks % 20 == 1 || a.getNavigator().noPath() && ticks - lastTry >= 10) {
+                        lastTry = ticks;
+                        a.getNavigator().tryMoveToXYZ(x, y, z, 1.0D);
+                    }
+                    if (since > 20 * 4) { state = ROUTE; route = null; since = 0; }
+                    return Result.RUNNING;
+                case ROUTE:
+                    if (route == null) {
+                        if (++routes > 6) { state = DIG; return Result.RUNNING; }
+                        Ground.Flood f = Ground.flood(w, Ground.feet(w, a.posX, a.posY, a.posZ), 48, null);
+                        int[] to = f.near(MathHelper.floor_double(x), MathHelper.floor_double(y), MathHelper.floor_double(z), Math.max(1.5, within + 0.5));
+                        if (to == null) { state = DIG; return Result.RUNNING; }   // no walk there at all
+                        route = f.route(to);
+                        ri = 0;
+                    }
+                    if (ri >= route.size()) { state = NAV; route = null; since = 0; return Result.RUNNING; }
+                    int[] p = route.get(ri);
+                    if (Math.abs(a.posX - (p[0] + 0.5)) < 0.45 && Math.abs(a.posZ - (p[2] + 0.5)) < 0.45 && Math.abs(a.posY - p[1]) < 1.1) { ri++; return Result.RUNNING; }
+                    a.getMoveHelper().setMoveTo(p[0] + 0.5, p[1], p[2] + 0.5, 1.0D);   // the waypoint next to it: straight there
+                    if (p[1] > a.posY + 0.5 || a.isCollidedHorizontally || a.isInWater()) a.getJumpHelper().setJumping();
+                    if (since > 20 * 5) { route = null; since = 0; }   // no progress on it: a new route (or digging)
+                    return Result.RUNNING;
+                default:   // DIG: through what may be dug, toward the point
+                    int[] b = digNext(a, w);
+                    if (b == null || digs >= 48) {
+                        Director.log("crew: " + a.getCustomNameTag() + " has no way to " + (int) x + " " + (int) y + " " + (int) z + " from " + (int) a.posX + " " + (int) a.posY + " " + (int) a.posZ);
+                        return Result.NO_PATH;
+                    }
+                    br = new Break(b[0], b[1], b[2], 0);
+                    digs++;
+                    return Result.RUNNING;
+            }
+        }
+
+        /** the next block in the way toward the point that the agent may dig: room over the head going up, the cell ahead */
+        int[] digNext(Agent a, WorldServer w) {
             int x0 = MathHelper.floor_double(a.posX), y0 = MathHelper.floor_double(a.posY + 0.01), z0 = MathHelper.floor_double(a.posZ);
             double dx = x - a.posX, dz = z - a.posZ;
             int sx = Math.abs(dx) >= Math.abs(dz) ? (dx > 0 ? 1 : -1) : 0, sz = sx == 0 ? (dz > 0 ? 1 : -1) : 0;
             int fx = x0 + sx, fz = z0 + sz;
-            int[][] cells = y > a.posY + 0.9
-                    ? new int[][] { { x0, y0 + 2, z0 }, { fx, y0 + 1, fz }, { fx, y0 + 2, fz } }   // up: room to jump, then the step's air
-                    : new int[][] { { fx, y0, fz }, { fx, y0 + 1, fz } };                          // level or down: the way ahead
+            int[][] cells = y > a.posY + 0.9 ? new int[][] { { x0, y0 + 2, z0 }, { fx, y0 + 1, fz }, { fx, y0 + 2, fz } }
+                    : y < a.posY - 0.9 ? new int[][] { { fx, y0 + 1, fz }, { fx, y0, fz }, { fx, y0 - 1, fz } }
+                    : new int[][] { { fx, y0 + 1, fz }, { fx, y0, fz } };
             for (int[] c : cells) {
-                Block b = w.getBlock(c[0], c[1], c[2]);
-                if (soft(w, c[0], c[1], c[2]) || b.getMaterial().isLiquid()) continue;
-                if (!(b == Blocks.stone || b == Blocks.dirt || b == Blocks.grass || b == Blocks.gravel || b == Blocks.sand || b == Blocks.leaves
-                        || b == Blocks.leaves2 || b instanceof net.minecraft.block.BlockOre || b == Blocks.clay || b == Blocks.sandstone)) return null;   // nothing built, no bedrock
-                return c;
+                if (Ground.passable(w, c[0], c[1], c[2], null)) continue;
+                return mayDigThrough(a, w, c[0], c[1], c[2]) ? c : null;
             }
-            return null;   // the way is open: walk it
+            return null;
         }
 
-        public Result step(Agent a, WorldServer w) {
-            ticks++;
-            if (dist(a, x, y, z) <= within) { a.getNavigator().clearPathEntity(); return Result.OK; }
-            if (br != null) {   // digging a way out
-                Result r = br.step(a, w);
-                if (r == Result.RUNNING) return r;
-                br = null;
-                Day1.catchNear(a, w, 2.0);
-                direct = 12;   // and on into the gap
-            }
-            if (direct > 0) {   // going straight: keep at it, jumping where it is blocked
-                direct--;
-                double dx = x - a.posX, dz = z - a.posZ, d = Math.max(0.5, Math.hypot(dx, dz)), s = Math.min(3, d);
-                a.getMoveHelper().setMoveTo(a.posX + dx / d * s, y, a.posZ + dz / d * s, 1.0D);
-                if (a.isInWater() || a.isCollidedHorizontally) a.getJumpHelper().setJumping();
-                if (direct > 0) return Result.RUNNING;
-            }
-            if (ticks % 20 == 1 || a.getNavigator().noPath() && ticks - lastTry >= 10) {   // a new path now and then, not every tick
-                lastTry = ticks;
-                boolean ok = a.getNavigator().tryMoveToXYZ(x, y, z, 1.0D);
-                if (!ok) {   // no whole way: a waypoint on the way there (out of a pit, round a hill)
-                    double dx = x - a.posX, dz = z - a.posZ, d = Math.hypot(dx, dz);
-                    for (double s : new double[] { 12, 8, 5, 3 }) {
-                        if (d <= s) continue;
-                        int wx = MathHelper.floor_double(a.posX + dx / d * s), wz = MathHelper.floor_double(a.posZ + dz / d * s);
-                        int wy = ground(w, wx, MathHelper.floor_double(y + (a.posY - y) * (1 - s / d)), wz);
-                        if (wy >= 0 && a.getNavigator().tryMoveToXYZ(wx + 0.5, wy, wz + 0.5, 1.0D)) { ok = true; break; }
-                    }
-                }
-                if (!ok && tries >= 3 && digs < 60) {   // boxed in (a pit, the bottom of a mine): dig a way as a player would, a stair up toward it
-                    int[] b = dig(a, w);
-                    if (b != null) { br = new Break(b[0], b[1], b[2], 0); digs++; tries--; return Result.RUNNING; }
-                }
-                if (!ok) {   // no path at all (in the stairs of a mine, in a pond): straight toward it, jumping, as a player would
-                    double dx = x - a.posX, dz = z - a.posZ, d = Math.max(0.5, Math.hypot(dx, dz)), s = Math.min(3, d);
-                    a.getMoveHelper().setMoveTo(a.posX + dx / d * s, y, a.posZ + dz / d * s, 1.0D);
-                    if (a.isInWater() || a.isCollidedHorizontally || y > a.posY + 0.5) a.getJumpHelper().setJumping();
-                    direct = 10;
-                }
-                if (!ok && ++tries > 12) {
-                    Director.log("crew: " + a.getCustomNameTag() + " has no way to " + (int) x + " " + (int) y + " " + (int) z + " from " + (int) a.posX + " " + (int) a.posY + " " + (int) a.posZ);
-                    return Result.NO_PATH;
-                }
-            }
-            if (ticks % 40 == 0) {
-                if (Math.abs(a.posX - a.lastX) + Math.abs(a.posZ - a.lastZ) < 0.2) a.stuck++;
-                else a.stuck = 0;
-                a.lastX = a.posX;
-                a.lastZ = a.posZ;
-                if (a.stuck > 3) { a.stuck = 0; return Result.NO_PATH; }
-            }
-            return (ticks > 20 * 40) ? Result.TIMEOUT : Result.RUNNING;
+        /** natural ground or rock, outside every protected zone, and a block the agent's tools take */
+        static boolean mayDigThrough(Agent a, WorldServer w, int x, int y, int z) {
+            Material m = w.getBlock(x, y, z).getMaterial();
+            boolean natural = m == Material.rock || m == Material.ground || m == Material.grass || m == Material.sand || m == Material.clay
+                    || m == Material.leaves || m == Material.plants || m == Material.vine || m == Material.snow || m == Material.craftedSnow;
+            return natural && instance != null && Ground.mayDig(instance, x, y, z, "way") && Skills.breakTicks(a, w, x, y, z) >= 0;
         }
+    }
+
+    /** an agent standing where a block is to go moves to the nearest free spot beside it (not over the cell) */
+    static void stepAside(Agent a, int x, int y, int z) {
+        if (a.aside != null) return;
+        WorldServer w = (WorldServer) a.worldObj;
+        int[] f = Ground.feet(w, a.posX, a.posY, a.posZ);
+        int[] best = null;
+        double bd = 1e9;
+        for (int dx = -3; dx <= 3; dx++)
+            for (int dz = -3; dz <= 3; dz++)
+                for (int dy = -1; dy <= 1; dy++) {
+                    int cx = f[0] + dx, cy = f[1] + dy, cz = f[2] + dz;
+                    if (cx == x && cz == z) continue;   // not the cell, not over or under it
+                    if (Math.abs(cx - x) + Math.abs(cz - z) < 2 || !Ground.stand(w, cx, cy, cz, null)) continue;
+                    double d = Math.abs(dx) + Math.abs(dz) + Math.abs(dy) * 0.5;
+                    if (d < bd) { bd = d; best = new int[] { cx, cy, cz }; }
+                }
+        if (best == null) return;
+        a.getNavigator().clearPathEntity();
+        a.aside = new GoTo(best[0] + 0.5, best[1], best[2] + 0.5, 0.35);
     }
 
     /** look at a point for a while */
@@ -916,17 +953,6 @@ public class Crew {
         }
     }
 
-    /** within the mine's stairs (two lanes, ten steps, a block either side): those blocks are the way up */
-    static boolean nearMine(int x, int y, int z) {
-        int[] m = Day1.mine;
-        if (m == null) return false;
-        for (int k = -1; k <= 10; k++) {
-            int cx = m[0] + m[3] * k, cz = m[2] + m[4] * k;
-            if (Math.abs(x - cx) <= (m[3] == 0 ? 2 : 0) + 1 && Math.abs(z - cz) <= (m[4] == 0 ? 2 : 0) + 1 && y <= m[1] + 1) return true;
-        }
-        return false;
-    }
-
     /** stone open to the air near the base, a few together near the agent, not reserved by another (reserved for it) */
     static List<int[]> openStone(Crew c, WorldServer w, Agent a, int n) {
         int bx = c.base[0], by = c.base[1], bz = c.base[2];
@@ -935,7 +961,7 @@ public class Crew {
             for (int z = bz - 24; z <= bz + 24; z++)
                 for (int y = by - 6; y <= by + 10; y++) {
                     if (w.getBlock(x, y, z) != Blocks.stone || !w.isAirBlock(x, y + 1, z) || c.board.reserved(a, x, y, z)) continue;
-                    if (y < by - 2 || nearMine(x, y, z) || site != null && x >= site[0] - 7 && x <= site[0] + 11 && z >= site[2] - 7 && z <= site[2] + 11) continue;   // not the stairs, not under the base, no pits
+                    if (!Ground.mayDig(c, x, y, z, "gather")) continue;   // the protected zones (base, stations, the mine's stairs and its way)
                     int[] spot = null;
                     for (int[] d : new int[][] { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } })
                         for (int dy = 0; dy >= -1 && spot == null; dy--)
@@ -947,9 +973,14 @@ public class Crew {
             @Override public int compare(int[] x, int[] y) { return Double.compare(Math.hypot(x[0] - ax, x[2] - az), Math.hypot(y[0] - ax, y[2] - az)); }
         });
         List<int[]> out = new ArrayList<int[]>();
+        Ground.Flood from = Ground.flood(w, Ground.feet(w, a.posX, a.posY, a.posZ), 32, null);
+        int checks = 0;
         for (int[] s : stones) {
-            if (out.size() >= n) break;
+            if (out.size() >= n || checks > 24) break;
             if (!out.isEmpty() && Math.hypot(s[0] - out.get(0)[0], s[2] - out.get(0)[2]) > 3.5) continue;
+            if (from.near(s[0], s[1], s[2], REACH) == null) continue;   // not reachable from where it is
+            checks++;
+            if (!Ground.digLeavesWay(c, w, s[0], s[1], s[2], "gather")) continue;   // the dig would leave a pit with no way back
             c.board.reserve(a, s[0], s[1], s[2]);
             out.add(s);
         }
@@ -1145,7 +1176,8 @@ public class Crew {
             if (++ticks < 4) return Result.RUNNING;
             ItemStack in = item(a, cur[3]);   // what is put comes out of the bag (Skills: the right item, its own place sound)
             Result r = in == null ? Result.NO_ITEMS : Skills.placeFromBag(a, w, cur[0], cur[1], cur[2], in.getItem(), in.getMetadata());
-            if (r != Result.OK) Director.log("crew: " + a.getCustomNameTag() + " build " + Ledger.name(in) + " at " + cur[0] + " " + cur[1] + " " + cur[2] + " -> " + r);
+            if (r == Result.BUSY) h.skipped.put(key(cur[0], cur[1], cur[2]), h.ticks + 60);   // someone moves out of the cell: another block meanwhile
+            else if (r != Result.OK) Director.log("crew: " + a.getCustomNameTag() + " build " + Ledger.name(in) + " at " + cur[0] + " " + cur[1] + " " + cur[2] + " -> " + r);
             if (r == Result.BLOCKED) h.skipped.put(key(cur[0], cur[1], cur[2]), h.ticks + 200);   // someone stands there, or nothing to put it against: in 10 s again
             h.claimed.remove(key(cur[0], cur[1], cur[2]));
             cur = null;
