@@ -27,7 +27,7 @@ import net.minecraft.world.WorldServer;
  * Nothing moves at a distance and nothing happens at once. Everything runs on the server thread.
  */
 class Errands {
-    static final int CHEST = 0, FROM_PLAYER = 1, TABLE = 2, BRING = 3, PLACE = 4, DIG = 5;
+    static final int CHEST = 0, FROM_PLAYER = 1, TABLE = 2, BRING = 3, PLACE = 4, DIG = 5, POCKET = 6, PICKUP = 7;
     static final int TIMEOUT = 20 * 180, LEAD_TIMEOUT = 20 * 600, IDLE = 20 * 40, WAIT_OFFLINE = 20 * 60;
 
     /** what to collect: an exact item (fetch) or a recipe's ingredient (craft) */
@@ -115,7 +115,13 @@ class Errands {
     String craft(EntityPlayerMP p, ItemStack want, int count, boolean lead) {
         String k = RecipeIndex.key(want);
         int[] table = table(p);
-        if (table == null) return "No crafting table within " + mod.config.fetchRadius + " blocks of the player: the guide crafts at a table, like a player. Ask them to put one down.";
+        boolean pocket = false;   // no table: what fits the 2x2 grid of the player's own inventory is crafted there
+        if (table == null) {
+            if (lead && mod.link.has(p.func_70005_c_()))
+                for (RecipeIndex.Recipe r : mod.recipes.producing(want)) if (r.machine.equals("crafting") && small(r)) pocket = true;
+            if (!pocket) return "No crafting table within " + mod.config.fetchRadius + " blocks of the player: the guide crafts at a table, like a player. "
+                    + "Only what fits the 2x2 grid of the inventory (planks, sticks, a crafting table) is crafted without one. Ask them to put one down.";
+        }
         List<ItemStack> pool = pool(p);
         RecipeIndex.Recipe best = null;
         int bestTimes = 0;
@@ -124,6 +130,7 @@ class Errands {
             boolean refill = false;   // recharging or repairing the thing itself is not making it
             for (RecipeIndex.Ingredient g : r.in) for (ItemStack o : g.options) if (RecipeIndex.key(o).equals(k)) refill = true;
             if (!r.machine.equals("crafting") || refill || r.out.isEmpty() || r.out.get(0).stack == null) continue;
+            if (pocket && !small(r)) continue;
             int per = Math.max(1, r.out.get(0).stack.field_77994_a);
             int times = Math.min(64, (count + per - 1) / per);
             StringBuilder lack = new StringBuilder();
@@ -165,12 +172,83 @@ class Errands {
         for (Need n : e.needs) n.left = 0;   // counted again on the way
         for (int i = 0, j = 0; i < best.in.size(); i++) if (cells[i] > 0) e.needs.get(j++).left = cells[i] * bestTimes;
         if (fromPlayer && !lead) e.route.add(new Stop(FROM_PLAYER, 0, 0, 0));
-        e.route.add(new Stop(TABLE, table[0], table[1], table[2]));
+        e.route.add(pocket ? new Stop(POCKET, 0, 0, 0) : new Stop(TABLE, table[0], table[1], table[2]));
         if (!lead) e.route.add(new Stop(BRING, 0, 0, 0));
         int per = Math.max(1, best.out.get(0).stack.field_77994_a);
         e.what = bestTimes * per + " " + name;
         return start(p, e, "craft " + e.what + (bestTimes * per < count ? " (only enough for " + bestTimes * per + ")" : "")
-                + " at the crafting table at " + table[0] + " " + table[1] + " " + table[2]);
+                + (pocket ? " in the 2x2 grid of the player's inventory" : " at the crafting table at " + table[0] + " " + table[1] + " " + table[2]));
+    }
+
+    /** the recipe fits the 2x2 grid of the inventory */
+    static boolean small(RecipeIndex.Recipe r) {
+        if (r.grid != null) {
+            if (r.grid.length > 2) return false;
+            for (String row : r.grid) if (row.length() > 2) return false;
+            return true;
+        }
+        int n = 0;
+        for (RecipeIndex.Ingredient g : r.in) n += g.amount;
+        return n <= 4;
+    }
+
+    /** the 2x2 grid of the inventory: the autopilot opens the inventory, the grid is laid out and the result taken, one craft a second */
+    void leadPocket(Helper h, Errand e, Stop s, WorldServer w, EntityPlayerMP p, boolean auto) {
+        if (e.phase == 0) {
+            AIGuide.LOG.info("errand for {}: crafting in the inventory after {} s", h.player, e.ticks / 20);
+            e.gui = auto;
+            if (auto) mod.link.send(p, ClientLink.msg("inv"));
+            e.phase = 2;
+            e.wait = auto ? 14 : 0;
+            return;
+        }
+        s.x = (int) Math.floor(p.field_70165_t);
+        s.y = (int) Math.floor(p.field_70163_u);
+        s.z = (int) Math.floor(p.field_70161_v);
+        ItemStack[] inv = p.field_71071_by.field_70462_a;
+        net.minecraft.inventory.ContainerPlayer c = (net.minecraft.inventory.ContainerPlayer) p.field_71069_bz;
+        if (e.phase == 2) {
+            if (e.step >= e.times) { e.phase = 4; return; }
+            int[] slots = new int[9];
+            InventoryCrafting g = Actions.grid(inv, e.recipe, slots);
+            if (g == null) { e.why = mod.msg("short"); e.step = e.times; return; }
+            for (int i = 0; i < 9; i++) {
+                if (slots[i] < 0 || inv[slots[i]] == null) continue;
+                int cell = e.recipe.grid == null ? i : (i / 3) * 2 + i % 3;   // 3x3 cell -> 2x2 cell (shapeless: in order)
+                ItemStack one = inv[slots[i]].func_77979_a(1);
+                if (inv[slots[i]].field_77994_a <= 0) inv[slots[i]] = null;
+                c.field_75181_e.func_70299_a(cell, one);
+            }
+            c.func_75130_a(c.field_75181_e);
+            c.func_75142_b();
+            e.phase = 3;
+            e.wait = 12;
+            return;
+        }
+        if (e.phase == 3) {
+            ItemStack r = c.func_75139_a(0).func_75211_c();
+            if (r == null || !RecipeIndex.key(r).equals(RecipeIndex.key(e.want))) {
+                e.why = mod.msg("nogrid");
+                for (int i = 0; i < 4; i++) {   // the grid goes back into the bag
+                    ItemStack left = c.field_75181_e.func_70304_b(i);
+                    if (left != null) Actions.give(p, left);
+                }
+                Actions.sync(p);
+                e.step = e.times;
+                e.phase = 4;
+                return;
+            }
+            int n = r.field_77994_a;
+            c.func_75144_a(0, 0, 1, p);   // shift-click on the result, as a player would
+            c.func_75142_b();
+            e.phase = 2;
+            crafted(e, s, w, n);
+            return;
+        }
+        if (e.gui) mod.link.send(p, ClientLink.msg("close"));
+        e.route.poll();
+        e.phase = 0;
+        e.wait = 6;
     }
 
     static int carried(EntityPlayerMP p, Need n) {
@@ -256,7 +334,7 @@ class Errands {
         StringBuilder r = new StringBuilder();
         for (Stop s : e.route) {
             if (s.kind == CHEST) stops++;
-            r.append(r.length() > 0 ? " -> " : "").append(new String[] { "chest", "player's inventory", "table", "player", "place", "dig" }[s.kind])
+            r.append(r.length() > 0 ? " -> " : "").append(new String[] { "chest", "player's inventory", "table", "player", "place", "dig", "inventory grid", "pick up" }[s.kind])
                     .append(s.kind == CHEST || s.kind == TABLE ? " " + s.x + " " + s.y + " " + s.z : "");
         }
         AIGuide.LOG.info("errand for {}{}: {}; from {}: {}", e.player, e.lead ? " (lead)" : "", what, at(p.field_70165_t, p.field_70163_u, p.field_70161_v), r);
@@ -399,8 +477,25 @@ class Errands {
         if (e.jobs != null && !e.building) return plan(h, e, p, w);
         Stop s = e.route.peek();
         if (s == null) { h.queue.poll(); leadDone(h, e, p, null); return true; }
+        if (s.kind == POCKET) { leadPocket(h, e, s, w, p, pilot(h, e)); return true; }
+        if (s.kind == PICKUP) {   // walk over the dropped things
+            if (e.shown != s) {
+                e.shown = s;
+                e.since = e.ticks;
+                JsonObject m = ClientLink.msg("goto");
+                m.addProperty("x", s.x);
+                m.addProperty("y", s.y);
+                m.addProperty("z", s.z);
+                m.addProperty("reach", 0.4);
+                mod.link.send(p, m);
+            }
+            double dx = p.field_70165_t - (s.x + 0.5), dz = p.field_70161_v - (s.z + 0.5);
+            if (dx * dx + dz * dz < 0.8 && e.ticks - e.since > 30 || e.ticks - e.since > 20 * 12) { e.route.poll(); e.phase = 0; e.wait = 10; }
+            return true;
+        }
         boolean auto = pilot(h, e), work = s.kind == PLACE || s.kind == DIG;
         double cx = s.x + 0.5, cy = s.y + 0.5, cz = s.z + 0.5, d = Math.sqrt(p.func_70092_e(cx, cy, cz));
+        if (work) d = Math.sqrt(p.func_70092_e(cx, cy - p.func_70047_e(), cz));   // a block to dig or place: from the eyes, as the server measures a dig
         if (e.shown != s) {
             e.shown = s;
             e.phase = 0;
@@ -411,11 +506,11 @@ class Errands {
                 m.addProperty("x", s.x);
                 m.addProperty("y", s.y);
                 m.addProperty("z", s.z);
-                m.addProperty("reach", work ? 3.5 : 2.5);
+                m.addProperty("reach", work ? 4.4 : 2.5);
                 mod.link.send(p, m);
             }
         }
-        if (e.phase == 0 && d > (work ? 4.5 : 3.5)) {
+        if (e.phase == 0 && d > (work ? 5.2 : 3.5)) {
             if (!auto && e.ticks % 10 == 0) trail(w, p, cx, cy, cz);
             return true;
         }
@@ -642,6 +737,9 @@ class Errands {
         }
         e.building = true;
         e.route.addAll(e.jobs);
+        Stop low = null;   // what was dug fell there: the autopilot walks over it to pick it up
+        for (Stop s : e.jobs) if (s.kind == DIG && (low == null || s.y < low.y)) low = s;
+        if (low != null && pilot(h, e)) e.route.add(new Stop(PICKUP, low.x, low.y, low.z));
         AIGuide.LOG.info("errand for {}: building {}", h.player, e.what);
         return true;
     }
@@ -740,6 +838,16 @@ class Errands {
             Stop s = e.route.peek();
             if (s != null && (s.kind == PLACE || s.kind == DIG) && e.phase == 1) { e.failed++; next(e, s, null); }
             return;
+        }
+        if (t.equals("failed") && e.jobs != null && e.building) {   // no way to one block of a plan: the rest goes on
+            Stop s = e.route.peek();
+            if (s != null && (s.kind == PLACE || s.kind == DIG || s.kind == PICKUP)) {
+                AIGuide.LOG.info("errand for {}: no way to {} {} {}, skipped", player, s.x, s.y, s.z);
+                if (s.kind != PICKUP) e.failed++;
+                e.shown = null;
+                next(e, s, null);
+                return;
+            }
         }
         if (t.equals("cancel") || t.equals("failed")) {
             e.manual = true;

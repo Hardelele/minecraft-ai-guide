@@ -43,6 +43,11 @@ public class Pilot {
     final ConcurrentLinkedQueue<JsonObject> inbox = new ConcurrentLinkedQueue<JsonObject>();
     FMLEventChannel channel;
 
+    /** -Daiguide.client.smooth=true: the head turns eased and slower (for a video), else as before */
+    static final boolean SMOOTH = Boolean.getBoolean("aiguide.client.smooth");
+    static final float EASE = SMOOTH ? 0.22f : 1f, SPIN = SMOOTH ? 11f : 32f;
+    static final int AIM_TICKS = SMOOTH ? 40 : 20;
+
     String task;   // goto, use, place, dig; null when idle
     int tx, ty, tz, slot, ticks, side, replans, checkAt;
     double reach, lastX, lastZ;
@@ -50,13 +55,43 @@ public class Pilot {
     int at;
     boolean pressing, hitStarted;
 
+    /** opens the guide's window */
+    static KeyBinding window;
+    /** the server mod's version from its hello: 0 no guide there, 1 no window yet, 2 the window */
+    volatile int server = -1;
+
     static void start() {
+        window = new KeyBinding("key.aiguide.window", Keyboard.KEY_G, "key.categories.aiguide");
+        cpw.mods.fml.client.registry.ClientRegistry.registerKeyBinding(window);
         instance = new Pilot();
         instance.channel = NetworkRegistry.INSTANCE.newEventDrivenChannel(CHANNEL);
         instance.channel.register(instance);
+        shareWithServerMod();
         FMLCommonHandler.instance().bus().register(instance);
         MinecraftForge.EVENT_BUS.register(instance);
         MinecraftForge.EVENT_BUS.register(new Ghosts());
+        Director.start();
+    }
+
+    /**
+     * Singleplayer with the AI Guide mod in the same game: there is one channel "aiguide" per name, and the one made
+     * here (later) took the server side's packets too. The server mod's line is hooked onto it as well.
+     */
+    static void shareWithServerMod() {
+        try {
+            cpw.mods.fml.common.ModContainer m = cpw.mods.fml.common.Loader.instance().getIndexedModList().get("aiguide");
+            if (m == null || m.getMod() == null) return;
+            java.lang.reflect.Field lf = m.getMod().getClass().getDeclaredField("link");
+            lf.setAccessible(true);
+            Object link = lf.get(m.getMod());
+            java.lang.reflect.Field cf = link.getClass().getDeclaredField("channel");
+            cf.setAccessible(true);
+            cf.set(link, instance.channel);
+            instance.channel.register(link);
+            System.out.println("[AIGuideClient] the server mod's line shares the channel (singleplayer)");
+        } catch (Exception e) {
+            System.out.println("[AIGuideClient] no server mod line to share: " + e);
+        }
     }
 
     // ---- the line to the server --------------------------------------------------------------
@@ -74,6 +109,7 @@ public class Pilot {
     public void left(FMLNetworkEvent.ClientDisconnectionFromServerEvent e) {
         inbox.add(msg("stop"));
         inbox.add(msg("ghostclear"));
+        server = -1;
     }
 
     void send(JsonObject m) {
@@ -93,10 +129,14 @@ public class Pilot {
     void handle(JsonObject m) {
         String t = m.has("t") ? m.get("t").getAsString() : "";
         if (t.equals("hello")) {
+            server = m.has("v") ? num(m, "v") : 1;
             JsonObject r = msg("hello");
-            r.addProperty("v", 1);
+            r.addProperty("v", 2);   // 2: the guide's window
             send(r);
+        } else if (t.equals("say")) {
+            GuiGuide.said(m.has("text") ? m.get("text").getAsString() : "", !m.has("chat") || m.get("chat").getAsBoolean());
         } else if (t.equals("goto") || t.equals("use") || t.equals("place") || t.equals("dig")) {
+            if (mc.currentScreen instanceof GuiGuide) mc.displayGuiScreen(null);   // the player watches where they are taken
             stop();
             task = t;
             tx = num(m, "x");
@@ -109,7 +149,11 @@ public class Pilot {
             hitStarted = false;
             if (t.equals("goto") && !plan()) fail("no way there");
         } else if (t.equals("close")) {
-            if (mc.currentScreen != null) mc.thePlayer.closeScreen();
+            if (mc.currentScreen != null && !(mc.currentScreen instanceof GuiGuide)) mc.thePlayer.closeScreen();
+        } else if (t.equals("inv")) {   // the 2x2 grid of the inventory: the server lays it out
+            if (mc.currentScreen instanceof GuiGuide) mc.displayGuiScreen(null);
+            stop();
+            mc.displayGuiScreen(new net.minecraft.client.gui.inventory.GuiInventory(mc.thePlayer));
         } else if (t.equals("stop")) stop();
         else if (t.equals("ghost")) Ghosts.set(m);
         else if (t.equals("ghostclear")) Ghosts.clear();
@@ -127,6 +171,7 @@ public class Pilot {
             return;
         }
         for (JsonObject m; (m = inbox.poll()) != null; ) handle(m);
+        if (mc.currentScreen == null && window.isPressed()) mc.displayGuiScreen(new GuiGuide());
         shots();
         if (task == null) return;
         if (taken()) {   // the player moves themselves: the controls are theirs
@@ -209,10 +254,10 @@ public class Pilot {
         }
         float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
         float diff = MathHelper.wrapAngleTo180_float(yaw - p.rotationYaw);
-        p.rotationYaw += Math.max(-35, Math.min(35, diff));
-        p.rotationPitch += Math.max(-10, Math.min(10, 15 - p.rotationPitch));   // eyes a little down, at the way
+        p.rotationYaw += Math.max(-SPIN, Math.min(SPIN, diff * EASE));   // eased, like a hand on the mouse
+        p.rotationPitch += Math.max(-4, Math.min(4, (15 - p.rotationPitch) * EASE));   // eyes a little down, at the way
         boolean up = n[1] > fy || (p.isCollidedHorizontally && p.onGround) || p.isInWater();
-        keys(Math.abs(diff) < 60, up);
+        keys(Math.abs(diff) < 50, up);
         if (ticks >= checkAt) {   // no progress in two seconds: look for the way again
             if (Math.abs(p.posX - lastX) + Math.abs(p.posZ - lastZ) < 0.3) {
                 keys(false, false);
@@ -234,9 +279,9 @@ public class Pilot {
         float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
         float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
         float dyaw = MathHelper.wrapAngleTo180_float(yaw - p.rotationYaw), dpitch = pitch - p.rotationPitch;
-        p.rotationYaw += Math.max(-30, Math.min(30, dyaw));
-        p.rotationPitch += Math.max(-30, Math.min(30, dpitch));
-        return Math.abs(dyaw) < 3 && Math.abs(dpitch) < 3;
+        p.rotationYaw += Math.max(-SPIN, Math.min(SPIN, dyaw * EASE));
+        p.rotationPitch += Math.max(-SPIN, Math.min(SPIN, dpitch * EASE));
+        return Math.abs(dyaw) < 4 && Math.abs(dpitch) < 4;
     }
 
     /** the side of a block that faces the player's eyes */
@@ -266,7 +311,7 @@ public class Pilot {
             s = on[3];
         } else s = facing(x, y, z);
         double hx = x + 0.5 + SIDE[s][0] * 0.5, hy = y + 0.5 + SIDE[s][1] * 0.5, hz = z + 0.5 + SIDE[s][2] * 0.5;
-        if (!aim(hx, hy, hz) && ticks < 20) return;
+        if (!aim(hx, hy, hz) && ticks < AIM_TICKS) return;
         if (mc.playerController.onPlayerRightClick(p, w, p.getHeldItem(), x, y, z, s, Vec3.createVectorHelper(hx - x, hy - y, hz - z)))
             p.swingItem();
         task = null;
@@ -284,6 +329,7 @@ public class Pilot {
     }
 
     float progress;
+    int[] behind;   // the block the autopilot digs after the leaves in its way
 
     /**
      * Digs as the player does: the best tool of the hotbar in hand, "started digging" to the server, the
@@ -296,13 +342,38 @@ public class Pilot {
         int s = facing(tx, ty, tz);
         if (w.isAirBlock(tx, ty, tz)) {
             w.destroyBlockInWorldPartially(p.getEntityId(), tx, ty, tz, -1);
+            if (behind != null) {   // the leaves in the way are gone: back to the block itself
+                tx = behind[0];
+                ty = behind[1];
+                tz = behind[2];
+                behind = null;
+                hitStarted = false;
+                ticks = 0;
+                return;
+            }
             task = null;
             return;
         }
         if (ticks > 20 * 30) { fail("could not dig it"); return; }
         boolean looking = aim(tx + 0.5 + SIDE[s][0] * 0.5, ty + 0.5 + SIDE[s][1] * 0.5, tz + 0.5 + SIDE[s][2] * 0.5);
-        if (!looking && ticks < 20) return;
+        if (!looking && ticks < AIM_TICKS) return;
         Block b = w.getBlock(tx, ty, tz);
+        if (!hitStarted && looking) {   // only what the eyes meet: leaves in the way go first, anything else firm is a fail
+            net.minecraft.util.MovingObjectPosition hit = w.rayTraceBlocks(Vec3.createVectorHelper(p.posX, p.boundingBox.minY + p.getEyeHeight(), p.posZ),
+                    Vec3.createVectorHelper(tx + 0.5, ty + 0.5, tz + 0.5), false, true, false);
+            if (hit != null && (hit.blockX != tx || hit.blockY != ty || hit.blockZ != tz)) {
+                Block in = w.getBlock(hit.blockX, hit.blockY, hit.blockZ);
+                if (in.getMaterial() == net.minecraft.block.material.Material.leaves && behind == null) {
+                    behind = new int[] { tx, ty, tz };
+                    tx = hit.blockX;
+                    ty = hit.blockY;
+                    tz = hit.blockZ;
+                    ticks = 0;
+                    return;
+                }
+                if (in.getMaterial() != net.minecraft.block.material.Material.leaves) { fail("not in sight"); return; }
+            }
+        }
         if (!hitStarted) {
             int best = p.inventory.currentItem;
             float speed = -1;
@@ -333,7 +404,22 @@ public class Pilot {
     static final boolean SHOTS = Boolean.getBoolean("aiguide.client.shots");
     int clock, taken;
 
+    static final String ASK = System.getProperty("aiguide.client.ask");   // a question asked in the window once in the world
+    int askAt = -1;
+
     void shots() {
+        if (ASK != null && server >= 0) {
+            ++clock;
+            if (askAt < 0 && clock > 100) {
+                askAt = clock;
+                mc.displayGuiScreen(new GuiGuide());
+                GuiGuide.ask(ASK.replace('_', ' '));
+            } else if (askAt > 0 && !GuiGuide.waiting && clock > askAt + 40 && clock < askAt + 10000) {
+                net.minecraft.util.ScreenShotHelper.saveScreenshot(mc.mcDataDir, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
+                System.out.println("[AIGuideClient] window shot, history " + GuiGuide.history.size());
+                askAt = 1 << 30;   // once
+            }
+        }
         if (!SHOTS || ++clock % 60 != 0 || taken >= 20 || task == null && Ghosts.all.isEmpty()) return;
         taken++;
         net.minecraft.util.ScreenShotHelper.saveScreenshot(mc.mcDataDir, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());

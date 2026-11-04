@@ -6,7 +6,9 @@ import com.google.gson.JsonParser;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import net.minecraft.init.Blocks;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -43,6 +45,15 @@ class Tools {
         a.add(tool("player_status", "The player's inventory, position, health and the machines and blocks with tile entities around them.", P, PD));
         a.add(tool("where_is", "Where an item lies: the player's inventory, chests, barrels, drawers, machines and AE2 networks around them, with coordinates.",
                 P, PD, "item", "an id from find_items, or a name"));
+        a.add(tool("inspect_blocks", "A close look at the pipes, ducts, conduits, machines and chests around a point: for each block what "
+                + "it touches on which side, what it holds and the settings it saves (filters, modes, modules, extraction sides, the items "
+                + "travelling in pipes right now). For questions how items, fluids or energy flow, where things go, why an automation "
+                + "does not work. Read the data and explain it; do not dump it.", P, PD,
+                "at", "x y z of the point; empty for the block the player looks at (or where they stand)",
+                "radius", "blocks around the point, 1-10 (default 4)"));
+        a.add(tool("find_blocks", "Blocks of the world itself around the player, nearest first, with coordinates: trees (each trunk: its "
+                + "logs bottom to top), stone, ores, sand, any block by name. For \"get me wood / stone\": find them here, then dig them with build.",
+                P, PD, "query", "tree, stone, or a block's name (in any language, part of the name works)", "radius", "blocks around the player, up to 32 (default 24)"));
         a.add(tool("storage_overview", "The inventories and AE2 networks around the player and what is most in each.", P, PD));
         a.add(tool("plan_crafting", "Can the player make it? Unfolds the item into recipes down to what they have (inventory and storage around) "
                 + "and lists the steps in order and what is missing.", P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)"));
@@ -55,7 +66,8 @@ class Tools {
                     P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)", "how", "lead (the default: sparks lead the player, who walks there) or body (your villager body walks instead; only if the player asks you to go yourself)"));
             a.add(tool("craft", "Craft an item at a crafting table near the player: sparks lead the player to the chests with the parts and "
                     + "then to the table, where it is crafted from their inventory (or your villager body collects, crafts and brings it, asking "
-                    + "before it takes anything of theirs). One recipe level: the parts must exist. Only when the player asks for it.",
+                    + "before it takes anything of theirs). Without a table, what fits the 2x2 grid (planks, sticks, a crafting table) is "
+                    + "crafted in the player's own inventory. One recipe level: the parts must exist. Only when the player asks for it.",
                     P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)", "how", "lead (the default: sparks lead the player, who walks there) or body (your villager body walks instead; only if the player asks you to go yourself)"));
             a.add(tool("build", "Plan blocks to place and to dig near the player (up to 64, within 24 blocks). The plan is shown to them as "
                     + "see-through blocks and they are asked; with their yes the autopilot of their client walks them and builds it with what "
@@ -63,7 +75,16 @@ class Tools {
                     + "when the player asks you to build or dig something.", P, PD,
                     "place", "one block a line: x y z item (item: an id from find_items, or a name); empty if none",
                     "dig", "one block a line: x y z; empty if none"));
-            a.add(tool("mark", "Show the player a block: a column of sparks over it for a while.", P, PD,
+            if (crewAvailable())
+                a.add(tool("helpers", "Your crew: helper agents with players' bodies who do the early game for the player, together and on their "
+                        + "own (no yes needed). Tasks run one after another in the order you call them, so call several in one answer for a "
+                        + "whole plan, e.g. summon, wood, tools, mine, upgrade, gift, house, gather. summon: the agents come running (count: "
+                        + "how many, 1-5); wood: they chop trees in a chain, one carries the logs to a chest (count: trees per agent, 1-4); "
+                        + "tools: a crafting table and wooden pickaxes; mine: two dig a mine down in steps for stone, one carries; upgrade: a "
+                        + "furnace, charcoal and torches, stone pickaxes; gift: one brings the player a stone pickaxe and torches; house: a base "
+                        + "(a house with a door, windows and a roof, a fence with a gate, torches) by a see-through plan; gather: at nightfall "
+                        + "they meet at the mouth of the mine. Use it when the player asks for help, a team, helpers, or to do the early game "
+                        + "for them.", P, PD, "task", "summon, wood, tools, mine, upgrade, gift, house or gather", "count", "a number (see the task)"));            a.add(tool("mark", "Show the player a block: a column of sparks over it for a while.", P, PD,
                     "x", "x", "y", "y", "z", "z", "seconds", "how long, 5-120"));
         }
         if (mcp) {
@@ -116,6 +137,12 @@ class Tools {
             else if (name.equals("how_to_make")) r = recipes(str(args, "item"), true);
             else if (name.equals("what_uses")) r = recipes(str(args, "item"), false);
             else if (name.equals("player_status")) r = playerStatus(player);
+            else if (name.equals("find_blocks")) r = findBlocks(player, str(args, "query"), num(args, "radius", 24));
+            else if (name.equals("helpers")) {
+                if (!crewAvailable()) r = "No crew here.";
+                else r = (String) Class.forName("hardelele.aiguide.client.Crew").getMethod("order", String.class, String.class, int.class)
+                        .invoke(null, player, str(args, "task"), num(args, "count", 0));
+            }
             else if (name.equals("read_guide")) {
                 String t = mod.knowledge.read(str(args, "topic"));
                 r = t == null ? "No such guide. Guides: " + mod.knowledge.titles.keySet() : t;
@@ -131,7 +158,7 @@ class Tools {
             AIGuide.LOG.warn("tool " + name + " failed", e);
             r = "error: " + e;
         }
-        int max = name.equals("read_guide") ? MAX_GUIDE : MAX_RESULT;   // a guide is read whole
+        int max = name.equals("read_guide") || name.equals("inspect_blocks") ? MAX_GUIDE : MAX_RESULT;   // a guide is read whole
         return r.length() > max ? r.substring(0, max) + "\n... (cut)" : r;
     }
 
@@ -150,7 +177,8 @@ class Tools {
     /** the tools that look at or act in the world around a player: on the server thread */
     String world(final String name, final JsonObject args, final String player) throws Exception {
         final boolean act = name.equals("fetch") || name.equals("craft") || name.equals("mark") || name.equals("build");
-        if (!name.equals("where_is") && !name.equals("storage_overview") && !name.equals("plan_crafting") && !act) return "unknown tool " + name;
+        if (!name.equals("where_is") && !name.equals("storage_overview") && !name.equals("plan_crafting") && !name.equals("inspect_blocks") && !act)
+            return "unknown tool " + name;
         if (act && !mod.config.actions) return "Actions are switched off on this server.";
         final ItemStack item = args.has("item") ? resolve(str(args, "item")) : null;
         if (args.has("item") && item == null) return "No item '" + str(args, "item") + "'. Use find_items.";
@@ -198,6 +226,22 @@ class Tools {
                             + (w.isEmpty() ? "None in the storage within " + mod.config.storageRadius + " blocks." : "Around:\n" + w);
                 }
                 if (name.equals("storage_overview")) return overview(p);
+                if (name.equals("inspect_blocks")) {
+                    int[] at = null;
+                    String[] w = str(args, "at").trim().split("[\\s,]+");
+                    if (w.length == 3) try {
+                        at = new int[] { Integer.parseInt(w[0]), Integer.parseInt(w[1]), Integer.parseInt(w[2]) };
+                    } catch (NumberFormatException e) {
+                        return "Bad point '" + str(args, "at") + "': x y z, or empty.";
+                    }
+                    if (at == null) {
+                        net.minecraft.util.MovingObjectPosition hit = sight(p);
+                        at = hit != null ? new int[] { hit.field_72311_b, hit.field_72312_c, hit.field_72309_d }
+                                : new int[] { (int) Math.floor(p.field_70165_t), (int) Math.floor(p.field_70163_u), (int) Math.floor(p.field_70161_v) };
+                    }
+                    if (p.func_70092_e(at[0], at[1], at[2]) > 64 * 64) return "The point is more than 64 blocks from the player.";
+                    return new Inspect(mod).around(p, at, Math.max(1, Math.min(10, num(args, "radius", 4))), MAX_GUIDE - 100);
+                }
                 if (name.equals("plan_crafting"))
                     return new Planner(mod, mod.storage.totals(p, mod.config.storageRadius, true)).plan(item, count);
                 if (name.equals("build")) {
@@ -439,23 +483,100 @@ class Tools {
         });
     }
 
+    /** the crew of the client mod's video build: only in singleplayer, where both mods share one game */
+    static boolean crewAvailable() {
+        try {
+            Class.forName("hardelele.aiguide.client.Crew");
+            return true;
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
+    /** natural blocks around the player: trees by trunk, other blocks that are open to the air, nearest first */
+    String findBlocks(final String player, final String query, final int radius) throws Exception {
+        return mod.onMain(new Callable<String>() {
+            @Override public String call() {
+                EntityPlayerMP p = AIGuide.player(player);
+                if (p == null) return "The player is offline.";
+                World w = p.field_70170_p;
+                int r = Math.max(4, Math.min(32, radius));
+                int px = (int) Math.floor(p.field_70165_t), py = (int) Math.floor(p.field_70163_u), pz = (int) Math.floor(p.field_70161_v);
+                String q = query.trim().toLowerCase();
+                boolean trees = q.isEmpty() || q.matches(".*(tree|log|wood|trunk|дерев|брев|брёв|ствол|древес).*");
+                List<double[]> found = new ArrayList<double[]>();   // dist, x, y, z, height
+                Map<String, String> names = new HashMap<String, String>();
+                for (int x = px - r; x <= px + r; x++)
+                    for (int z = pz - r; z <= pz + r; z++)
+                        for (int y = Math.max(1, py - 12); y <= Math.min(250, py + 16); y++) {
+                            Block b = w.func_147439_a(x, y, z);
+                            if (b == Blocks.field_150350_a) continue;
+                            if (trees) {
+                                if (b != Blocks.field_150364_r && b != Blocks.field_150363_s) continue;
+                                if (w.func_147439_a(x, y - 1, z) == b) continue;   // not the bottom of a trunk
+                                int h = 0;
+                                while (h < 30 && w.func_147439_a(x, y + h, z) == b) h++;
+                                found.add(new double[] { Math.sqrt(p.func_70092_e(x + 0.5, y, z + 0.5)), x, y, z, h });
+                                names.put(x + " " + y + " " + z, blockName(w, x, y, z));
+                                continue;
+                            }
+                            boolean open = false;
+                            for (int[] d : new int[][] { { 0, 1, 0 }, { 0, -1, 0 }, { 1, 0, 0 }, { -1, 0, 0 }, { 0, 0, 1 }, { 0, 0, -1 } })
+                                if (w.func_147437_c(x + d[0], y + d[1], z + d[2])) open = true;
+                            if (!open) continue;
+                            String n = blockName(w, x, y, z);
+                            String key = q.equals("stone") || q.equals("камень") ? (b == Blocks.field_150348_b ? "stone" : "") : n.toLowerCase();
+                            if (!(key.equals("stone") && b == Blocks.field_150348_b) && !key.contains(q)) continue;
+                            found.add(new double[] { Math.sqrt(p.func_70092_e(x + 0.5, y + 0.5, z + 0.5)), x, y, z, 1 });
+                            names.put(x + " " + y + " " + z, n);
+                        }
+                Collections.sort(found, new Comparator<double[]>() {
+                    @Override public int compare(double[] a, double[] b) { return Double.compare(a[0], b[0]); }
+                });
+                if (found.isEmpty()) return "Nothing like '" + query + "' within " + r + " blocks (open to the air" + (trees ? ", trunks of trees" : "") + ").";
+                StringBuilder b = new StringBuilder("Player at " + px + " " + py + " " + pz + ". Nearest first:\n");
+                for (int i = 0; i < found.size() && i < (trees ? 6 : 12); i++) {
+                    double[] f = found.get(i);
+                    int x = (int) f[1], y = (int) f[2], z = (int) f[3], h = (int) f[4];
+                    String n = names.get(x + " " + y + " " + z);
+                    if (trees) b.append("- tree (").append(n).append("), trunk at ").append(x).append(' ').append(z).append(", logs y ").append(y)
+                            .append(h > 1 ? ".." + (y + h - 1) : "").append(" (").append(h).append(" logs), ").append((int) f[0]).append(" blocks away\n");
+                    else b.append("- ").append(n).append(" at ").append(x).append(' ').append(y).append(' ').append(z).append(", ").append((int) f[0]).append(" blocks away\n");
+                }
+                return b.toString();
+            }
+        });
+    }
+
+    String blockName(World w, int x, int y, int z) {
+        Block bl = w.func_147439_a(x, y, z);
+        Item i = Item.func_150898_a(bl);
+        return i == null ? bl.func_149739_a() : mod.lang.name(new ItemStack(i, 1, bl.func_149692_a(w.func_72805_g(x, y, z))));
+    }
+
     static final String[] SIDES = { "bottom", "top", "north (-z)", "south (+z)", "west (-x)", "east (+x)" };
 
     /** where the player looks: the compass direction and the block in reach (for "put it here") */
     String facing(EntityPlayerMP p) {
         String[] dirs = { "south (+z)", "west (-x)", "north (-z)", "east (+x)" };
         String dir = dirs[net.minecraft.util.MathHelper.func_76128_c(p.field_70177_z * 4.0F / 360.0F + 0.5D) & 3];
-        double yaw = Math.toRadians(p.field_70177_z), pitch = Math.toRadians(p.field_70125_A);
-        double ex = p.field_70165_t, ey = p.field_70163_u + p.func_70047_e(), ez = p.field_70161_v;
-        double lx = -Math.sin(yaw) * Math.cos(pitch), ly = -Math.sin(pitch), lz = Math.cos(yaw) * Math.cos(pitch);
-        net.minecraft.util.MovingObjectPosition hit = p.field_70170_p.func_72933_a(net.minecraft.util.Vec3.func_72443_a(ex, ey, ez),
-                net.minecraft.util.Vec3.func_72443_a(ex + lx * 6, ey + ly * 6, ez + lz * 6));
-        if (hit == null || !"BLOCK".equals(String.valueOf(hit.field_72313_a))) return dir + ", at no block in reach";
+        net.minecraft.util.MovingObjectPosition hit = sight(p);
+        if (hit == null) return dir + ", at no block in reach";
         int x = hit.field_72311_b, y = hit.field_72312_c, z = hit.field_72309_d;
         Block bl = p.field_70170_p.func_147439_a(x, y, z);
         Item i = Item.func_150898_a(bl);
         String n = i == null ? bl.func_149739_a() : mod.lang.name(new ItemStack(i, 1, bl.func_149692_a(p.field_70170_p.func_72805_g(x, y, z))));
         return dir + ", at " + n + " " + x + " " + y + " " + z + " (its " + SIDES[Math.max(0, Math.min(5, hit.field_72310_e))] + " side)";
+    }
+
+    /** the block the player looks at within 6 blocks, or null */
+    static net.minecraft.util.MovingObjectPosition sight(EntityPlayerMP p) {
+        double yaw = Math.toRadians(p.field_70177_z), pitch = Math.toRadians(p.field_70125_A);
+        double ex = p.field_70165_t, ey = p.field_70163_u + p.func_70047_e(), ez = p.field_70161_v;
+        double lx = -Math.sin(yaw) * Math.cos(pitch), ly = -Math.sin(pitch), lz = Math.cos(yaw) * Math.cos(pitch);
+        net.minecraft.util.MovingObjectPosition hit = p.field_70170_p.func_72933_a(net.minecraft.util.Vec3.func_72443_a(ex, ey, ez),
+                net.minecraft.util.Vec3.func_72443_a(ex + lx * 6, ey + ly * 6, ez + lz * 6));
+        return hit == null || !"BLOCK".equals(String.valueOf(hit.field_72313_a)) ? null : hit;
     }
 
     String stacks(ItemStack[] inv) {

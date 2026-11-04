@@ -232,6 +232,8 @@ class RecipeIndex {
     // ---- crafting recipes of any kind -------------------------------------------------
 
     Recipe crafting(IRecipe ir, String machine) {
+        Object inner = firstOf(ir, "getWrappedRecipe", "getRecipe");   // a wrapper for NEI (Thermal Expansion's machines)
+        if (inner instanceof IRecipe && inner != ir) return crafting((IRecipe) inner, machine);
         Recipe r = new Recipe();
         r.machine = machine;
         ItemStack result = ir.func_77571_b();

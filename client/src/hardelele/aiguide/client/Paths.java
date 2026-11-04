@@ -60,7 +60,7 @@ class Paths {
 
     /** close enough to reach the target block, and not standing in it */
     static boolean near(int[] f, int tx, int ty, int tz, double reach) {
-        if (f[0] == tx && f[2] == tz && (f[1] == ty || f[1] + 1 == ty)) return false;
+        if (f[0] == tx && f[2] == tz && (f[1] == ty || f[1] + 1 == ty || Pilot.SMOOTH)) return false;   // (smooth: never under it, the camera would look straight up)
         double dx = tx + 0.5 - (f[0] + 0.5), dy = ty + 0.5 - (f[1] + 1.6), dz = tz + 0.5 - (f[2] + 0.5);
         return Math.sqrt(dx * dx + dy * dy + dz * dz) <= reach;
     }
