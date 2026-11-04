@@ -50,7 +50,14 @@ public class Pilot {
     int at;
     boolean pressing, hitStarted;
 
+    /** opens the guide's window */
+    static KeyBinding window;
+    /** the server mod's version from its hello: 0 no guide there, 1 no window yet, 2 the window */
+    volatile int server = -1;
+
     static void start() {
+        window = new KeyBinding("key.aiguide.window", Keyboard.KEY_G, "key.categories.aiguide");
+        cpw.mods.fml.client.registry.ClientRegistry.registerKeyBinding(window);
         instance = new Pilot();
         instance.channel = NetworkRegistry.INSTANCE.newEventDrivenChannel(CHANNEL);
         instance.channel.register(instance);
@@ -74,6 +81,7 @@ public class Pilot {
     public void left(FMLNetworkEvent.ClientDisconnectionFromServerEvent e) {
         inbox.add(msg("stop"));
         inbox.add(msg("ghostclear"));
+        server = -1;
     }
 
     void send(JsonObject m) {
@@ -93,10 +101,14 @@ public class Pilot {
     void handle(JsonObject m) {
         String t = m.has("t") ? m.get("t").getAsString() : "";
         if (t.equals("hello")) {
+            server = m.has("v") ? num(m, "v") : 1;
             JsonObject r = msg("hello");
-            r.addProperty("v", 1);
+            r.addProperty("v", 2);   // 2: the guide's window
             send(r);
+        } else if (t.equals("say")) {
+            GuiGuide.said(m.has("text") ? m.get("text").getAsString() : "", !m.has("chat") || m.get("chat").getAsBoolean());
         } else if (t.equals("goto") || t.equals("use") || t.equals("place") || t.equals("dig")) {
+            if (mc.currentScreen instanceof GuiGuide) mc.displayGuiScreen(null);   // the player watches where they are taken
             stop();
             task = t;
             tx = num(m, "x");
@@ -109,7 +121,7 @@ public class Pilot {
             hitStarted = false;
             if (t.equals("goto") && !plan()) fail("no way there");
         } else if (t.equals("close")) {
-            if (mc.currentScreen != null) mc.thePlayer.closeScreen();
+            if (mc.currentScreen != null && !(mc.currentScreen instanceof GuiGuide)) mc.thePlayer.closeScreen();
         } else if (t.equals("stop")) stop();
         else if (t.equals("ghost")) Ghosts.set(m);
         else if (t.equals("ghostclear")) Ghosts.clear();
@@ -127,6 +139,7 @@ public class Pilot {
             return;
         }
         for (JsonObject m; (m = inbox.poll()) != null; ) handle(m);
+        if (mc.currentScreen == null && window.isPressed()) mc.displayGuiScreen(new GuiGuide());
         shots();
         if (task == null) return;
         if (taken()) {   // the player moves themselves: the controls are theirs
@@ -333,7 +346,23 @@ public class Pilot {
     static final boolean SHOTS = Boolean.getBoolean("aiguide.client.shots");
     int clock, taken;
 
+    static final String ASK = System.getProperty("aiguide.client.ask");   // a question asked in the window once in the world
+    int askAt = -1, answered;
+
     void shots() {
+        if (ASK != null && server >= 0) {
+            ++clock;
+            if (askAt < 0 && clock > 100) {
+                askAt = clock;
+                mc.displayGuiScreen(new GuiGuide());
+                GuiGuide.ask(ASK.replace('_', ' '));
+            } else if (askAt > 0 && GuiGuide.waiting) answered = clock;
+            else if (askAt > 0 && askAt < 1 << 30 && !GuiGuide.waiting && clock > answered + 40) {
+                net.minecraft.util.ScreenShotHelper.saveScreenshot(mc.mcDataDir, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
+                System.out.println("[AIGuideClient] window shot, history " + GuiGuide.history.size());
+                askAt = 1 << 30;   // once
+            }
+        }
         if (!SHOTS || ++clock % 60 != 0 || taken >= 20 || task == null && Ghosts.all.isEmpty()) return;
         taken++;
         net.minecraft.util.ScreenShotHelper.saveScreenshot(mc.mcDataDir, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());

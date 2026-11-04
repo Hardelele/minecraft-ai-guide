@@ -12,7 +12,7 @@ import cpw.mods.fml.relauncher.Side;
  */
 @Mod(modid = AIGuideClient.ID, name = "AI Guide Client", version = AIGuideClient.VERSION, acceptableRemoteVersions = "*")
 public class AIGuideClient {
-    public static final String ID = "aiguideclient", VERSION = "0.1";
+    public static final String ID = "aiguideclient", VERSION = "0.2";
 
     @Mod.EventHandler
     public void init(FMLInitializationEvent e) {

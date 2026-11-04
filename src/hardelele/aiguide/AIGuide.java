@@ -133,6 +133,7 @@ public class AIGuide {
         }
         if (!m.startsWith(config.prefix) || m.length() <= config.prefix.length()) return;
         e.setCanceled(true);   // a question to the assistant is not for everybody
+        link.windowed.remove(name);   // asked in the chat: answered in the chat
         String q = m.substring(config.prefix.length()).trim();
         ask(e.player, q);
     }
@@ -183,6 +184,7 @@ public class AIGuide {
                     LOG.info("answer for {} (offline): {}", player, String.join(" / ", lines));
                     return;
                 }
+                if (link.window(p, String.join("\n", lines))) return;   // the guide's window has it whole
                 int n = 0;
                 for (String l : lines) {
                     if (l.trim().isEmpty()) continue;

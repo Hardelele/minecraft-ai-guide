@@ -31,9 +31,29 @@ class SelfTest {
             { "find_items", "{\"query\":\"Измельчитель\"}" },
             { "how_to_make", "{\"item\":\"Медная пыль\"}" },
             { "read_guide", "{\"topic\":\"nothing-here\"}" },
+            { "find_items", "{\"query\":\"Вулканический пресс\"}" },
+            { "how_to_make", "{\"item\":\"Вулканический пресс\"}" },
         };
         for (String[] c : calls) AIGuide.LOG.info("selftest {} {}:\n{}", c[0], c[1], mod.tools.call(c[0], c[1], "selftest"));
-        hands(mod);
+        String inspect = System.getProperty(AIGuide.ID + ".inspect");   // x,y,z[,radius]: a look at a real place of a copied world
+        if (inspect != null && !inspect.isEmpty()) {
+            String[] c = inspect.split(",");
+            EntityPlayerMP p = FakePlayerFactory.getMinecraft(MinecraftServer.func_71276_C().field_71305_c[0]);
+            p.func_70107_b(Integer.parseInt(c[0]) + 0.5, Integer.parseInt(c[1]), Integer.parseInt(c[2]) + 0.5);
+            AIGuide.extraPlayers.put("selftest", p);
+            final String args = "{\"at\":\"" + c[0] + " " + c[1] + " " + c[2] + "\",\"radius\":\"" + (c.length > 3 ? c[3] : "4") + "\"}";
+            final String what = "inspect_blocks " + inspect;
+            new Thread(new Runnable() {   // after some ticks: pipes find their connections in their first update
+                @Override public void run() {
+                    try {
+                        Thread.sleep(15000);
+                    } catch (InterruptedException e) {
+                        return;
+                    }
+                    log(what, mod.tools.call("inspect_blocks", args, "selftest"));
+                }
+            }, "AIGuide-inspect").start();
+        } else hands(mod);
         String learn = System.getProperty(AIGuide.ID + ".learn");
         if (learn != null && !learn.isEmpty()) mod.learner.start(learn, true, null);
         String asks = System.getProperty(AIGuide.ID + ".ask");
@@ -42,6 +62,11 @@ class SelfTest {
         final String[] qs = asks.replace('_', ' ').split("\\|\\|");   // "_" for spaces, "||" between questions
         Thread t = new Thread(new Runnable() {
             @Override public void run() {
+                try {
+                    if (System.getProperty(AIGuide.ID + ".inspect") != null) Thread.sleep(20000);
+                } catch (InterruptedException e) {
+                    return;
+                }
                 ask(mod, qs);
             }
         }, "AIGuide-selftest");

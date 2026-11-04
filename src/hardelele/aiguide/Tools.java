@@ -43,6 +43,12 @@ class Tools {
         a.add(tool("player_status", "The player's inventory, position, health and the machines and blocks with tile entities around them.", P, PD));
         a.add(tool("where_is", "Where an item lies: the player's inventory, chests, barrels, drawers, machines and AE2 networks around them, with coordinates.",
                 P, PD, "item", "an id from find_items, or a name"));
+        a.add(tool("inspect_blocks", "A close look at the pipes, ducts, conduits, machines and chests around a point: for each block what "
+                + "it touches on which side, what it holds and the settings it saves (filters, modes, modules, extraction sides, the items "
+                + "travelling in pipes right now). For questions how items, fluids or energy flow, where things go, why an automation "
+                + "does not work. Read the data and explain it; do not dump it.", P, PD,
+                "at", "x y z of the point; empty for the block the player looks at (or where they stand)",
+                "radius", "blocks around the point, 1-10 (default 4)"));
         a.add(tool("storage_overview", "The inventories and AE2 networks around the player and what is most in each.", P, PD));
         a.add(tool("plan_crafting", "Can the player make it? Unfolds the item into recipes down to what they have (inventory and storage around) "
                 + "and lists the steps in order and what is missing.", P, PD, "item", "an id from find_items, or a name", "count", "how many (a number)"));
@@ -131,7 +137,7 @@ class Tools {
             AIGuide.LOG.warn("tool " + name + " failed", e);
             r = "error: " + e;
         }
-        int max = name.equals("read_guide") ? MAX_GUIDE : MAX_RESULT;   // a guide is read whole
+        int max = name.equals("read_guide") || name.equals("inspect_blocks") ? MAX_GUIDE : MAX_RESULT;   // a guide is read whole
         return r.length() > max ? r.substring(0, max) + "\n... (cut)" : r;
     }
 
@@ -150,7 +156,8 @@ class Tools {
     /** the tools that look at or act in the world around a player: on the server thread */
     String world(final String name, final JsonObject args, final String player) throws Exception {
         final boolean act = name.equals("fetch") || name.equals("craft") || name.equals("mark") || name.equals("build");
-        if (!name.equals("where_is") && !name.equals("storage_overview") && !name.equals("plan_crafting") && !act) return "unknown tool " + name;
+        if (!name.equals("where_is") && !name.equals("storage_overview") && !name.equals("plan_crafting") && !name.equals("inspect_blocks") && !act)
+            return "unknown tool " + name;
         if (act && !mod.config.actions) return "Actions are switched off on this server.";
         final ItemStack item = args.has("item") ? resolve(str(args, "item")) : null;
         if (args.has("item") && item == null) return "No item '" + str(args, "item") + "'. Use find_items.";
@@ -198,6 +205,22 @@ class Tools {
                             + (w.isEmpty() ? "None in the storage within " + mod.config.storageRadius + " blocks." : "Around:\n" + w);
                 }
                 if (name.equals("storage_overview")) return overview(p);
+                if (name.equals("inspect_blocks")) {
+                    int[] at = null;
+                    String[] w = str(args, "at").trim().split("[\\s,]+");
+                    if (w.length == 3) try {
+                        at = new int[] { Integer.parseInt(w[0]), Integer.parseInt(w[1]), Integer.parseInt(w[2]) };
+                    } catch (NumberFormatException e) {
+                        return "Bad point '" + str(args, "at") + "': x y z, or empty.";
+                    }
+                    if (at == null) {
+                        net.minecraft.util.MovingObjectPosition hit = sight(p);
+                        at = hit != null ? new int[] { hit.field_72311_b, hit.field_72312_c, hit.field_72309_d }
+                                : new int[] { (int) Math.floor(p.field_70165_t), (int) Math.floor(p.field_70163_u), (int) Math.floor(p.field_70161_v) };
+                    }
+                    if (p.func_70092_e(at[0], at[1], at[2]) > 64 * 64) return "The point is more than 64 blocks from the player.";
+                    return new Inspect(mod).around(p, at, Math.max(1, Math.min(10, num(args, "radius", 4))), MAX_GUIDE - 100);
+                }
                 if (name.equals("plan_crafting"))
                     return new Planner(mod, mod.storage.totals(p, mod.config.storageRadius, true)).plan(item, count);
                 if (name.equals("build")) {
@@ -445,17 +468,23 @@ class Tools {
     String facing(EntityPlayerMP p) {
         String[] dirs = { "south (+z)", "west (-x)", "north (-z)", "east (+x)" };
         String dir = dirs[net.minecraft.util.MathHelper.func_76128_c(p.field_70177_z * 4.0F / 360.0F + 0.5D) & 3];
-        double yaw = Math.toRadians(p.field_70177_z), pitch = Math.toRadians(p.field_70125_A);
-        double ex = p.field_70165_t, ey = p.field_70163_u + p.func_70047_e(), ez = p.field_70161_v;
-        double lx = -Math.sin(yaw) * Math.cos(pitch), ly = -Math.sin(pitch), lz = Math.cos(yaw) * Math.cos(pitch);
-        net.minecraft.util.MovingObjectPosition hit = p.field_70170_p.func_72933_a(net.minecraft.util.Vec3.func_72443_a(ex, ey, ez),
-                net.minecraft.util.Vec3.func_72443_a(ex + lx * 6, ey + ly * 6, ez + lz * 6));
-        if (hit == null || !"BLOCK".equals(String.valueOf(hit.field_72313_a))) return dir + ", at no block in reach";
+        net.minecraft.util.MovingObjectPosition hit = sight(p);
+        if (hit == null) return dir + ", at no block in reach";
         int x = hit.field_72311_b, y = hit.field_72312_c, z = hit.field_72309_d;
         Block bl = p.field_70170_p.func_147439_a(x, y, z);
         Item i = Item.func_150898_a(bl);
         String n = i == null ? bl.func_149739_a() : mod.lang.name(new ItemStack(i, 1, bl.func_149692_a(p.field_70170_p.func_72805_g(x, y, z))));
         return dir + ", at " + n + " " + x + " " + y + " " + z + " (its " + SIDES[Math.max(0, Math.min(5, hit.field_72310_e))] + " side)";
+    }
+
+    /** the block the player looks at within 6 blocks, or null */
+    static net.minecraft.util.MovingObjectPosition sight(EntityPlayerMP p) {
+        double yaw = Math.toRadians(p.field_70177_z), pitch = Math.toRadians(p.field_70125_A);
+        double ex = p.field_70165_t, ey = p.field_70163_u + p.func_70047_e(), ez = p.field_70161_v;
+        double lx = -Math.sin(yaw) * Math.cos(pitch), ly = -Math.sin(pitch), lz = Math.cos(yaw) * Math.cos(pitch);
+        net.minecraft.util.MovingObjectPosition hit = p.field_70170_p.func_72933_a(net.minecraft.util.Vec3.func_72443_a(ex, ey, ez),
+                net.minecraft.util.Vec3.func_72443_a(ex + lx * 6, ey + ly * 6, ez + lz * 6));
+        return hit == null || !"BLOCK".equals(String.valueOf(hit.field_72313_a)) ? null : hit;
     }
 
     String stacks(ItemStack[] inv) {
