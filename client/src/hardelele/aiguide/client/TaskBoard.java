@@ -119,6 +119,7 @@ class TaskBoard {
     boolean fits(Card k, Agent a, WorldServer w) {
         if (k.state != State.OPEN || !ready(k) || !retry.allowed(k, now)) return false;
         if (k.only != null && !same(k.only, a)) return false;
+        if (a.commanded && k.origin != Origin.PLAYER) return false;   // a commanded unit: the player's orders only
         if (k.sameAs != null && k.sameAs.doneBy != null && !same(k.sameAs.doneBy, a)) return false;
         if (k.sameAs != null && k.sameAs.doneBy == null && k.sameAs.state != State.FAILED) return false;
         if (k.need != null && !k.need.ok(a)) return false;
@@ -167,6 +168,12 @@ class TaskBoard {
 
     /** an idle agent: a card, else the haul of a full bag, else the biggest deficit; false when nothing */
     boolean feed(Agent a, WorldServer w) {
+        if (a.commanded) {   // the player's unit: its own orders, nothing else (no defaults, no hauls)
+            here = floodOf(a, w);
+            Card k = best(a, w);
+            if (k != null) { take(k, a, w); return true; }
+            return false;
+        }
         if (stackables(a) >= 12 && chestThere(w)) {
             Crew.job(a, c.new Stash(null, 0), Origin.AUTO_DEFAULT);
             Ledger.act(a, "haul");
@@ -214,6 +221,23 @@ class TaskBoard {
         releaseBlocks(a);
         take(k, a, w);
         return true;
+    }
+
+    /**
+     * A card for this agent now (a fight, the player's order): what it held goes back on the board as it was (not a try
+     * of it), its jobs stop, it takes the card. The one way anything takes an agent off its work.
+     */
+    void assign(Card k, Agent a, WorldServer w, String why) {
+        Card held = leased.get(a);
+        if (held != null && held != k) {
+            release(a, held);
+            held.state = State.OPEN;
+            Events.log("board: " + held + " back on the board (" + a.getCustomNameTag() + " " + why + ")");
+        }
+        Crew.clearJobs(a);
+        a.getNavigator().clearPathEntity();
+        releaseBlocks(a);
+        take(k, a, w);
     }
 
     void take(final Card k, final Agent a, WorldServer w) {

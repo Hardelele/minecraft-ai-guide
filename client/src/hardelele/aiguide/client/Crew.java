@@ -285,6 +285,7 @@ public class Crew {
             if (at == null) { net.minecraft.util.ChunkCoordinates sp = w.getSpawnPoint(); at = new int[] { sp.posX, w.getTopSolidOrLiquidBlock(sp.posX, sp.posZ), sp.posZ }; }
             Agent a = new Agent(w);
             a.number = d.number;
+            a.commanded = d.commanded;
             a.setCustomNameTag(d.getCustomNameTag());
             a.setAlwaysRenderNameTag(true);
             a.setLocationAndAngles(at[0] + 0.5, at[1], at[2] + 0.5, d.rotationYaw, 0);
@@ -711,9 +712,18 @@ public class Crew {
                     double d = dist(a, sx + 0.5, sy, sz + 0.5) + (i >= 8 ? 3 : 0);
                     if (d < best) { best = d; pick = new int[] { sx, sy, sz, i + 1 }; }
                 }
+                if (pick == null)   // no free spot beside it (a bush: leaves at head height): one with ground under it, the walk digs the leaves (the stuck machine)
+                    for (int i = 0; i < 8; i++) {
+                        if (i == spot - 1) continue;
+                        int sx = tx + around[i][0], sz = tz + around[i][1];
+                        if (!solid(w, sx, ty - 1, sz) || solid(w, sx, ty, sz) && w.getBlock(sx, ty, sz).getMaterial() != Material.leaves) continue;
+                        double d = dist(a, sx + 0.5, ty, sz + 0.5);
+                        if (d < best) { best = d; pick = new int[] { sx, ty, sz, i + 1, 1 }; }
+                    }
                 if (pick == null || ++tries > 4) return Result.NO_PATH;
                 spot = pick[3];
-                walk = new GoTo(pick[0] + 0.5, pick[1], pick[2] + 0.5, 0.6);
+                // a spot in the leaves: near enough to it (the trunk then in reach), the leaves in the way broken from there
+                walk = new GoTo(pick[0] + 0.5, pick[1], pick[2] + 0.5, pick.length > 4 ? 2.2 : 0.6);
                 state = 1;
                 return Result.RUNNING;
             }

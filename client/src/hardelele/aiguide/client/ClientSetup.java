@@ -7,5 +7,6 @@ class ClientSetup {
         Events.sink = new Events.Sink() { public void log(String line) { Director.log(line); } };   // the crew's lines: to the director
         Events.ghost = new Events.Ghost() { public void show(com.google.gson.JsonObject m) { if (Pilot.instance != null) Pilot.instance.inbox.add(m); } };
         Pilot.start();
+        Commander.start();
     }
 }

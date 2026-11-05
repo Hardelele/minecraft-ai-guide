@@ -70,7 +70,7 @@ class Guard {
         Agent best = null;
         double bs = -1e9;
         for (Agent a : c.agents) {
-            if (a.isDead || a.getHealth() < LOW + 4) continue;
+            if (a.isDead || a.getHealth() < LOW + 4 || a.commanded) continue;   // the player's units take the player's orders only
             TaskBoard.Card k = c.board.leased.get(a);
             if (k != null && k.kind.equals("guard")) return null;   // someone guards already
             double s = a.weapon() * 3 + (k == null ? 4 : -k.prio) - (near == null || near.isEmpty() ? 0 : a.getDistanceToEntity(near.get(0)) * 0.1);
@@ -92,19 +92,10 @@ class Guard {
         EntityLiving m = t.get(0);
         Origin was = Crew.originNow;
         Crew.originNow = Origin.AUTO_DEFAULT;
-        TaskBoard.Card k = c.board.post("guard", () -> new Fight(null)).pin(g).prio(9).work(20, 0, 0, 0, 0, 20 * 90);
+        TaskBoard.Card k = c.board.post("guard", () -> new Fight((double[]) null)).pin(g).prio(9).work(20, 0, 0, 0, 0, 20 * 90);
         k.phase = null;   // the crew's own safety, not a phase's work
         Crew.originNow = was;
-        TaskBoard.Card held = c.board.leased.get(g);
-        if (held != null) {   // its card goes back on the board as it was (not a try): someone, or it, does it later
-            c.board.release(g, held);
-            held.state = TaskBoard.State.OPEN;
-            Events.log("board: " + held + " back on the board (" + g.getCustomNameTag() + " goes to guard)");
-        }
-        Crew.clearJobs(g);
-        g.getNavigator().clearPathEntity();
-        c.board.releaseBlocks(g);
-        c.board.take(k, g, w);
+        c.board.assign(k, g, w, "goes to guard");
         Events.log("crew: " + g.getCustomNameTag() + " guards the crew: " + m.getCommandSenderName() + " at " + (int) m.posX + " " + (int) m.posY + " " + (int) m.posZ
                 + " (" + t.size() + " near), weapon " + (g.bestWeapon() == null ? "hands" : Ledger.name(g.bestWeapon())) + ", health " + Math.round(g.getHealth()));
     }
@@ -130,7 +121,11 @@ class Guard {
         int ticks, cool, quiet, retreatTicks, kills;
         boolean retreat;
         Crew.Task loot, back;
+        EntityLiving forced;   // one mob to fight (the player's attack order): until it is dead or gone
+        boolean hold;          // the player's guard order: at its post until the order is taken back
         Fight(double[] post) { this.post = post; }
+        Fight(double[] post, boolean hold) { this.post = post; this.hold = hold; }
+        Fight(EntityLiving mob) { this.post = null; this.forced = mob; this.target = mob; }
 
         public Result step(Agent a, WorldServer w) {
             Crew c = Crew.instance;
@@ -164,18 +159,24 @@ class Guard {
                     target = null;
                     return Result.RUNNING;
                 }
-                List<EntityLiving> t = threats(c, w, c.playerIn(w));
-                target = t.isEmpty() ? null : t.get(0);
+                if (forced != null) {   // its one mob: dead (looted above) or gone
+                    if (kills > 0 || forced.isDead || a.getDistanceToEntity(forced) > 48) return Result.OK;
+                    target = forced;
+                } else {
+                    List<EntityLiving> t = threats(c, w, c.playerIn(w));
+                    target = t.isEmpty() ? null : t.get(0);
+                }
             }
+            if (forced != null && kills > 0 && loot == null) return Result.OK;
             if (target == null) {
                 quiet++;
                 if (post != null) {   // the planned guard: at its post until the others are in
-                    boolean allIn = true;
+                    boolean allIn = !hold;
                     for (Agent o : c.agents) if (o != a && !o.isDead && !Crew.inside(o)) allIn = false;
                     if (allIn) { Events.log("crew: " + a.getCustomNameTag() + " ends the guard: the others are in (kills " + kills + ")"); return Result.OK; }
                     if (Crew.dist(a, post[0], post[1], post[2]) > 1.5) {
                         if (ticks % 20 == 1) a.getNavigator().tryMoveToXYZ(post[0], post[1], post[2], 1.0);
-                    } else Crew.face(a, post[0] * 2 - (Crew.site[0] + 2.5), post[1] + 1.5, post[2] * 2 - (Crew.site[2] + 2.5));   // looks out
+                    } else if (Crew.site != null && !hold) Crew.face(a, post[0] * 2 - (Crew.site[0] + 2.5), post[1] + 1.5, post[2] * 2 - (Crew.site[2] + 2.5));   // looks out
                     return Result.RUNNING;
                 }
                 if (quiet > 60) { Events.log("crew: " + a.getCustomNameTag() + " ends the guard: no threat left (kills " + kills + ")"); return Result.OK; }

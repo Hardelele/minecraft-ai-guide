@@ -146,6 +146,127 @@ public class Director {
             return t >= num(arg, 0);
         }
         if (cmd.equals("wait")) return t >= num(arg, 0);
+        // the commander, as a player would use it (the same calls as its clicks)
+        if (cmd.equals("commander")) { if (arg.equals("off")) mc.displayGuiScreen(null); else Commander.instance.open(); return true; }
+        if (cmd.equals("cmdlook")) { String[] a = arg.split(" "); Commander.instance.look(Double.parseDouble(a[0]), Double.parseDouble(a[1]), Double.parseDouble(a[2]), Double.parseDouble(a[3])); return true; }
+        if (cmd.equals("cmdsel")) { Commander.instance.selected.clear(); for (String s : arg.split(" ")) if (!s.isEmpty()) Commander.instance.selected.add(Integer.parseInt(s)); return true; }
+        if (cmd.equals("cmdclick")) {   // x y z [q]: a right click on the top of that block
+            String[] a = arg.split(" ");
+            Commander.instance.orderBlock(Integer.parseInt(a[0]), Integer.parseInt(a[1]), Integer.parseInt(a[2]), 1, a.length > 3);
+            return true;
+        }
+        if (cmd.equals("cmdclicknear")) {   // <block name> [q]: a right click on the nearest such block (seen from above: open to the sky or the air) to the camera's point
+            String[] a = arg.split(" ");
+            net.minecraft.block.Block want = (net.minecraft.block.Block) net.minecraft.block.Block.blockRegistry.getObject(a[0].contains(":") ? a[0] : "minecraft:" + a[0]);
+            Commander c = Commander.instance;
+            int cx = MathHelper.floor_double(c.px), cz = MathHelper.floor_double(c.pz), cy = MathHelper.floor_double(c.py);
+            int[] best = null;
+            double bd = 1e9;
+            for (int x = cx - 32; x <= cx + 32; x++)
+                for (int z = cz - 32; z <= cz + 32; z++)
+                    for (int y = cy - 24; y <= cy + 12; y++) {
+                        if (mc.theWorld.getBlock(x, y, z) != want) continue;
+                        if (!mc.theWorld.isAirBlock(x, y + 1, z) && !mc.theWorld.isAirBlock(x + 1, y, z) && !mc.theWorld.isAirBlock(x - 1, y, z)
+                                && !mc.theWorld.isAirBlock(x, y, z + 1) && !mc.theWorld.isAirBlock(x, y, z - 1)) continue;
+                        double d = Math.hypot(x - c.px, z - c.pz) + Math.abs(y - cy) * 0.5;
+                        if (d < bd) { bd = d; best = new int[] { x, y, z }; }
+                    }
+            event("cmdclicknear " + a[0] + ": " + (best == null ? "none" : best[0] + " " + best[1] + " " + best[2]));
+            if (best != null) c.orderBlock(best[0], best[1], best[2], 1, a.length > 1);
+            return true;
+        }
+        if (cmd.equals("cmdclicktree")) {   // [q]: a right click on the nearest standing tree (as the crew finds trees) to the camera's point
+            Commander c = Commander.instance;
+            WorldServer ws = MinecraftServer.getServer().worldServers[0];
+            int[] best = null;
+            double bd = 1e9;
+            for (int[] tr : Crew.trunks(ws, MathHelper.floor_double(c.px), MathHelper.floor_double(c.py), MathHelper.floor_double(c.pz), 32)) {
+                double d = Math.hypot(tr[0] - c.px, tr[2] - c.pz);
+                if (tr[3] >= 3 && d < bd) { bd = d; best = tr; }
+            }
+            event("cmdclicktree: " + (best == null ? "none" : best[0] + " " + best[1] + " " + best[2] + " (" + best[3] + " logs)"));
+            if (best != null) c.orderBlock(best[0], best[1], best[2], 1, arg.equals("q"));
+            return true;
+        }
+        // the world's recording and its playback, and the film's cameras
+        if (cmd.equals("worldrec")) {   // start <name> | stop
+            final String[] a = arg.split(" ");
+            serverQueue.add(new Runnable() { public void run() { if (a[0].equals("start")) WorldRec.start(a[1]); else WorldRec.stop(); } });
+            return true;
+        }
+        if (cmd.equals("replay")) {   // <name>: the recording's world opened (from the main menu), the playback ready
+            if (!(mc.currentScreen instanceof GuiMainMenu)) { t = -1; return false; }
+            Replay.open(arg);
+            return true;
+        }
+        if (cmd.equals("replayplay")) { if (Replay.active != null) { Replay.active.speed = arg.isEmpty() ? 1 : Double.parseDouble(arg); Replay.active.playing = true; } return true; }
+        if (cmd.equals("replaypause")) { if (Replay.active != null) Replay.active.playing = false; return true; }
+        if (cmd.equals("replayseek")) {   // <seconds>: forward to it (blocks and all applied on the way)
+            if (Replay.active != null) Replay.active.t = Math.max(Replay.active.t, Math.min(Replay.active.ticks.size() - 1.001, Double.parseDouble(arg) * 20));
+            return true;
+        }
+        if (cmd.equals("key")) {   // t(ticks) x y z yaw pitch fov: a keyframe of the path
+            String[] a = arg.split(" ");
+            Cam.get().keys.add(new Cam.Key(Double.parseDouble(a[0]), Double.parseDouble(a[1]), Double.parseDouble(a[2]), Double.parseDouble(a[3]), Double.parseDouble(a[4]), Double.parseDouble(a[5]), Double.parseDouble(a[6])));
+            return true;
+        }
+        if (cmd.equals("path")) {   // play | rec <file>: the path of keys, until it ends
+            if (t == 0) Cam.get().playPath(arg.startsWith("rec ") ? arg.substring(4) : null);
+            return t > 2 && Cam.get().shot == null;
+        }
+        if (cmd.equals("follow")) {   // <agent number> <ticks>
+            String[] a = arg.split(" ");
+            if (t == 0) { Cam c = Cam.get(); c.autoOn = false; Cam.Shot s = c.planFollow(Integer.parseInt(a[0]), Integer.parseInt(a[1])); if (s != null) c.start(s); else event("follow: no view of agent " + a[0]); }
+            return t >= Integer.parseInt(a[1]);
+        }
+        if (cmd.equals("director")) {   // <ticks>: the action-ranked director films for that long
+            Cam c = Cam.get();
+            if (t == 0) { c.autoOn = true; c.release(); }
+            if (t >= num(arg, 600)) { c.autoOn = false; return true; }
+            return false;
+        }
+        if (cmd.equals("screeninfo")) { event("screen: " + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName()) + ", active " + org.lwjgl.opengl.Display.isActive() + ", commander drawn " + Commander.drawn); return true; }
+        if (cmd.equals("cmdclickchest")) {   // [q]: a right click on the crew's chest
+            int[] ch = Crew.instance == null ? null : Crew.instance.chest;
+            event("cmdclickchest: " + (ch == null ? "no chest" : ch[0] + " " + ch[1] + " " + ch[2]));
+            if (ch != null) Commander.instance.orderBlock(ch[0], ch[1], ch[2], 1, arg.equals("q"));
+            return true;
+        }
+        if (cmd.equals("cmdkey")) {   // a panel button or a key, by its word: stop, ai, guard x y z, craft <item> <n>, smelt <item> <n>, build <0-3> <material 0-1> <turn> x y z
+            String[] a = arg.split(" ");
+            Commander c = Commander.instance;
+            if (a[0].equals("stop")) Orders.give(c.picked(), Orders.Kind.STOP, 0, 0, 0, -1, false);
+            else if (a[0].equals("ai")) Orders.give(c.picked(), Orders.Kind.RELEASE, 0, 0, 0, -1, false);
+            else if (a[0].equals("guard")) Orders.give(c.picked(), Orders.Kind.GUARD, Integer.parseInt(a[1]), Integer.parseInt(a[2]), Integer.parseInt(a[3]), -1, false);
+            else if (a[0].equals("craft")) Orders.give(c.picked(), Orders.Kind.CRAFT, 0, 0, 0, -1, false, a[1], Integer.parseInt(a[2]));
+            else if (a[0].equals("smelt")) Orders.give(new int[] { c.picked()[0] }, Orders.Kind.SMELT, 0, 0, 0, -1, false, a[1], Integer.parseInt(a[2]));
+            else if (a[0].equals("build")) {
+                c.blueprint = Integer.parseInt(a[1]); c.material = Integer.parseInt(a[2]); c.turn = Integer.parseInt(a[3]);
+                int bx, by, bz;
+                if (a[4].equals("here")) {   // beside the camera's point, on the ground
+                    bx = MathHelper.floor_double(c.px) + Integer.parseInt(a[5]); bz = MathHelper.floor_double(c.pz) + Integer.parseInt(a[6]);
+                    by = mc.theWorld.getHeightValue(bx, bz);
+                    while (by > 1 && !mc.theWorld.getBlock(bx, by - 1, bz).getMaterial().isSolid() || by > 1 && mc.theWorld.getBlock(bx, by - 1, bz).getMaterial() == net.minecraft.block.material.Material.leaves
+                            || by > 1 && mc.theWorld.getBlock(bx, by - 1, bz).getMaterial() == net.minecraft.block.material.Material.wood) by--;   // the ground, not a crown
+                } else { bx = Integer.parseInt(a[4]); by = Integer.parseInt(a[5]); bz = Integer.parseInt(a[6]); }
+                c.build(new int[] { bx, by, bz });
+                c.blueprint = -1;
+            }
+            return true;
+        }
+        if (cmd.equals("cmdattack")) {   // a right click on the nearest hostile mob to the picked ones
+            net.minecraft.entity.Entity best = null;
+            double bd = 1e9;
+            for (Object o : mc.theWorld.loadedEntityList)
+                if (o instanceof net.minecraft.entity.monster.IMob && o instanceof net.minecraft.entity.EntityLiving) {
+                    net.minecraft.entity.Entity en = (net.minecraft.entity.Entity) o;
+                    double d = en.getDistanceToEntity(mc.thePlayer);
+                    if (d < bd) { bd = d; best = en; }
+                }
+            event("cmdattack: " + (best == null ? "no mob" : best.getCommandSenderName() + " at " + (int) best.posX + " " + (int) best.posY + " " + (int) best.posZ));
+            if (best != null) Commander.instance.order(best, arg.equals("q"));
+            return true;
+        }
         if (cmd.equals("mark")) { event("mark " + arg); return true; }
         if (cmd.equals("clearchat")) { mc.ingameGUI.getChatGUI().clearChatMessages(); return true; }
         if (cmd.equals("hud")) { mc.gameSettings.hideGUI = arg.equals("off"); return true; }
@@ -475,7 +596,12 @@ public class Director {
             if (t == 0 || autoT >= shot || Cam.get().done()) autoShot();
             autoT++;
             return t >= total;
-        }        if (cmd.equals("quit")) {
+        }
+        if (cmd.equals("quit")) {
+            if (Commander.someoneThere(60)) {   // someone plays in the window: the script does not close it under them
+                if (t % 200 == 0) event("quit waits: someone is using the game (closes a minute after the last input)");
+                return false;
+            }
             Recorder.stop();
             try {   // the crew's books, for the measure of what was real
                 net.minecraft.server.MinecraftServer s = net.minecraft.server.MinecraftServer.getServer();

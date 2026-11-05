@@ -103,6 +103,12 @@ class Tools {
                         + "gather. For 'iron tools' e.g.: make iron_pickaxe 1, iron_sword 1, gift iron_pickaxe 1, iron_sword 1, light. "
                         + "Call it again with new goals to change the plan.",
                         P, PD, "goals", "one goal a line"));
+            if (crewAvailable())
+                a.add(tool("crew_order", "Direct orders to the crew's agents, as the player gives them in the commander view (when the player asks "
+                        + "for something at a place: 'take that hill', 'chop this tree', 'all of you here', 'kill the zombie'). The agents ordered "
+                        + "do only the player's orders until released. Use find_blocks or player_status for the place.", P, PD,
+                        "agents", "all, or agent numbers: 1,3", "order", "move, chop, mine, attack (the nearest hostile mob to the place), guard (stand there and fight off mobs), stop, release (back to the plan)",
+                        "x", "x", "y", "y", "z", "z"));
             if (false && crewAvailable())
                 a.add(tool("helpers","Your crew: helper agents with players' bodies who do the early game for the player, together and on their "
                         + "own (no yes needed). Tasks run one after another in the order you call them, so call several in one answer for a "
@@ -174,6 +180,14 @@ class Tools {
                     java.lang.reflect.Method plan = Class.forName("hardelele.aiguide.client.Compiler").getDeclaredMethod("plan", String.class, String.class, origin);
                     plan.setAccessible(true);
                     r = (String) plan.invoke(null, player, str(args, "goals"), llm);
+                }
+            }
+            else if (name.equals("crew_order")) {
+                if (!crewAvailable()) r = "No crew here.";
+                else {
+                    java.lang.reflect.Method m = Class.forName("hardelele.aiguide.client.Orders").getDeclaredMethod("fromGuide", String.class, String.class, int.class, int.class, int.class);
+                    m.setAccessible(true);
+                    r = (String) m.invoke(null, str(args, "agents"), str(args, "order"), num(args, "x", 0), num(args, "y", 0), num(args, "z", 0));
                 }
             }
             else if (name.equals("helpers")) {

@@ -216,6 +216,10 @@ public class Cam {
     }
 
     static Agent serverAgent(int n) {
+        if (Replay.active != null) {   // a replay: the puppet carries what the recording says the agent did
+            for (net.minecraft.entity.Entity e : Replay.active.puppets.values()) if (e instanceof Agent && ((Agent) e).skin() == n) return (Agent) e;
+            return null;
+        }
         if (Crew.instance == null) return null;
         for (Agent a : Crew.instance.agents) if (a.skin() == n) return a;
         return null;
@@ -343,6 +347,170 @@ public class Cam {
         return best == null ? null : new Tunnel("tunnel " + s.getCustomNameTag() + " " + s.actWhat, s.skin(), best, 100);
     }
 
+    // ---- the director by action: the agent doing the most of a work action, the shot its work wants ---------
+
+    boolean autoOn;
+    int autoSubject = -1, autoLow, autoLen = 110;
+    Agent.Act autoAct = Agent.Act.IDLE;
+
+    /** the agents there are (by number) */
+    List<Integer> skins() {
+        List<Integer> out = new ArrayList<Integer>();
+        if (w() == null) return out;
+        for (Object o : w().loadedEntityList) if (o instanceof Agent && !((Agent) o).isDead && !out.contains(((Agent) o).skin())) out.add(((Agent) o).skin());
+        return out;
+    }
+
+    /**
+     * The next shot: whoever does the most of a work action now (a fight, ore, a tree, digging, building, a station,
+     * then carrying or walking; standing about never), another than the last when it is as busy; filmed the way its
+     * work wants (a tunnel shot under the ground). Nobody doing anything: a slow look round the base.
+     */
+    Shot autoShot(int avoid) {
+        Agent best = null;
+        int bs = 0;
+        for (int n : skins()) {
+            Agent s = serverAgent(n);
+            if (s == null) continue;
+            Agent.Act act = s.activity();
+            if (act.rank <= 0) continue;
+            int score = act.rank * 10 + (n != avoid ? 3 : 0);
+            if (score > bs) { bs = score; best = s; }
+        }
+        Shot sh = null;
+        if (best != null) {
+            Agent.Act act = best.activity();
+            if (act == Agent.Act.FIGHT) { Follow f = new Follow("fight " + best.getCustomNameTag(), best.skin(), 3.4, 6.0, 80); sh = planFollowAs(f, best.skin()); }
+            else if ((act == Agent.Act.ORE || act == Agent.Act.DIG) && underground(best)) sh = planTunnel(best);
+            else if (act == Agent.Act.CHOP) sh = planChop(avoid);
+            if (sh == null && act.work()) sh = planWork(best);
+            if (sh == null) sh = planFollow(best.skin(), autoLen);
+            autoSubject = best.skin();
+            autoAct = act;
+        }
+        if (sh == null) {   // nobody at work: the base from above, slowly round
+            int[] s = Crew.site;
+            P c = s != null ? new P(s[0] + 2.5, s[1], s[2] + 2.5) : mc.thePlayer == null ? null : new P(mc.thePlayer.posX, mc.thePlayer.boundingBox.minY, mc.thePlayer.posZ);
+            if (c != null) sh = planOrbit("wide", c, 14, 8, rnd.nextDouble() * 360, rnd.nextDouble() * 360 + 30, autoLen);
+            autoSubject = -1;
+            autoAct = Agent.Act.IDLE;
+        }
+        autoLow = 0;
+        return sh;
+    }
+
+    Shot planFollowAs(Follow f, int agent) {
+        P e = agentAt(agent);
+        if (e == null) return null;
+        P head = new P(e.x, e.y + 1.2, e.z);
+        for (int k = 0; k < 16; k++) {
+            double a = Math.toRadians(k * 22.5 + rnd.nextInt(20));
+            for (double h = 1.8; h <= 4.2; h += 1.2) {
+                P p = new P(e.x + Math.sin(a) * 4.5, e.y + h, e.z + Math.cos(a) * 4.5);
+                if (ok(p, head) && !blockedView(p, head)) { f.pos = p; return f; }
+            }
+        }
+        return null;
+    }
+
+    /** the subject's work is over (for a second and a half), or a fight began elsewhere: time for a cut */
+    boolean subjectEnded() {
+        if (shot == null) return true;
+        Agent s = autoSubject < 0 ? null : serverAgent(autoSubject);
+        if (s != null && s.activity().rank < autoAct.rank) autoLow++; else autoLow = 0;
+        if (autoLow > 30 && time() > 40) return true;
+        if (autoAct != Agent.Act.FIGHT && time() > 20)
+            for (int n : skins()) { Agent o = serverAgent(n); if (o != null && o.activity() == Agent.Act.FIGHT) return true; }
+        return autoSubject < 0 && time() > 60 && autoShotPossible();
+    }
+
+    boolean autoShotPossible() {
+        for (int n : skins()) { Agent o = serverAgent(n); if (o != null && o.activity().rank > 0) return true; }
+        return false;
+    }
+
+    @SubscribeEvent
+    public void autoTick(TickEvent.ClientTickEvent e) {
+        if (e.phase != TickEvent.Phase.END || !autoOn || w() == null) return;
+        if (shot == null || done() || subjectEnded()) {
+            Shot s = autoShot(autoSubject);
+            if (s != null) { if (s.len < autoLen && !(s instanceof Tunnel)) s.len = autoLen; start(s); Director.log("autocam: " + s.name + " (" + autoAct + ")"); }
+        }
+    }
+
+    // ---- a path of keyframes (position, turn, tilt, field of view, time): played as a spline ----------------
+
+    static final class Key {
+        double t, x, y, z, yaw, pitch, fov;
+        Key(double t, double x, double y, double z, double yaw, double pitch, double fov) { this.t = t; this.x = x; this.y = y; this.z = z; this.yaw = yaw; this.pitch = pitch; this.fov = fov; }
+    }
+
+    final List<Key> keys = new ArrayList<Key>();
+    float fovWas = -1;
+    String pathRec;   // a file the path is recorded to (the recorder stops when the path ends)
+
+    /** a Catmull-Rom spline through the keys (the turn unwrapped), its time the keys' own */
+    class KeyPath extends Shot {
+        final List<Key> k;
+        KeyPath(List<Key> keys) { this.k = new ArrayList<Key>(keys); name = "path of " + k.size() + " keys"; len = (int) Math.ceil(k.get(k.size() - 1).t); }
+        double[] at(double t) {
+            int i = 0;
+            while (i < k.size() - 2 && k.get(i + 1).t <= t) i++;
+            Key p1 = k.get(i), p2 = k.get(Math.min(k.size() - 1, i + 1)), p0 = k.get(Math.max(0, i - 1)), p3 = k.get(Math.min(k.size() - 1, i + 2));
+            double u = p2.t == p1.t ? 0 : Math.max(0, Math.min(1, (t - p1.t) / (p2.t - p1.t)));
+            double y1 = p1.yaw, y2 = y1 + MathHelper.wrapAngleTo180_double(p2.yaw - y1), y0 = y1 - MathHelper.wrapAngleTo180_double(y1 - p0.yaw), y3 = y2 + MathHelper.wrapAngleTo180_double(p3.yaw - p2.yaw);
+            return new double[] { cr(p0.x, p1.x, p2.x, p3.x, u), cr(p0.y, p1.y, p2.y, p3.y, u), cr(p0.z, p1.z, p2.z, p3.z, u), cr(y0, y1, y2, y3, u), cr(p0.pitch, p1.pitch, p2.pitch, p3.pitch, u),
+                    cr(p0.fov, p1.fov, p2.fov, p3.fov, u) };
+        }
+        P place(double t, double dt) { double[] a = at(t); return new P(a[0], a[1], a[2]); }
+        P target(double t) {
+            double[] a = at(t);
+            double cy = Math.cos(Math.toRadians(a[4]));
+            return new P(a[0] - Math.sin(Math.toRadians(a[3])) * cy * 10, a[1] - Math.sin(Math.toRadians(a[4])) * 10, a[2] + Math.cos(Math.toRadians(a[3])) * cy * 10);
+        }
+    }
+
+    static double cr(double p0, double p1, double p2, double p3, double u) {
+        return 0.5 * (2 * p1 + (-p0 + p2) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u * u + (-p0 + 3 * p1 - 3 * p2 + p3) * u * u * u);
+    }
+
+    void playPath(String recordTo) {
+        if (keys.size() < 2) { Director.log("path: needs two keys at least"); return; }
+        autoOn = false;
+        start(new KeyPath(keys));
+        if (recordTo != null) { pathRec = recordTo; Recorder.start(recordTo); }
+    }
+
+    // ---- what is on the screen, every frame (for the cut: which agent, doing what, where in the picture) -----
+
+    Writer actLog;
+
+    void logActions(P lens, float yaw, float pitch) {
+        try {
+            if (actLog == null) actLog = new OutputStreamWriter(new FileOutputStream(new File(mc.mcDataDir, "act-log.txt"), true), "UTF-8");
+            double vf = Math.toRadians((70 + mc.gameSettings.fovSetting * 40) / 2), hf = Math.atan(Math.tan(vf) * mc.displayWidth / Math.max(1, mc.displayHeight));
+            double cyw = Math.cos(Math.toRadians(yaw)), syw = Math.sin(Math.toRadians(yaw)), cp = Math.cos(Math.toRadians(pitch)), sp = Math.sin(Math.toRadians(pitch));
+            double fx = -syw * cp, fy = -sp, fz = cyw * cp, rx = -cyw, rz = -syw;           // forward, right
+            double ux = 0 * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - 0 * fx;     // up = right x forward
+            StringBuilder b = new StringBuilder();
+            b.append(System.currentTimeMillis()).append('\t').append(autoSubject).append('\t').append(autoAct).append('\t').append(shot == null ? "-" : shot.name);
+            for (int n : skins()) {
+                P e = agentAt(n);
+                Agent s = serverAgent(n);
+                if (e == null) continue;
+                double vx = e.x - lens.x, vy = e.y + 1.0 - lens.y, vz = e.z - lens.z;
+                double cz = vx * fx + vy * fy + vz * fz, cx = vx * rx + vz * rz, cyy = vx * ux + vy * uy + vz * uz;
+                boolean in = cz > 0.3 && Math.abs(cx / cz) <= Math.tan(hf) && Math.abs(cyy / cz) <= Math.tan(vf);
+                boolean vis = in && sees(lens, new P(e.x, e.y + 1.0, e.z));
+                b.append('\t').append(n).append(':').append(s == null ? "?" : s.activity().name()).append(':').append(vis ? 1 : 0)
+                        .append(':').append(String.format(java.util.Locale.ROOT, "%.3f:%.3f:%.1f", in ? cx / cz / Math.tan(hf) : 9, in ? cyy / cz / Math.tan(vf) : 9, Math.sqrt(vx * vx + vy * vy + vz * vz)));
+            }
+            actLog.write(b.append('\n').toString());
+        } catch (Exception ex) {
+            // no log
+        }
+    }
+
     /** an agent putting a block of the house: from outside, the block and the agent seen */
     Shot planPlace(int prefer) {
         if (Crew.instance == null || Crew.site == null) return null;
@@ -424,6 +592,17 @@ public class Cam {
         P p = shot.place(t, dt);
         if (p == null) p = shot.pos;
         if (p == null) return;
+        if (shot instanceof KeyPath) {   // a path is played as it was keyed: its own speed, turn and field of view
+            double[] k = ((KeyPath) shot).at(t);
+            shot.yaw = (float) k[3];
+            shot.pitch = (float) k[4];
+            if (fovWas < 0) fovWas = mc.gameSettings.fovSetting;
+            mc.gameSettings.fovSetting = (float) ((k[5] - 70) / 40);
+            shot.started = true;
+            shot.pos = p;
+            pose(p);
+            return;
+        }
         if (shot.started && shot.pos != null && dt > 0) {   // never faster than 4 blocks a second (a cut is a new shot, not a move)
             double d = p.dist(shot.pos), lim = 0.3 * dt;
             if (d > lim) p = shot.pos.lerp(p, lim / d);
@@ -446,7 +625,11 @@ public class Cam {
             shot.pitch += Math.max(-lim, Math.min(lim, dp));
         }
         shot.pos = p;
-        // the view is a body of its own (the player stays where it is and is seen in the picture)
+        pose(p);
+    }
+
+    /** the view: a body of its own at p, turned as the shot is (the player stays where it is and is seen in the picture) */
+    void pose(P p) {
         if (eye == null || eye.worldObj != w()) {
             eye = new net.minecraft.client.entity.EntityOtherPlayerMP(w(), new com.mojang.authlib.GameProfile(java.util.UUID.randomUUID(), "cam"));
             eye.setInvisible(true);
@@ -459,21 +642,29 @@ public class Cam {
         eye.rotationYaw = eye.prevRotationYaw = shot.yaw;
         eye.rotationPitch = eye.prevRotationPitch = shot.pitch;
         eye.rotationYawHead = eye.prevRotationYawHead = shot.yaw;
-        mc.renderViewEntity = eye;        if (log != null)
+        mc.renderViewEntity = eye;
+        if (log != null)
             try {
                 log.write(System.currentTimeMillis() + "\t" + String.format(java.util.Locale.ROOT, "%.3f\t%.3f\t%.3f\t%.2f\t%.2f\t%s\n", p.x, p.y, p.z, shot.yaw, shot.pitch,
-                        !clear(p) ? "BLOCKED" : look != null && blockedView(p, look) ? "NEAR" : "ok"));
+                        !clear(p) ? "BLOCKED" : "ok"));
             } catch (Exception ex) {
                 // no log
             }
+        if (Recorder.instance != null) logActions(p, shot.yaw, shot.pitch);   // what each recorded frame shows
     }
 
     @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent e) {
         if (e.phase != TickEvent.Phase.END || shot == null) return;
         ticks++;
+        if (shot instanceof KeyPath && done()) {   // a path's end: its field of view back, its recording stopped
+            if (fovWas >= 0) { mc.gameSettings.fovSetting = fovWas; fovWas = -1; }
+            if (pathRec != null) { Recorder.stop(); Director.log("path: recorded " + pathRec); pathRec = null; }
+            release();
+        }
         try {
             if (log != null) log.flush();
+            if (actLog != null) actLog.flush();
         } catch (Exception ex) {
             // no log
         }

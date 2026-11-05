@@ -65,7 +65,13 @@ public class Bench {
         WorldServer w = s.worldServers[0];
         w.resetUpdateEntityTick();   // a server with no player stops moving entities after a minute: the fake player counts as one
         try {
-            if (state == 0 && ticks > 60) { setUp(w); state = 1; askedAt = ticks; }
+            if (state == 0 && ticks > 60) {
+                setUp(w);
+                state = 1;
+                askedAt = ticks;
+                String rec = System.getProperty("aiguide.bench.rec");
+                if (rec != null && !rec.isEmpty()) Events.log("bench: world recording " + rec + ": " + WorldRec.start(rec));   // the whole session, for filming it afterwards
+            }
             else if (state == 1) {
                 if (Compiler.plans > plansBefore) { state = 2; Events.log("bench: the guide gave goals"); }
                 else if (ticks - askedAt > 20 * 120) {   // the guide gave none in two minutes: the goals straight (marked FALLBACK)
@@ -144,6 +150,11 @@ public class Bench {
         FakePlayer p = FakePlayerFactory.get(w, new GameProfile(UUID.nameUUIDFromBytes("aiguide-bench-player".getBytes()), name));
         p.setLocationAndAngles(best[0] + 0.5, best[1], best[2] + 0.5, 0, 0);
         Crew.standIn = p;
+        if (Boolean.getBoolean("aiguide.bench.spawns") && !w.playerEntities.contains(p)) {
+            // the game spawns mobs only around players: the stand-in counts as one (the world's own spawning, nothing spawned by hand)
+            w.playerEntities.add(p);
+            Events.log("bench: natural spawns around the stand-in player, difficulty " + w.difficultySetting);
+        }
         w.getGameRules().setOrCreateGameRule("doDaylightCycle", "false");
         w.setWorldTime(2000);
         try {   // the guide finds the fake player by its name (its self-test's way)
@@ -186,6 +197,7 @@ public class Bench {
     }
 
     void report(WorldServer w, boolean done) {
+        if (WorldRec.active != null) Events.log("bench: " + WorldRec.stop());
         JsonObject o = new JsonObject();
         o.addProperty("seed", String.valueOf(w.getSeed()));
         o.addProperty("finished", done);

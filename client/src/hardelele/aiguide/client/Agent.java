@@ -62,7 +62,11 @@ public class Agent extends EntityCreature {
     }
 
     /** what it does this moment: the last act while it lasts (half a second), else walking or carrying while it moves, else nothing */
+    /** in a replay: what the recording says it did (a puppet has no jobs of its own) */
+    volatile Act replayAct;
+
     Act activity() {
+        if (replayAct != null) return replayAct;
         if (isDead) return Act.IDLE;
         if (ticksExisted - actAt <= 10) return actWhat;
         double v = Math.hypot(posX - prevPosX, posZ - prevPosZ);
@@ -111,6 +115,8 @@ public class Agent extends EntityCreature {
         return hit;
     }
 
+    /** under the player's command (Commander): takes only the player's order cards, until given back to the AI */
+    volatile boolean commanded;
     int hurtAt = -1000;
     int[] diedAt;
 
