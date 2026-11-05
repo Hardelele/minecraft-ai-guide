@@ -32,6 +32,7 @@ class TaskBoard {
         Origin origin;
         Crew.Phase phase;
         Agent only;           // just this agent
+        java.util.Set<Integer> group;   // just these agents (by number): they share it out among themselves
         Card sameAs;          // whoever did that card (it holds what came of it)
         final List<Card> after = new ArrayList<Card>();
         double prio = 1;
@@ -119,6 +120,7 @@ class TaskBoard {
     boolean fits(Card k, Agent a, WorldServer w) {
         if (k.state != State.OPEN || !ready(k) || !retry.allowed(k, now)) return false;
         if (k.only != null && !same(k.only, a)) return false;
+        if (k.group != null && !k.group.contains(a.skin())) return false;
         if (a.commanded && k.origin != Origin.PLAYER) return false;   // a commanded unit: the player's orders only
         if (k.sameAs != null && k.sameAs.doneBy != null && !same(k.sameAs.doneBy, a)) return false;
         if (k.sameAs != null && k.sameAs.doneBy == null && k.sameAs.state != State.FAILED) return false;

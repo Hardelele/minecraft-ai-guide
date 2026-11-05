@@ -76,6 +76,8 @@ class Skills {
 
     /** the best tool in the bag for a block (or null): the one the block breaks fastest with, that can harvest it */
     static ItemStack bestTool(Agent a, Block b, int meta) {
+        ItemStack p = a.preferred;   // the player's choice, when it is in the bag and does this block's work
+        if (p != null && a.bag.contains(p) && p.getStrVsBlock(b) > 1.0F && (b.getMaterial().isToolNotRequired() || p.canItemHarvestBlock(b))) return p;
         ItemStack best = null;
         float bs = 1.0F;
         for (ItemStack s : a.bag) {

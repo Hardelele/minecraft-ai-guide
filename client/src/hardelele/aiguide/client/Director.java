@@ -302,6 +302,14 @@ public class Director {
             if (a[0].equals("ctrl")) Commander.instance.vCtrl = v; else if (a[0].equals("shift")) Commander.instance.vShift = v; else Commander.instance.vAlt = v;
             return true;
         }
+        if (cmd.equals("vtype")) {   // text typed into the commander's chat, a letter a tick, then Enter
+            if (!(mc.currentScreen instanceof Commander.Screen)) return true;
+            Commander.Screen s = (Commander.Screen) mc.currentScreen;
+            if (t == 0) { s.chat.setFocused(true); s.chat.setText(""); }
+            if (t < arg.length()) { s.chat.writeText(arg.substring(t, t + 1)); return false; }
+            s.typed(org.lwjgl.input.Keyboard.KEY_RETURN);
+            return true;
+        }
         if (cmd.equals("vwheel")) { Commander.instance.vWheel(num(arg, 1) * 120); return true; }
         if (cmd.equals("vkey")) {   // a key typed into the commander's screen (by its LWJGL name: M, B, K_1...)
             int code = org.lwjgl.input.Keyboard.getKeyIndex(arg.toUpperCase());

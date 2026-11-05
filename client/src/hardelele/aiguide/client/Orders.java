@@ -10,6 +10,7 @@ import net.minecraft.block.material.Material;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLiving;
 import net.minecraft.init.Blocks;
+import net.minecraft.item.ItemStack;
 import net.minecraft.world.WorldServer;
 
 /**
@@ -20,7 +21,7 @@ import net.minecraft.world.WorldServer;
  * back to the AI. The skills are the crew's own (walk, chop, mine, fight, stash): nothing is done another way.
  */
 class Orders {
-    enum Kind { MOVE, CHOP, MINE, ATTACK, DEPOSIT, GUARD, CRAFT, SMELT, PLACE, STOP, RELEASE }
+    enum Kind { MOVE, CHOP, MINE, ATTACK, DEPOSIT, GUARD, CRAFT, SMELT, PLACE, STOP, RELEASE, HOLD, GIVE }
 
     static final double PRIO = 20;
     /** each agent's (by its number) last order card: a queued order goes after it */
@@ -62,6 +63,15 @@ class Orders {
             if (held != null) { c.board.release(a, held); held.state = TaskBoard.State.OPEN; }
             a.commanded = kind == Kind.STOP;
             Events.log("order: " + a.getCustomNameTag() + (kind == Kind.STOP ? " stops (holds)" : " is back with the AI"));
+            return;
+        }
+        if (kind == Kind.HOLD) {   // work with this (the n-th stack of its bag): in hand now, its skills take it first
+            if (n >= 0 && n < a.bag.size()) {
+                ItemStack s = a.bag.get(n);
+                a.preferred = s;
+                a.setCurrentItemOrArmor(0, s);
+                Events.log("order: " + a.getCustomNameTag() + " works with " + Ledger.name(s));
+            }
             return;
         }
         if (!queue) cancel(c, a);
@@ -116,6 +126,13 @@ class Orders {
             }
             case DEPOSIT:
                 return c.new Stash(null, 0);
+            case GIVE: {   // to another of the crew (its number in entityId): walked over and handed, as the crew hands things
+                Agent to = null;
+                for (Agent g : c.agents) if (g.skin() == entityId && !g.isDead) to = g;
+                net.minecraft.item.Item it = Compiler.item(item);
+                if (to == null || it == null || to == a) return null;
+                return new Skills.Give(to, it, Math.max(1, n));
+            }
             case GUARD:   // stand at that spot and fight off what comes, until the order is taken back
                 return new Guard.Fight(new double[] { x + 0.5, y + 1, z + 0.5 }, true);
             case CRAFT: {   // the parts from the chest (what is not in the bag), then made (at the table when the recipe is 3x3)
@@ -223,7 +240,11 @@ class Orders {
                     TaskBoard.Card k = c.board.post(build ? "paint build" : "paint dig", () -> tt).prio(8 + (build ? -b[1] : b[1]) * 0.001).at(b[0] + 0.5, b[1], b[2] + 0.5).lease(20 * 300);
                     k.placeChecked = true;   // (its own way there is the dig's: not the base's walk)
                     k.phase = null;
-                    if (!who.isEmpty()) { Agent g = who.get(n % who.size()); k.pin(g); g.commanded = true; }
+                    if (who.size() == 1) { k.pin(who.get(0)); who.get(0).commanded = true; }   // one agent: its own
+                    else if (!who.isEmpty()) {   // several: theirs, shared out among them as each is free (who takes which, they decide)
+                        k.group = new java.util.HashSet<Integer>();
+                        for (Agent g : who) { k.group.add(g.skin()); g.commanded = true; }
+                    }
                     TaskBoard.Card dep = at.get(Crew.key(b[0], b[1] + (build ? -1 : 1), b[2]));   // the one above (dig) or below (build) first
                     if (dep != null) k.after(dep);
                     at.put(key, k);

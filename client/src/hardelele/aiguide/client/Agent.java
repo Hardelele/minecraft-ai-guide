@@ -117,6 +117,8 @@ public class Agent extends EntityCreature {
 
     /** under the player's command (Commander): takes only the player's order cards, until given back to the AI */
     volatile boolean commanded;
+    /** what the player chose it to work with (a tool, a block to build with): its skills take it first when it fits */
+    volatile ItemStack preferred;
     int hurtAt = -1000;
     int[] diedAt;
 
