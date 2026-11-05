@@ -262,6 +262,9 @@ public class Crew {
             if (table != null) o.add("table", g.toJsonTree(table));
             if (Day1.mine != null) o.add("mine", g.toJsonTree(Day1.mine));
             if (Day1.furnace != null) o.add("furnace", g.toJsonTree(Day1.furnace));
+            if (Day1.lastBase != null) o.addProperty("baseSize", Day1.lastBase.size);
+            if (Day1.mineDepth > 0) o.addProperty("mineDepth", Day1.mineDepth);
+            o.add("passages", g.toJsonTree(new ArrayList<Long>(Ground.passages)));
             o.add("done", g.toJsonTree(new ArrayList<String>(finished)));
             o.addProperty("day", 1);
             java.io.File f = new java.io.File(w.getSaveHandler().getWorldDirectory(), "crew.json");
@@ -286,6 +289,15 @@ public class Crew {
             if (o.has("table")) table = g.fromJson(o.get("table"), int[].class);
             if (o.has("mine")) Day1.mine = g.fromJson(o.get("mine"), int[].class);
             if (o.has("furnace")) Day1.furnace = g.fromJson(o.get("furnace"), int[].class);
+            if (o.has("mineDepth")) Day1.mineDepth = o.get("mineDepth").getAsInt();
+            if (o.has("passages")) for (com.google.gson.JsonElement e : o.getAsJsonArray("passages")) Ground.passages.add(e.getAsLong());
+            if (site != null && base != null) {   // the base of the day before: its plan laid again where it stands (its own walls known)
+                int size = o.has("baseSize") ? o.get("baseSize").getAsInt() : 2;
+                Day1.Base b = new Day1.Base(size);
+                b.lay(this, w, size, 0);
+                b.size = size;
+                Day1.lastBase = b;
+            }
             Events.log("crew: the base of the day before is known: " + o);
         } catch (Exception e) {
             Events.log("crew: not loaded: " + e);
@@ -453,6 +465,7 @@ public class Crew {
                 br = null;
                 Ground.changed();
                 Day1.catchNear(a, w, 2.0);
+                Skills.lightUp(a, w);   // a way dug into the dark gets its torches
                 since = 0;
                 state = ROUTE;   // through the gap: a route again
                 route = null;
@@ -477,6 +490,14 @@ public class Crew {
                     }
                     if (ri >= route.size()) { state = NAV; route = null; since = 0; return Result.RUNNING; }
                     int[] p = route.get(ri);
+                    if (w.getBlock(p[0], p[1], p[2]) == Blocks.wooden_door) {   // a closed door on the way: opened by hand, as a player does
+                        int lower = (w.getBlockMetadata(p[0], p[1], p[2]) & 8) != 0 ? p[1] - 1 : p[1];
+                        if ((w.getBlockMetadata(p[0], lower, p[2]) & 4) == 0 && dist(a, p[0] + 0.5, p[1], p[2] + 0.5) < 2.5) {
+                            face(a, p[0] + 0.5, p[1] + 1, p[2] + 0.5);
+                            Blocks.wooden_door.onBlockActivated(w, p[0], lower, p[2], Skills.hands(a, w), 0, 0.5F, 0.5F, 0.5F);
+                            a.swingItem();
+                        }
+                    }
                     if (Math.abs(a.posX - (p[0] + 0.5)) < 0.45 && Math.abs(a.posZ - (p[2] + 0.5)) < 0.45 && Math.abs(a.posY - p[1]) < 1.1) { ri++; return Result.RUNNING; }
                     a.getMoveHelper().setMoveTo(p[0] + 0.5, p[1], p[2] + 0.5, 1.0D);   // the waypoint next to it: straight there
                     if (p[1] > a.posY + 0.5 || a.isCollidedHorizontally || a.isInWater()) a.getJumpHelper().setJumping();
@@ -505,10 +526,20 @@ public class Crew {
                     : new int[][] { { fx, y0 + 1, fz }, { fx, y0, fz } };
             for (int[] c : cells) {
                 if (Ground.passable(w, c[0], c[1], c[2], null)) continue;
-                return mayDigThrough(a, w, c[0], c[1], c[2]) ? c : null;
+                if (mayDigThrough(a, w, c[0], c[1], c[2])) return c;
+                if (wallDigs < 2 && instance != null && Ground.mayDig(instance, c[0], c[1], c[2], "exit") && Ground.ownWall(instance, c[0], c[1], c[2])
+                        && Skills.breakTicks(a, w, c[0], c[1], c[2]) >= 0) {   // no way at all: a passage through its own wall (1x2 at most)
+                    wallDigs++;
+                    Ground.passages.add(key(c[0], c[1], c[2]));
+                    Events.log("crew: " + a.getCustomNameTag() + " opens a passage in the house wall at " + c[0] + " " + c[1] + " " + c[2] + " (no way out)");
+                    return c;
+                }
+                return null;
             }
             return null;
         }
+
+        int wallDigs;
 
         /** natural ground or rock, outside every protected zone, and a block the agent's tools take */
         static boolean mayDigThrough(Agent a, WorldServer w, int x, int y, int z) {
@@ -1007,7 +1038,7 @@ public class Crew {
             if (i >= blocks.size()) return Result.OK;
             int[] b = blocks.get(i);
             if (br != null) { if (br.step(a, w) != Result.RUNNING) { br = null; } return Result.RUNNING; }
-            if (w.getBlock(b[0], b[1], b[2]) != Blocks.stone) { i++; tries = 0; walk = null; return Result.RUNNING; }
+            if (soft(w, b[0], b[1], b[2]) || w.getBlock(b[0], b[1], b[2]).getMaterial().isLiquid()) { i++; tries = 0; walk = null; return Result.RUNNING; }   // gone already
             boolean seen = eyeDist(a, b[0], b[1], b[2]) <= REACH && blocker(a, w, b[0], b[1], b[2]) == null;
             if (seen) { br = new Break(b[0], b[1], b[2], 0.75); return Result.RUNNING; }
             if (walk == null) {
@@ -1087,11 +1118,12 @@ public class Crew {
         int[] next(Agent a, WorldServer w) {
             int low = Integer.MAX_VALUE;
             for (int[] b : plan)
-                if (soft(w, b[0], b[1], b[2]) && b[1] < low && !skipping(b[0], b[1], b[2]) && !(missing.contains(b[3]) && Build.item(a, b[3]) == null)) low = b[1];
+                if (soft(w, b[0], b[1], b[2]) && b[1] < low && !Ground.passages.contains(key(b[0], b[1], b[2])) && !skipping(b[0], b[1], b[2]) && !(missing.contains(b[3]) && Build.item(a, b[3]) == null)) low = b[1];
             if (low == Integer.MAX_VALUE) return null;
             int[] best = null;
             double bd = 1e9;
             for (int[] b : plan) {
+                if (Ground.passages.contains(key(b[0], b[1], b[2]))) continue;   // a way opened through the wall stays open
                 if (b[1] > low + 1 || !soft(w, b[0], b[1], b[2]) || claimed.contains(key(b[0], b[1], b[2]))) continue;
                 if (missing.contains(b[3]) && Build.item(a, b[3]) == null || skipping(b[0], b[1], b[2])) continue;
                 boolean rests = !soft(w, b[0], b[1] - 1, b[2]) || !soft(w, b[0] + 1, b[1], b[2]) || !soft(w, b[0] - 1, b[1], b[2])
@@ -1140,7 +1172,7 @@ public class Crew {
                 if (cur == null) {
                     boolean left = false, possible = false;   // blocks left at all; blocks left this agent could still put
                     for (int[] b : h.plan) {
-                        if (!soft(w, b[0], b[1], b[2])) continue;
+                        if (!soft(w, b[0], b[1], b[2]) || Ground.passages.contains(key(b[0], b[1], b[2]))) continue;
                         left = true;
                         if (!h.missing.contains(b[3]) || item(a, b[3]) != null) possible = true;
                     }

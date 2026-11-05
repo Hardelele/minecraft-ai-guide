@@ -39,7 +39,7 @@ class Ground {
         if (air != null && air.contains(Crew.key(x, y, z))) return true;
         Block b = w.getBlock(x, y, z);
         if (b.getMaterial() == Material.lava) return false;
-        return Crew.soft(w, x, y, z) || b.getMaterial() == Material.water;
+        return Crew.soft(w, x, y, z) || b.getMaterial() == Material.water || b == Blocks.wooden_door;   // a wooden door opens to a hand
     }
 
     /** one can stand on this block: solid, not a fence or a wall (too high to step on), not leaves */
@@ -186,8 +186,8 @@ class Ground {
         if (s != null) {   // the base: the house, its fence ring and the ground under them
             z.add(new Zone("base", null, s[0] - 7, s[1] - 3, s[2] - 7, s[0] + 11, s[1] + 8, s[2] + 11));
         }
-        for (int[] st : new int[][] { c.chest, c.table, Day1.furnace })   // the stations and a block round them
-            if (st != null) z.add(new Zone("station", null, st[0] - 1, st[1] - 1, st[2] - 1, st[0] + 1, st[1] + 1, st[2] + 1));
+        for (int[] st : new int[][] { c.chest, c.table, Day1.furnace })   // the stations and what they stand on
+            if (st != null) z.add(new Zone("station", null, st[0], st[1] - 1, st[2], st[0], st[1], st[2]));
         int[] m = Day1.mine;
         if (m != null) {   // the stairs: the lanes and the floor under every step, down to as deep as planned
             int depth = Math.max(8, Day1.mineDepth);
@@ -214,11 +214,31 @@ class Ground {
         if (at != null) mineWay.addAll(f.route(at));
     }
 
-    /** may this block be dug, by whom ("mine" for the mine's own steps, anything else for the rest) */
+    /** may this block be dug, by whom ("mine" for the mine's own steps, "exit" for a way out of the crew's own building, anything else for the rest) */
     static boolean mayDig(Crew c, int x, int y, int z, String who) {
-        for (Zone zn : zones(c)) if (zn.in(x, y, z) && (zn.owner == null || !zn.owner.equals(who))) return false;
+        for (Zone zn : zones(c)) {
+            if (!zn.in(x, y, z) || zn.owner != null && zn.owner.equals(who)) continue;
+            if ("exit".equals(who) && zn.name.equals("base") && ownWall(c, x, y, z)) continue;   // the last way out: through its own wall
+            return false;
+        }
         return true;
     }
+
+    /**
+     * A block of the crew's own building that may be opened as a way out when there is no other: a wall block of its
+     * base's plan (planks, logs, cobblestone) that stands as planned; never a station, a chest, a door, a fence, a torch.
+     */
+    static boolean ownWall(Crew c, int x, int y, int z) {
+        Day1.Base b = Day1.lastBase;
+        if (b == null || c.base == null) return false;
+        net.minecraft.block.Block is = ((WorldServer) net.minecraft.server.MinecraftServer.getServer().worldServers[0]).getBlock(x, y, z);
+        for (int[] p : b.plan)
+            if (p[0] == x && p[1] == y && p[2] == z && p[3] <= 2 && (is == Crew.block(p[3]) || p[3] == 1 && (is == Blocks.log || is == Blocks.log2))) return true;
+        return false;
+    }
+
+    /** the passages the crew opened in its own building: kept open (the base's builds leave them), saved with the base */
+    static final java.util.Set<Long> passages = new java.util.HashSet<Long>();
 
     /**
      * May the block be dug and still leave a way back: the block itself and every block the dig is in (the zones),

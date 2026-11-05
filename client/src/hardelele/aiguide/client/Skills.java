@@ -24,6 +24,7 @@ import net.minecraft.item.crafting.ShapedRecipes;
 import net.minecraft.item.crafting.ShapelessRecipes;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.tileentity.TileEntityFurnace;
+import net.minecraft.util.MathHelper;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.common.ForgeHooks;
 import net.minecraftforge.common.util.FakePlayer;
@@ -137,6 +138,33 @@ class Skills {
     }
 
     static final int[][] SIDE = { { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { -1, 0, 0 }, { 1, 0, 0 } };
+
+    /** how light it is where the agent stands (blocks' light and the sky's, as the game counts it) */
+    static int light(Agent a, WorldServer w) {
+        int x = MathHelper.floor_double(a.posX), y = MathHelper.floor_double(a.posY + 0.5), z = MathHelper.floor_double(a.posZ);
+        return w.getBlockLightValue(x, y, z);
+    }
+
+    /**
+     * Where it is dark (below 7: where mobs would spawn), an agent with torches puts one up: on a wall beside it at head
+     * height, or on the floor. The same for every skill that goes into the dark (digging, tunnels, the mine).
+     */
+    static boolean lightUp(Agent a, WorldServer w) {
+        if (light(a, w) >= 7 || count(a.bag, Day1.TORCH, -1) == 0) return false;
+        int x = MathHelper.floor_double(a.posX), y = MathHelper.floor_double(a.posY + 0.01), z = MathHelper.floor_double(a.posZ);
+        int[][] spots = { { x + 1, y + 1, z }, { x - 1, y + 1, z }, { x, y + 1, z + 1 }, { x, y + 1, z - 1 }, { x, y, z } };
+        for (int[] s : spots) {
+            if (!Crew.soft(w, s[0], s[1], s[2]) || s[0] == x && s[1] == y + 1 && s[2] == z) continue;
+            boolean onWall = false;
+            for (int[] d : SIDE) if (d[1] == 0 && Crew.solid(w, s[0] + d[0], s[1], s[2] + d[2])) onWall = true;
+            if (!onWall && !Crew.solid(w, s[0], s[1] - 1, s[2])) continue;
+            if (placeFromBag(a, w, s[0], s[1], s[2], Day1.TORCH, -1) == Result.OK) {
+                Events.log("crew: " + a.getCustomNameTag() + " puts up a torch at " + s[0] + " " + s[1] + " " + s[2] + " (dark)");
+                return true;
+            }
+        }
+        return false;
+    }
 
     /** place one of the bag's items at x y z, with the item's own use on a face next to it (the agent looks at it) */
     /**

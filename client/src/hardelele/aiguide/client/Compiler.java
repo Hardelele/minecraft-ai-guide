@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.init.Blocks;
 import net.minecraft.init.Items;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -21,7 +22,16 @@ import net.minecraft.world.WorldServer;
  */
 class Compiler {
     static final String VOCAB = "summon N (1-5 agents); shelter auto|hut|house|fenced; tools wood|stone; torches N; "
-            + "gift ITEM [N], ITEM [N] (stone_pickaxe, torch, wooden_pickaxe); mine; gather";
+            + "make ITEM [N], ITEM [N] (any item by its game name: iron_pickaxe, iron_sword, torch...); "
+            + "gift ITEM [N], ITEM [N] (things the crew has or makes, to the player); light (torches where the base and the mine are dark); "
+            + "inside (the crew goes into its house and waits there, e.g. for the night); mine; gather";
+
+    /** an item by its game name (minecraft:iron_pickaxe or iron_pickaxe), or null */
+    static Item item(String name) {
+        String n = name.trim();
+        Object o = Item.itemRegistry.getObject(n.contains(":") ? n : "minecraft:" + n);
+        return o instanceof Item ? (Item) o : null;
+    }
 
     /** the goals, parsed */
     static class Goals {
@@ -29,8 +39,8 @@ class Compiler {
         int shelter = -1;           // -1 none, 0 hut, 1 house, 2 house with a fence
         String tools;               // null, wood, stone
         int torches;
-        final List<ItemStack> gift = new ArrayList<ItemStack>();
-        boolean mine, gather, summon;
+        final List<ItemStack> gift = new ArrayList<ItemStack>(), make = new ArrayList<ItemStack>();
+        boolean mine, gather, summon, light, inside;
         public String toString() {
             return "summon " + (summon ? agents : "-") + ", shelter " + shelter + ", tools " + tools + ", torches " + torches + ", gift " + gift.size() + ", mine " + mine + ", gather " + gather;
         }
@@ -49,15 +59,18 @@ class Compiler {
             if (k.startsWith("summon") || k.startsWith("call")) { g.summon = true; g.agents = clamp(num(arg, 4), 1, 5); }
             else if (k.startsWith("shelter") || k.startsWith("base") || k.startsWith("house")) {
                 g.shelter = arg.startsWith("hut") ? 0 : arg.startsWith("house") ? 1 : 2;   // auto and fenced: the biggest the wood allows
-            } else if (k.startsWith("tool")) g.tools = arg.startsWith("wood") ? "wood" : "stone";
-            else if (k.startsWith("torch") || k.startsWith("light")) g.torches = clamp(num(arg, 16), 0, 64);
-            else if (k.startsWith("gift") || k.startsWith("give")) {
+            } else if (k.startsWith("tool")) g.tools = arg.startsWith("wood") ? "wood" : arg.startsWith("iron") ? "iron" : "stone";
+            else if (k.equals("light") || k.startsWith("lighting")) g.light = true;
+            else if (k.startsWith("inside") || k.startsWith("hide")) g.inside = true;
+            else if (k.startsWith("torch")) g.torches = clamp(num(arg, 16), 0, 64);
+            else if (k.startsWith("gift") || k.startsWith("give") || k.startsWith("make") || k.startsWith("craft")) {
+                List<ItemStack> into = k.startsWith("make") || k.startsWith("craft") ? g.make : g.gift;
                 for (String part : arg.split(",")) {
                     String[] p = part.trim().split("\\s+");
                     if (p[0].isEmpty()) continue;
-                    Item it = p[0].contains("stone") ? Items.stone_pickaxe : p[0].contains("torch") ? Day1.TORCH : p[0].contains("wood") ? Items.wooden_pickaxe : null;
-                    if (it == null) return "Gift '" + part.trim() + "': the crew can give stone_pickaxe, wooden_pickaxe or torch.";
-                    g.gift.add(new ItemStack(it, clamp(p.length > 1 ? num(p[1], 1) : it == Day1.TORCH ? 8 : 1, 1, 32)));
+                    Item it = item(p[0]);
+                    if (it == null) return "'" + part.trim() + "': no such item; use the game's names (iron_pickaxe, iron_sword, torch, stone_pickaxe...).";
+                    into.add(new ItemStack(it, clamp(p.length > 1 ? num(p[1], 1) : it == Day1.TORCH ? 8 : 1, 1, 64)));
                 }
             } else if (k.startsWith("mine") || k.startsWith("stone")) g.mine = true;
             else if (k.startsWith("gather") || k.startsWith("night")) g.gather = true;
@@ -81,6 +94,11 @@ class Compiler {
     static void unfold(Item item, int n, Map<Item, Integer> raw, Map<String, Integer> steps, int depth) {
         if (n <= 0) return;
         if (item == Day1.LOG || item == Day1.LOG2 || item == Day1.COBBLE) { add(raw, item == Day1.LOG2 ? Day1.LOG : item, n); return; }
+        if (item == Items.iron_ingot) {   // smelted from iron ore (the fuel is counted where the smelting is planned)
+            Ledger.add(steps, "smelt iron", n);
+            add(raw, Day2.IRON_ORE, n);
+            return;
+        }
         if (item == Items.coal) {   // charcoal: a log smelted each, planks for fuel (1.5 items a plank)
             Ledger.add(steps, "smelt charcoal", n);
             unfold(Day1.LOG, n, raw, steps, depth + 1);
@@ -136,6 +154,7 @@ class Compiler {
     }
 
     static Goals last;   // the goals in force (for the replanning)
+    static volatile int plans;   // how many goal lists were compiled (the bench waits on it)
     static int replans;
 
     /** on the server thread: the quantities, the phases */
@@ -150,6 +169,7 @@ class Compiler {
         boolean again = last != null;   // new goals replace the plan: what is queued goes, what is done stays done
         if (again) c.phases.clear();
         last = g;
+        plans++;
         int n = g.summon ? g.agents : Math.max(1, c.agents.size());
         boolean stone = "stone".equals(g.tools) || !g.gift.isEmpty() && giftHas(g, Items.stone_pickaxe);
         int giftTorches = giftCount(g, Day1.TORCH), torches = g.torches + giftTorches;
@@ -186,7 +206,37 @@ class Compiler {
         if (logs > 0) ph.add(named(new Day1.WoodChain(3, logs), "wood"));
         if (pickaxes) ph.add(named(new Day1.Tools(), "tools"));
         if (cobble > 0 || g.mine) ph.add(named(new Day1.Mine(Math.max(4, (int) Math.ceil(cobble / 4.0) + 1)), "mine"));   // as deep as the stone wanted takes (two lanes, about 4 a step)
-        if (stone || torches > 0) ph.add(named(new Day1.Upgrade(torches, "stone".equals(g.tools), giftPick), "upgrade"));
+        boolean ironTools = "iron".equals(g.tools);
+        if (stone || torches > 0 || ironTools) ph.add(named(new Day1.Upgrade(torches, "stone".equals(g.tools) || ironTools, giftPick), "upgrade"));   // iron wants stone pickaxes first
+        // what is made (iron things and the like): their raw things from the ground, smelted, made at the table
+        List<ItemStack> make = new ArrayList<ItemStack>(g.make);
+        if (ironTools) make.add(new ItemStack(Items.iron_pickaxe, n));
+        for (ItemStack it : g.gift)   // a gift the day-one phases do not make is made here
+            if (it.getItem() != Items.stone_pickaxe && it.getItem() != Day1.TORCH && it.getItem() != Items.wooden_pickaxe) {
+                boolean listed = false;
+                for (ItemStack m : make) if (m.getItem() == it.getItem()) { m.stackSize += it.stackSize; listed = true; }
+                if (!listed) make.add(it.copy());
+            }
+        String day2 = "";
+        if (!make.isEmpty()) {
+            Map<Item, Integer> raw2 = new LinkedHashMap<Item, Integer>();
+            Map<String, Integer> st2 = new LinkedHashMap<String, Integer>();
+            for (ItemStack it : make) {
+                int need = it.stackSize - Day1.Base.have(c, w, it.getItem());
+                if (need > 0) unfold(it.getItem(), need, raw2, st2, 0);
+            }
+            int ore = (raw2.containsKey(Day2.IRON_ORE) ? raw2.get(Day2.IRON_ORE) : 0) - Day1.Base.have(c, w, Day2.IRON_ORE) - Day1.Base.have(c, w, Items.iron_ingot);
+            int coal = ore > 0 ? Math.max(0, (ore + 7) / 8 - Day1.Base.have(c, w, Items.coal)) : 0;
+            if (coal > 0 && !Day2.clusters(c, w, Blocks.coal_ore, 40).isEmpty()) ph.add(named(new Day2.OreRun(Blocks.coal_ore, coal), "coal"));
+            if (ore > 0) {
+                ph.add(named(new Day2.OreRun(Blocks.iron_ore, ore), "iron"));
+                ph.add(named(new Day2.SmeltOre(Day2.IRON_ORE, ore), "smelt"));
+            }
+            ph.add(named(new Day2.Make(make), "make"));
+            day2 = "; iron ore " + Math.max(0, ore) + ", coal " + coal + ", make " + make + " (" + st2 + ")";
+        }
+        if (g.light) ph.add(named(new Day2.Light(), "light"));
+        if (g.inside) ph.add(named(new Day2.Shelter(20 * 60), "inside"));
         if (!g.gift.isEmpty()) ph.add(named(new Day1.Gift(g.gift), "gift"));
         if (g.shelter >= 0) ph.add(named(new Day1.Base(g.shelter), "house"));
         if (g.gather) ph.add(named(new Day1.Gather(), "gather"));
@@ -206,7 +256,7 @@ class Compiler {
         }
         if (cobble > 0) c.board.goals.put(Day1.COBBLE, cobble + 8);
         String sum = (again ? "The crew's plan, changed (done stays done): " : "The crew's plan: ") + (kinds.length() == 0 ? "nothing left to do" : kinds.toString()) + ". Wood " + logs + " logs" + (baseLogs > 0 ? " (the base " + baseLogs + ")" : "") + ", stone " + cobble
-                + (baseNote.isEmpty() ? "" : "; base: " + baseNote) + "; crafts and smelts " + steps + ". The crew shares the work itself; "
+                + (baseNote.isEmpty() ? "" : "; base: " + baseNote) + day2 + "; crafts and smelts " + steps + ". The crew shares the work itself; "
                 + "if something fails it is mended or you are told.";
         Events.log("compiler: goals " + g + " -> " + sum);
         return sum;
@@ -242,6 +292,7 @@ class Compiler {
         List<TaskBoard.Card> failed = new ArrayList<TaskBoard.Card>();
         for (TaskBoard.Card k : c.board.cards) if (k.phase == ph && k.state == TaskBoard.State.FAILED && !k.optional) failed.add(k);
         if (failed.isEmpty() && !outOfTime) { succeeded.add(ph.kind); return; }
+        if (ph instanceof Day1.Quarry) quarryFailed = true;   // what the quarry was for is still short: the stairs give it next time
         StringBuilder what = new StringBuilder();
         Map<Item, Integer> lack = new LinkedHashMap<Item, Integer>();
         boolean way = outOfTime;
@@ -293,7 +344,7 @@ class Compiler {
             return;
         }
         if (item == Day1.COBBLE) {   // rock open to the air first; what it lacks, from the stairs going deeper
-            int open = Day1.openRock(c, w, n);
+            int open = quarryFailed ? 0 : Day1.openRock(c, w, n);   // a quarry that found nothing: the stairs only
             if (open > 0) mend.add(named(new Day1.Quarry(Math.min(n, open)), "quarry"));
             if (open < n) {
                 int steps = (int) Math.ceil((n - open) / 4.0);   // a new step of two lanes gives about 4 stone (some is dirt)
@@ -318,7 +369,8 @@ class Compiler {
             if (made != null) ((Day1.Upgrade) made).giftPickaxe = true;
             else mend.add(named(new Day1.Upgrade(0, false, true), "upgrade"));
         }
-        else if (item == Items.wooden_pickaxe || item == Items.stick || item == Day1.PLANKS) { if (!has(mend, "tools")) mend.add(named(new Day1.Tools(), "tools")); }
+        else if (item == Items.wooden_pickaxe) { if (!has(mend, "tools")) mend.add(named(new Day1.Tools(), "tools")); }
+        // planks and sticks are made by the phase that uses them (the base's Prepare, the furnace's card, Make): their logs are topped up above
         else if (item == Day1.FURNACE) mend.add(named(new Day1.Upgrade(0, false, false), "upgrade"));
         // the base's own things (fences, a door) are made by its Prepare when it goes again
     }
@@ -330,6 +382,7 @@ class Compiler {
     }
 
     static final java.util.Set<String> succeeded = new java.util.HashSet<String>();
+    static boolean quarryFailed;
     static final Map<String, Integer> repeats = new java.util.HashMap<String, Integer>();
 
     /** a fresh phase like this one (same parameters) */

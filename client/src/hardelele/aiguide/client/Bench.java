@@ -36,7 +36,7 @@ public class Bench {
     final File out = new File(System.getProperty("aiguide.bench.out", "bench-report.json"));
     final int limit = Integer.getInteger("aiguide.bench.minutes", 40) * 60 * 20;
     PrintWriter events;
-    int ticks, state, askedAt;
+    int ticks, state, askedAt, idleTicks;
     String name = "Player";
     int[] at;
 
@@ -67,7 +67,7 @@ public class Bench {
         try {
             if (state == 0 && ticks > 60) { setUp(w); state = 1; askedAt = ticks; }
             else if (state == 1) {
-                if (Compiler.last != null) { state = 2; Events.log("bench: the guide gave goals"); }
+                if (Compiler.plans > plansBefore) { state = 2; Events.log("bench: the guide gave goals"); }
                 else if (ticks - askedAt > 20 * 120) {   // the guide gave none in two minutes: the goals straight (marked FALLBACK)
                     state = 2;
                     Events.log("bench: no goals from the guide, the fallback goals");
@@ -75,7 +75,17 @@ public class Bench {
                 }
             } else if (state == 2) {
                 Crew c = Crew.instance;
-                boolean done = c != null && Crew.finished.contains("gather") && c.current == null && c.phases.isEmpty();
+                boolean idle = c != null && c.current == null && c.phases.isEmpty() && !Crew.phaseLog.isEmpty();
+                idleTicks = idle ? idleTicks + 1 : 0;
+                boolean done = idle && (Crew.finished.contains("gather") || idleTicks > 20 * 45);   // the plan is through (no word from the guide for a while)
+                if (done && next < asks.length && ticks <= limit) {   // the next request (the morning after the night...)
+                    askNext(w);
+                    state = 1;
+                    askedAt = ticks;
+                    idleTicks = 0;
+                    Crew.finished.remove("gather");
+                    return;
+                }
                 if (done || ticks > limit) {
                     state = 3;
                     report(w, done);
@@ -94,6 +104,20 @@ public class Bench {
     void setUp(WorldServer w) throws Exception {
         ChunkCoordinates sp = w.getSpawnPoint();
         int sy = w.getTopSolidOrLiquidBlock(sp.posX, sp.posZ);
+        Crew.ensure();
+        Crew c = Crew.instance;
+        if (!c.loaded) c.load(w);
+        if (c.base != null) {   // a world the crew has lived in (a copy of it): the day goes on at its base
+            at = c.base.clone();
+            w.setSpawnLocation(at[0], at[1], at[2]);   // (the copy's spawn: its chunks stay loaded without a player)
+            for (int cx = (at[0] >> 4) - 5; cx <= (at[0] >> 4) + 5; cx++)
+                for (int cz = (at[2] >> 4) - 5; cz <= (at[2] >> 4) + 5; cz++) w.theChunkProviderServer.loadChunk(cx, cz);
+            c.adopt(w);
+            Events.log("bench: the crew's world: base at " + at[0] + " " + at[1] + " " + at[2] + ", " + c.agents.size() + " agents, chest " + java.util.Arrays.toString(c.chest)
+                    + ", furnace " + java.util.Arrays.toString(Day1.furnace) + ", mine " + java.util.Arrays.toString(Day1.mine));
+            standAndAsk(w, at);
+            return;
+        }
         List<int[]> trunks = Crew.trunks(w, sp.posX, sy, sp.posZ, 72);
         int[] best = null;
         double bs = -1;
@@ -111,6 +135,12 @@ public class Bench {
             }
         if (best == null) best = new int[] { sp.posX, sy, sp.posZ };
         at = best;
+        Events.log("bench: spawn " + sp.posX + " " + sy + " " + sp.posZ + ", base at " + best[0] + " " + best[1] + " " + best[2] + ", " + trunks.size() + " trunks around, score " + (int) bs);
+        standAndAsk(w, best);
+    }
+
+    /** the fake player stands there and asks (or the goals go straight to the compiler) */
+    void standAndAsk(WorldServer w, int[] best) throws Exception {
         FakePlayer p = FakePlayerFactory.get(w, new GameProfile(UUID.nameUUIDFromBytes("aiguide-bench-player".getBytes()), name));
         p.setLocationAndAngles(best[0] + 0.5, best[1], best[2] + 0.5, 0, 0);
         Crew.standIn = p;
@@ -125,15 +155,33 @@ public class Bench {
         } catch (Exception ex) {
             Events.log("bench: the guide does not know the fake player: " + ex);
         }
-        Events.log("bench: spawn " + sp.posX + " " + sy + " " + sp.posZ + ", base at " + best[0] + " " + best[1] + " " + best[2] + ", " + trunks.size() + " trunks around, score " + (int) bs);
-        if (mode.startsWith("goals:")) {
-            final String goals = mode.substring(6).replace("|", "\n");
+        asks = mode.split("\\|\\|");
+        askNext(w);
+    }
+
+    String[] asks = new String[0];
+    int next, plansBefore;
+
+    /**
+     * The next request: "ask:<words>" (to the guide) or "goals:<a|b>" (straight), with an optional "@<time>:" before it
+     * that sets the time of day first (as the camera's script sets the light)
+     */
+    void askNext(WorldServer w) throws Exception {
+        String r = asks[next++].trim();
+        if (r.startsWith("@")) {
+            int colon = r.indexOf(':');
+            w.setWorldTime(Long.parseLong(r.substring(1, colon)));
+            r = r.substring(colon + 1);
+        }
+        plansBefore = Compiler.plans;
+        if (r.startsWith("goals:")) {
+            final String goals = r.substring(6).replace("|", "\n");
             new Thread(new Runnable() { public void run() { Events.log("bench: " + Compiler.plan(name, goals, Origin.SCRIPT)); } }).start();
         } else {
-            String ask = mode.startsWith("ask:") ? mode.substring(4) : "Позови команду из четырёх — к ночи нужна база";
+            String ask = r.startsWith("ask:") ? r.substring(4) : "Позови команду из четырёх — к ночи нужна база";
             java.lang.reflect.Method m = Class.forName("hardelele.aiguide.Tools").getDeclaredMethod("crewAsk", String.class, String.class);
             m.setAccessible(true);
-            Events.log("bench: asked the guide: " + ask + " -> " + m.invoke(null, name, ask));
+            Events.log("bench: asked the guide (" + next + "/" + asks.length + "): " + ask + " -> " + m.invoke(null, name, ask));
         }
     }
 

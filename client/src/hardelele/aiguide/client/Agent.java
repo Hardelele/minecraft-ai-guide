@@ -43,7 +43,9 @@ public class Agent extends EntityCreature {
         getNavigator().setAvoidsWater(true);
         getNavigator().setCanSwim(true);
         getNavigator().setBreakDoors(false);
+        getNavigator().setEnterDoors(true);   // through doors as a player goes: opening them, and closing them behind
         this.tasks.addTask(0, new EntityAISwimming(this));
+        this.tasks.addTask(1, new net.minecraft.entity.ai.EntityAIOpenDoor(this, true));
     }
 
     @Override

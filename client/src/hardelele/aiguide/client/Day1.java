@@ -263,7 +263,10 @@ class Day1 {
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             c.planSite(w);
             if (c.agents.isEmpty()) return;
-            final int n = c.agents.size();
+            int without = 0;
+            for (Agent a : c.agents) if (!hasPickaxe(a)) without++;
+            if (without == 0) { Events.log("crew: everyone has a pickaxe"); return; }
+            final int n = without;
             // a pickaxe is 3 planks and 2 sticks; 2 planks make 4 sticks; to spare: the stone pickaxes' (n + the player's) and 4 for torches
             final int sticks = 2 * n + 2 * (n + 1) + 4, planks = 3 * n + (sticks + 3) / 4 * 2, logs = (planks + 3) / 4;
             int[] t = c.table;
@@ -349,6 +352,7 @@ class Day1 {
             k++;
             tries = 0;
             walk = null;
+            Skills.lightUp(a, w);   // the stairs going down get their torches where it is dark
             return Result.RUNNING;
         }
     }
@@ -417,15 +421,20 @@ class Day1 {
         }
     }
 
-    /** stone open to the air around the base that may be dug and is in reach of a walk from the base (counted up to n) */
+    /**
+     * stone open to the air around the base that a quarry would take (counted up to n): by the very rules the quarry
+     * picks by (Crew.openStone): may be dug, in reach of a walk from the base, and a way back left after the dig
+     */
     static int openRock(Crew c, WorldServer w, int n) {
         Ground.Flood f = Ground.baseFlood(c, w);
-        int bx = c.base[0], by = c.base[1], bz = c.base[2], found = 0;
-        for (int x = bx - 24; x <= bx + 24 && found < n; x++)
-            for (int z = bz - 24; z <= bz + 24 && found < n; z++)
+        int bx = c.base[0], by = c.base[1], bz = c.base[2], found = 0, checks = 0;
+        for (int x = bx - 24; x <= bx + 24 && found < n && checks < 60; x++)
+            for (int z = bz - 24; z <= bz + 24 && found < n && checks < 60; z++)
                 for (int y = by - 6; y <= by + 10; y++) {
                     if (w.getBlock(x, y, z) != Blocks.stone || !w.isAirBlock(x, y + 1, z)) continue;
                     if (!Ground.mayDig(c, x, y, z, "gather") || f != null && f.near(x, y, z, Crew.REACH) == null) continue;
+                    checks++;
+                    if (!Ground.digLeavesWay(c, w, x, y, z, "gather")) continue;
                     found++;
                 }
         return found;
@@ -670,7 +679,7 @@ class Day1 {
         /** the bill of what is still to be made for the laid plan: blocks not standing yet, less what the crew has made already */
         Map<String, Integer> toMake(Crew c, WorldServer w) {
             List<int[]> left = new ArrayList<int[]>();
-            for (int[] b : plan) if (Crew.soft(w, b[0], b[1], b[2])) left.add(b);
+            for (int[] b : plan) if (Crew.soft(w, b[0], b[1], b[2]) && !Ground.passages.contains(Crew.key(b[0], b[1], b[2]))) left.add(b);
             boolean door = doorAt == null || w.getBlock(doorAt[0], doorAt[1], doorAt[2]) != Blocks.wooden_door;
             Map<String, Integer> m = bill(left, door);
             less(m, "planks", have(c, w, PLANKS));
