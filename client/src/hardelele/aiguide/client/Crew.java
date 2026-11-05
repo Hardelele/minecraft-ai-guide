@@ -323,6 +323,7 @@ public class Crew {
             if (Day1.lastBase != null) o.addProperty("baseSize", Day1.lastBase.size);
             if (Day1.mineDepth > 0) o.addProperty("mineDepth", Day1.mineDepth);
             o.add("passages", g.toJsonTree(new ArrayList<Long>(Ground.passages)));
+            o.add("fog", g.toJsonTree(new ArrayList<Long>(FogMap.explored)));   // what the crew has seen of the map
             o.add("done", g.toJsonTree(new ArrayList<String>(finished)));
             o.addProperty("day", 1);
             java.io.File f = new java.io.File(w.getSaveHandler().getWorldDirectory(), "crew.json");
@@ -349,6 +350,7 @@ public class Crew {
             if (o.has("furnace")) Day1.furnace = g.fromJson(o.get("furnace"), int[].class);
             if (o.has("mineDepth")) Day1.mineDepth = o.get("mineDepth").getAsInt();
             if (o.has("passages")) for (com.google.gson.JsonElement e : o.getAsJsonArray("passages")) Ground.passages.add(e.getAsLong());
+            if (o.has("fog")) for (com.google.gson.JsonElement e : o.getAsJsonArray("fog")) FogMap.explored.add(e.getAsLong());
             if (site != null && base != null) {   // the base of the day before: its plan laid again where it stands (its own walls known)
                 int size = o.has("baseSize") ? o.get("baseSize").getAsInt() : 2;
                 Day1.Base b = new Day1.Base(size);

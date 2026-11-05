@@ -8,5 +8,6 @@ class ClientSetup {
         Events.ghost = new Events.Ghost() { public void show(com.google.gson.JsonObject m) { if (Pilot.instance != null) Pilot.instance.inbox.add(m); } };
         Pilot.start();
         Commander.start();
+        Fog.start();
     }
 }

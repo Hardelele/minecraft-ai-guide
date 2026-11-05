@@ -226,6 +226,103 @@ public class Director {
             return false;
         }
         if (cmd.equals("screeninfo")) { event("screen: " + (mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getName()) + ", active " + org.lwjgl.opengl.Display.isActive() + ", commander drawn " + Commander.drawn); return true; }
+        // the commander used by a script's hand: a cursor that is drawn, moves and clicks, through the screen's own handling
+        if (cmd.equals("fog")) { Fog.on = !arg.equals("off"); if (arg.equals("reset")) FogMap.explored.clear(); return true; }
+        if (cmd.equals("difficulty")) {   // n: the game's difficulty for this session (not saved to the options)
+            final net.minecraft.world.EnumDifficulty d = net.minecraft.world.EnumDifficulty.getDifficultyEnum(num(arg, 0));
+            mc.gameSettings.difficulty = d;
+            serverQueue.add(new Runnable() { public void run() { for (WorldServer ws : MinecraftServer.getServer().worldServers) { ws.difficultySetting = d; ws.setAllowedSpawnTypes(true, true); } event("difficulty: " + d); } });
+            return true;
+        }
+        if (cmd.equals("vhand")) { Commander.instance.vOn = arg.equals("on"); if (Commander.instance.vOn) { Commander.instance.vx = mc.displayWidth / 2; Commander.instance.vy = mc.displayHeight / 2; } return true; }
+        if (cmd.equals("safe")) { Commander.instance.safeAspect = Float.parseFloat(arg); if (mc.currentScreen != null) mc.currentScreen.setWorldAndResolution(mc, mc.currentScreen.width, mc.currentScreen.height); return true; }
+        if (cmd.equals("guiscale")) {
+            mc.gameSettings.guiScale = num(arg, 3);
+            net.minecraft.client.gui.ScaledResolution r = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight);
+            if (mc.currentScreen != null) mc.currentScreen.setWorldAndResolution(mc, r.getScaledWidth(), r.getScaledHeight());
+            return true;
+        }
+        if (cmd.equals("vmove")) {   // fx fy ticks: to a point of the window (fractions, from the top left)
+            String[] a = arg.split(" ");
+            if (t == 0) Commander.instance.vMove(Double.parseDouble(a[0]) * mc.displayWidth, (1 - Double.parseDouble(a[1])) * mc.displayHeight, Integer.parseInt(a[2]));
+            return t >= Integer.parseInt(a[2]);
+        }
+        if (cmd.equals("vmoveto")) {   // agent N ticks | tree ticks | block x y z ticks | mob ticks | button NAME ticks | ground dx dz ticks
+            String[] a = arg.split(" ");
+            int ticks = Integer.parseInt(a[a.length - 1]);
+            if (t == 0) {
+                Commander c = Commander.instance;
+                float[] s = null;
+                if (a[0].equals("agent")) { for (Agent g : c.clientAgents()) if (g.skin() == Integer.parseInt(a[1])) s = c.toScreen(g.posX, g.boundingBox.minY + 1.0, g.posZ); }
+                else if (a[0].equals("block")) s = c.toScreen(Integer.parseInt(a[1]) + 0.5, Integer.parseInt(a[2]) + 0.9, Integer.parseInt(a[3]) + 0.5);
+                else if (a[0].equals("ground")) {
+                    int gx = MathHelper.floor_double(c.px) + Integer.parseInt(a[1]), gz = MathHelper.floor_double(c.pz) + Integer.parseInt(a[2]);
+                    int gy = mc.theWorld.getHeightValue(gx, gz);
+                    while (gy > 1 && (mc.theWorld.getBlock(gx, gy - 1, gz).getMaterial() == net.minecraft.block.material.Material.leaves || !mc.theWorld.getBlock(gx, gy - 1, gz).getMaterial().isSolid())) gy--;
+                    s = c.toScreen(gx + 0.5, gy, gz + 0.5);
+                } else if (a[0].equals("tree")) {
+                    WorldServer ws = MinecraftServer.getServer().worldServers[0];
+                    int[] best = null;
+                    double bd = 1e9;
+                    for (int[] tr : Crew.trunks(ws, MathHelper.floor_double(c.px), MathHelper.floor_double(c.py), MathHelper.floor_double(c.pz), 32)) {
+                        double d = Math.hypot(tr[0] - c.px, tr[2] - c.pz);
+                        if (tr[3] >= 3 && d < bd && !Fell.tree(mc.theWorld, tr[0], tr[1], tr[2]).isEmpty()) { bd = d; best = tr; }
+                    }
+                    if (best != null) s = c.toScreen(best[0] + 0.5, best[1] + best[3] + 0.5, best[2] + 0.5);   // over the crown, where a click from above lands on its leaves
+                } else if (a[0].equals("mob")) {
+                    double bd = 1e9;
+                    for (Object o : mc.theWorld.loadedEntityList)
+                        if (o instanceof net.minecraft.entity.monster.IMob) {
+                            net.minecraft.entity.Entity en = (net.minecraft.entity.Entity) o;
+                            double d = Math.hypot(en.posX - c.px, en.posZ - c.pz);
+                            if (d < bd) { bd = d; s = c.toScreen(en.posX, en.boundingBox.minY + en.height * 0.6, en.posZ); }
+                        }
+                } else if (a[0].equals("button") && mc.currentScreen instanceof Commander.Screen) {
+                    int scale = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
+                    for (Object o : ((Commander.Screen) mc.currentScreen).buttons()) {
+                        net.minecraft.client.gui.GuiButton bt = (net.minecraft.client.gui.GuiButton) o;
+                        if (bt.displayString.replace("§e", "").startsWith(a[1])) s = new float[] { (bt.xPosition + 14) * scale, mc.displayHeight - (bt.yPosition + 10) * scale };
+                    }
+                }
+                event("vmoveto " + arg + ": " + (s == null ? "nothing on the screen" : (int) s[0] + " " + (int) s[1]));
+                if (s != null) c.vMove(s[0], s[1], ticks);
+            }
+            return t >= ticks;
+        }
+        if (cmd.equals("vdown")) { Commander.instance.vButton(num(arg, 0), true); return true; }
+        if (cmd.equals("vup")) { Commander.instance.vButton(num(arg, 0), false); return true; }
+        if (cmd.equals("vclick")) {   // b: pressed, then let go two ticks later
+            if (t == 0) Commander.instance.vButton(num(arg, 0), true);
+            if (t == 2) { Commander.instance.vButton(num(arg, 0), false); return true; }
+            return false;
+        }
+        if (cmd.equals("vmod")) {   // ctrl|shift|alt on|off
+            String[] a = arg.split(" ");
+            boolean v = a[1].equals("on");
+            if (a[0].equals("ctrl")) Commander.instance.vCtrl = v; else if (a[0].equals("shift")) Commander.instance.vShift = v; else Commander.instance.vAlt = v;
+            return true;
+        }
+        if (cmd.equals("vwheel")) { Commander.instance.vWheel(num(arg, 1) * 120); return true; }
+        if (cmd.equals("vkey")) {   // a key typed into the commander's screen (by its LWJGL name: M, B, K_1...)
+            int code = org.lwjgl.input.Keyboard.getKeyIndex(arg.toUpperCase());
+            if (mc.currentScreen instanceof Commander.Screen) ((Commander.Screen) mc.currentScreen).typed(code);
+            return true;
+        }
+        if (cmd.equals("cmdpaint")) {   // dig|build here dx dz w d depth [material]: a stroke as the mouse paints it (beside the camera's point, on the ground)
+            String[] a = arg.split(" ");
+            Commander c = Commander.instance;
+            boolean build = a[0].equals("build");
+            int x0 = MathHelper.floor_double(c.px) + Integer.parseInt(a[2]), z0 = MathHelper.floor_double(c.pz) + Integer.parseInt(a[3]);
+            int y = mc.theWorld.getHeightValue(x0, z0) - 1;
+            while (y > 1 && (mc.theWorld.getBlock(x0, y, z0).getMaterial() == net.minecraft.block.material.Material.leaves || !mc.theWorld.getBlock(x0, y, z0).getMaterial().isSolid())) y--;
+            if (build) y++;
+            c.depth = Integer.parseInt(a[6]);
+            if (a.length > 7) for (int i = 0; i < Commander.PAINT_MATERIALS.length; i++) if (Commander.PAINT_MATERIALS[i].equals(a[7])) c.paintMat = i;
+            java.util.List<int[]> cells = c.strokeCells(new int[] { x0, y, z0 }, new int[] { x0 + Integer.parseInt(a[4]) - 1, y, z0 + Integer.parseInt(a[5]) - 1 }, build);
+            Orders.designate(c.picked(), build, cells, Commander.PAINT_MATERIALS[c.paintMat]);
+            event("cmdpaint " + arg + ": " + cells.size() + " blocks from " + x0 + " " + y + " " + z0);
+            return true;
+        }
         if (cmd.equals("cmdclickchest")) {   // [q]: a right click on the crew's chest
             int[] ch = Crew.instance == null ? null : Crew.instance.chest;
             event("cmdclickchest: " + (ch == null ? "no chest" : ch[0] + " " + ch[1] + " " + ch[2]));
