@@ -207,7 +207,8 @@ class Day2 {
      */
     static class Shelter extends Crew.Phase {
         final int wait;
-        Shelter(int waitTicks) { this.wait = waitTicks; }
+        final boolean guard;
+        Shelter(int waitTicks, boolean guard) { this.wait = waitTicks; this.guard = guard; }
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             Day1.Base b = Day1.lastBase;
             int[] s = Crew.site;
@@ -227,6 +228,12 @@ class Day2 {
                 k++;
                 c.board.post("inside", () -> new TaskBoard.Seq(new Crew.GoTo(sp[0] + 0.5, sp[1], sp[2] + 0.5, 0.7), new Crew.Look(look[0], look[1], look[2], wait)))
                         .pin(a).prio(3).at(sp[0], sp[1], sp[2]).work(40, 0, 0, 0, 0, wait);
+            }
+            if (guard) {   // the planned guard: the best-armed one stays out by the door until the others are in (the same skill as any fight)
+                Agent g = Guard.pick(c, null);
+                final double[] post = b.doorAt == null ? new double[] { s[0] + 2.5, y0, s[2] - 1.5 }
+                        : new double[] { b.doorAt[0] + 0.5 + (b.doorAt[0] - (s[0] + 2)) * 0.6, y0, b.doorAt[2] + 0.5 + (b.doorAt[2] - (s[2] + 2)) * 0.6 };
+                if (g != null) c.board.post("guard", () -> new Guard.Fight(post)).pin(g).prio(4).work(20, 0, 0, 0, 0, 20 * 90);
             }
         }
     }

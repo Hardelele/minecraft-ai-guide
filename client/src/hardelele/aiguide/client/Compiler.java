@@ -24,7 +24,8 @@ class Compiler {
     static final String VOCAB = "summon N (1-5 agents); shelter auto|hut|house|fenced; tools wood|stone; torches N; "
             + "make ITEM [N], ITEM [N] (any item by its game name: iron_pickaxe, iron_sword, torch...); "
             + "gift ITEM [N], ITEM [N] (things the crew has or makes, to the player); light (torches where the base and the mine are dark); "
-            + "inside (the crew goes into its house and waits there, e.g. for the night); mine; gather";
+            + "inside (the crew goes into its house and waits there, e.g. for the night); "
+            + "guard (with inside: the best-armed one stays out and fights off mobs until the others are in; mobs near the crew are fought off anyway); mine; gather";
 
     /** an item by its game name (minecraft:iron_pickaxe or iron_pickaxe), or null */
     static Item item(String name) {
@@ -40,7 +41,7 @@ class Compiler {
         String tools;               // null, wood, stone
         int torches;
         final List<ItemStack> gift = new ArrayList<ItemStack>(), make = new ArrayList<ItemStack>();
-        boolean mine, gather, summon, light, inside;
+        boolean mine, gather, summon, light, inside, guard;
         public String toString() {
             return "summon " + (summon ? agents : "-") + ", shelter " + shelter + ", tools " + tools + ", torches " + torches + ", gift " + gift.size() + ", mine " + mine + ", gather " + gather;
         }
@@ -62,6 +63,7 @@ class Compiler {
             } else if (k.startsWith("tool")) g.tools = arg.startsWith("wood") ? "wood" : arg.startsWith("iron") ? "iron" : "stone";
             else if (k.equals("light") || k.startsWith("lighting")) g.light = true;
             else if (k.startsWith("inside") || k.startsWith("hide")) g.inside = true;
+            else if (k.startsWith("guard") || k.startsWith("defend")) g.guard = true;
             else if (k.startsWith("torch")) g.torches = clamp(num(arg, 16), 0, 64);
             else if (k.startsWith("gift") || k.startsWith("give") || k.startsWith("make") || k.startsWith("craft")) {
                 List<ItemStack> into = k.startsWith("make") || k.startsWith("craft") ? g.make : g.gift;
@@ -229,12 +231,16 @@ class Compiler {
             int ore = (raw2.containsKey(Day2.IRON_ORE) ? raw2.get(Day2.IRON_ORE) : 0) - Day1.Base.have(c, w, Day2.IRON_ORE) - Day1.Base.have(c, w, Items.iron_ingot);
             int coalForMade = 0;   // coal in what is made (a torch: a quarter of one), from coal ore when there is some
             for (ItemStack it : make) if (it.getItem() == Day1.TORCH) coalForMade += (Math.max(0, it.stackSize - Day1.Base.have(c, w, Day1.TORCH)) + 3) / 4;
+            // work in the dark takes light: ore under the ground is gone for with torches (made from the coal first)
+            int darkTorches = ore > 0 ? Math.max(0, 8 - Day1.Base.have(c, w, Day1.TORCH)) : 0;
+            coalForMade += (darkTorches + 3) / 4;
             int coal = Math.max(0, (ore > 0 ? (ore + 7) / 8 : 0) + coalForMade - Day1.Base.have(c, w, Items.coal));
             boolean anyPick = false, ironPick = false;   // who can mine it: pickaxes first if nobody can
             for (Agent a : c.agents) { if (Day1.hasPickaxe(a)) anyPick = true; if (Day2.pickaxeFor(a, Blocks.iron_ore)) ironPick = true; }
             if (!anyPick && (coal > 0 || ore > 0) && !has(ph, "tools")) ph.add(named(new Day1.Tools(), "tools"));
             if (!ironPick && ore > 0 && !has(ph, "upgrade")) ph.add(named(new Day1.Upgrade(0, true, false), "upgrade"));
             if (coal > 0 && !Day2.clusters(c, w, Blocks.coal_ore, 40).isEmpty()) ph.add(named(new Day2.OreRun(Blocks.coal_ore, coal), "coal"));
+            if (darkTorches > 0) ph.add(named(new Day2.Make(new ArrayList<ItemStack>(java.util.Arrays.asList(new ItemStack(Day1.TORCH, darkTorches)))), "torches"));
             if (ore > 0) {
                 ph.add(named(new Day2.OreRun(Blocks.iron_ore, ore), "iron"));
                 ph.add(named(new Day2.SmeltOre(Day2.IRON_ORE, ore), "smelt"));
@@ -243,7 +249,7 @@ class Compiler {
             day2 = "; iron ore " + Math.max(0, ore) + ", coal " + coal + ", make " + make + " (" + st2 + ")";
         }
         if (g.light) ph.add(named(new Day2.Light(), "light"));
-        if (g.inside) ph.add(named(new Day2.Shelter(20 * 60), "inside"));
+        if (g.inside) ph.add(named(new Day2.Shelter(20 * 60, g.guard), "inside"));
         if (!g.gift.isEmpty()) ph.add(named(new Day1.Gift(g.gift), "gift"));
         if (g.shelter >= 0) ph.add(named(new Day1.Base(g.shelter), "house"));
         if (g.gather) ph.add(named(new Day1.Gather(), "gather"));

@@ -18,7 +18,7 @@ public class Ledger {
         // in
         DROP, CHEST_OUT, CRAFTED, SMELTED, HANDED_IN, FROM_NOTHING,
         // out
-        PLACED, INGREDIENT, FUEL, HANDED_OUT, CHEST_IN, INTO_NOTHING
+        PLACED, INGREDIENT, FUEL, HANDED_OUT, CHEST_IN, DROPPED_AT_DEATH, INTO_NOTHING
     }
 
     static final Map<String, Map<String, Integer>> flows = new TreeMap<String, Map<String, Integer>>();   // way -> item -> n

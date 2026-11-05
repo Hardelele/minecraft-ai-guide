@@ -118,13 +118,18 @@ class TaskBoard {
     /** can this agent take the card at all */
     boolean fits(Card k, Agent a, WorldServer w) {
         if (k.state != State.OPEN || !ready(k) || !retry.allowed(k, now)) return false;
-        if (k.only != null && k.only != a) return false;
-        if (k.sameAs != null && k.sameAs.doneBy != null && k.sameAs.doneBy != a) return false;
+        if (k.only != null && !same(k.only, a)) return false;
+        if (k.sameAs != null && k.sameAs.doneBy != null && !same(k.sameAs.doneBy, a)) return false;
         if (k.sameAs != null && k.sameAs.doneBy == null && k.sameAs.state != State.FAILED) return false;
         if (k.need != null && !k.need.ok(a)) return false;
         if (k.at != null && here != null && here.near((int) Math.floor(k.at[0]), (int) Math.floor(k.at[1]), (int) Math.floor(k.at[2]), Crew.REACH + 1) == null) return false;   // it cannot walk there from where it is
         for (Map.Entry<Item, Integer> e : k.unit.entrySet()) if (chestFree(w, e.getKey(), null) < e.getValue()) return false;
         return true;
+    }
+
+    /** the same member of the crew: the agent itself, or the one it was before it died and came back (same name) */
+    static boolean same(Agent was, Agent a) {
+        return was == a || was.isDead && was.skin() == a.skin();
     }
 
     double utility(Card k, Agent a) {
@@ -290,7 +295,13 @@ class TaskBoard {
             }
             if (k.state != State.LEASED) continue;
             Agent a = k.holder;
-            if (a == null || a.isDead || now - k.since > k.lease) {
+            if (a != null && a.isDead) {   // its holder died: the card goes back as it was (not a try of its), someone takes it
+                release(a, k);
+                k.state = State.OPEN;
+                Events.log("board: " + k + " back on the board (" + a.getCustomNameTag() + " died)");
+                continue;
+            }
+            if (a == null || now - k.since > k.lease) {
                 if (a != null) {
                     Crew.clearJobs(a);
                     a.getNavigator().clearPathEntity();

@@ -259,6 +259,90 @@ public class Cam {
         return null;
     }
 
+    /**
+     * Any work at a block (ore, rock, a station, a block put): from open ground, three-quarter, the block and the agent
+     * both seen, a slow move; the same planning as the chop's, for whatever the agent works on.
+     */
+    Shot planWork(Agent s) {
+        double gy = Math.floor(s.posY + 0.01);
+        P blk = new P(s.actX + 0.5, s.actY + 0.5, s.actZ + 0.5), body = new P(s.posX, gy + 1.0, s.posZ), head = new P(s.posX, gy + 1.6, s.posZ);
+        double dx = s.posX - blk.x, dz = s.posZ - blk.z, dl = Math.max(0.3, Math.hypot(dx, dz));
+        dx /= dl;
+        dz /= dl;
+        Shot best = null;
+        double bestScore = -1e9;
+        for (int sign = -1; sign <= 1; sign += 2)
+            for (double ang = 35; ang <= 115; ang += 10)
+                for (double dist = 3.6; dist <= 6.6; dist += 1.0)
+                    for (double h = 1.4; h <= 3.2; h += 0.6) {
+                        double r = Math.toRadians(sign * ang);
+                        double cx = dx * Math.cos(r) - dz * Math.sin(r), cz = dx * Math.sin(r) + dz * Math.cos(r);
+                        P a = new P(blk.x + cx * dist, gy + h, blk.z + cz * dist);
+                        P b = new P(a.x - cz * sign * 0.9 - cx * 0.5, a.y, a.z + cx * sign * 0.9 - cz * 0.5);
+                        P look = new P((blk.x + body.x) / 2, (blk.y + head.y) / 2, (blk.z + body.z) / 2);
+                        Dolly d = new Dolly("work " + s.getCustomNameTag() + " " + s.actWhat, a, b, look, 0, 60);
+                        P face = new P(blk.x + (a.x - blk.x) * 0.12, blk.y, blk.z + (a.z - blk.z) * 0.12);   // the block's face toward the lens
+                        if (!pathOk(d, body, head) || !sees(a, face) || blockedView(a, look) || blockedView(b, look)) continue;
+                        double score = -Math.abs(ang - 60) * 0.04 - Math.abs(dist - 4.8) * 0.4 - Math.abs(h - 2.2) * 0.5 + rnd.nextDouble() * 0.3;
+                        if (score > bestScore) { bestScore = score; best = d; }
+                    }
+        return best;
+    }
+
+    /**
+     * Under the ground (a tunnel, the mine): the lens in the air of the tunnel itself, one to four blocks from the agent,
+     * in a cell of air with air above or below it (no wall at the lens), seeing the agent's head and the face of the
+     * block it works on; it stays there and turns after the agent; when the agent is out of its sight a while, a cut.
+     * The light is the crew's own torches.
+     */
+    class Tunnel extends Shot {
+        final int agent;
+        double lost;
+        Tunnel(String name, int agent, P at, int len) { this.name = name; this.agent = agent; this.pos = at; this.len = len; }
+        P place(double t, double dt) {
+            P e = agentAt(agent);
+            if (e == null) return pos;
+            if (!sees(pos, new P(e.x, e.y + 1.5, e.z))) lost += dt; else lost = Math.max(0, lost - dt);
+            if (lost > 10) len = Math.min(len, (int) Math.ceil(time()));
+            return pos;
+        }
+        P target(double t) {
+            P e = agentAt(agent);
+            if (e == null) return null;
+            Agent s = serverAgent(agent);
+            if (s != null && s.ticksExisted - s.actAt < 20) return new P((e.x + s.actX + 0.5) / 2, (e.y + 1.4 + s.actY + 0.5) / 2, (e.z + s.actZ + 0.5) / 2);
+            return new P(e.x, e.y + 1.3, e.z);
+        }
+    }
+
+    /** the agent is under the ground: no sky over it, rock around */
+    boolean underground(Agent s) {
+        int x = MathHelper.floor_double(s.posX), y = MathHelper.floor_double(s.posY + 1.5), z = MathHelper.floor_double(s.posZ);
+        return !w().canBlockSeeTheSky(x, y, z);
+    }
+
+    Shot planTunnel(Agent s) {
+        P head = new P(s.posX, Math.floor(s.posY + 0.01) + 1.5, s.posZ);
+        P blk = new P(s.actX + 0.5, s.actY + 0.5, s.actZ + 0.5);
+        int ax = MathHelper.floor_double(s.posX), ay = MathHelper.floor_double(s.posY + 0.01), az = MathHelper.floor_double(s.posZ);
+        P best = null;
+        double bs = -1e9;
+        for (int x = ax - 4; x <= ax + 4; x++)
+            for (int z = az - 4; z <= az + 4; z++)
+                for (int y = ay - 2; y <= ay + 3; y++) {
+                    if (firm(x, y, z) || firm(x, y + 1, z) && firm(x, y - 1, z)) continue;   // a cell of air, open above or below
+                    P p = new P(x + 0.5, y + 0.55, z + 0.5);
+                    double d = p.dist(head);
+                    if (d < 1.4 || d > 4.6) continue;
+                    if (!sees(p, head)) continue;
+                    P face = new P(blk.x + (p.x - blk.x) * 0.55 / Math.max(0.55, p.dist(blk)), blk.y + (p.y - blk.y) * 0.55 / Math.max(0.55, p.dist(blk)), blk.z + (p.z - blk.z) * 0.55 / Math.max(0.55, p.dist(blk)));
+                    boolean blockSeen = s.ticksExisted - s.actAt < 20 && sees(p, face);
+                    double score = (blockSeen ? 3 : 0) - Math.abs(d - 2.8) - Math.abs(p.y - head.y) * 0.4 + rnd.nextDouble() * 0.2;
+                    if (score > bs) { bs = score; best = p; }
+                }
+        return best == null ? null : new Tunnel("tunnel " + s.getCustomNameTag() + " " + s.actWhat, s.skin(), best, 100);
+    }
+
     /** an agent putting a block of the house: from outside, the block and the agent seen */
     Shot planPlace(int prefer) {
         if (Crew.instance == null || Crew.site == null) return null;

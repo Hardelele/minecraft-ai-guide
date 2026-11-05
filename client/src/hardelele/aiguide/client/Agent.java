@@ -25,8 +25,22 @@ public class Agent extends EntityCreature {
     Origin origin = Origin.SCRIPT;   // of the job it does now
     final List<ItemStack> bag = new ArrayList<ItemStack>();
     int number, idle, stuck;
-    /** what it works on now (for the camera): the block, the kind (1 breaks, 2 crafts, 3 places), when */
+    /** what it works on now (for the camera): the block, the kind (1 breaks, 2 crafts, 3 places, 4 fights, 5 hands over), when */
     volatile int actX, actY, actZ, actKind, actAt = -1000;
+    volatile Act actWhat = Act.IDLE;
+
+    /**
+     * What an agent is doing, ranked by how much of a work action it is to look at (the camera's choice, the cut's
+     * measure): a fight first, then ore, chopping, digging, building, a station (furnace, table), handing over and
+     * carrying, walking; standing (or jumping about) is nothing.
+     */
+    enum Act {
+        IDLE(0), WALK(1), CARRY(2), STATION(3), BUILD(4), DIG(5), CHOP(6), ORE(7), FIGHT(9);
+        final int rank;
+        Act(int r) { rank = r; }
+        /** a work action: something is being done to the world or with things (not walking, not carrying) */
+        boolean work() { return rank >= STATION.rank; }
+    }
 
     void act(int x, int y, int z, int kind) {
         actX = x;
@@ -34,6 +48,26 @@ public class Agent extends EntityCreature {
         actZ = z;
         actKind = kind;
         actAt = ticksExisted;
+        Act w = Act.STATION;
+        if (kind == 1) {   // what is broken says which work it is
+            net.minecraft.block.Block b = worldObj.getBlock(x, y, z);
+            String n = net.minecraft.block.Block.blockRegistry.getNameForObject(b);
+            boolean ore = n != null && n.contains("_ore");
+            if (!ore && net.minecraft.item.Item.getItemFromBlock(b) != null) for (int id : net.minecraftforge.oredict.OreDictionary.getOreIDs(new ItemStack(b))) if (net.minecraftforge.oredict.OreDictionary.getOreName(id).startsWith("ore")) ore = true;
+            w = ore ? Act.ORE : b.getMaterial() == net.minecraft.block.material.Material.wood || b.getMaterial() == net.minecraft.block.material.Material.leaves ? Act.CHOP : Act.DIG;
+        } else if (kind == 3) w = Act.BUILD;
+        else if (kind == 4) w = Act.FIGHT;
+        else if (kind == 5) w = Act.CARRY;
+        actWhat = w;
+    }
+
+    /** what it does this moment: the last act while it lasts (half a second), else walking or carrying while it moves, else nothing */
+    Act activity() {
+        if (isDead) return Act.IDLE;
+        if (ticksExisted - actAt <= 10) return actWhat;
+        double v = Math.hypot(posX - prevPosX, posZ - prevPosZ);
+        if (v > 0.04 && !jobs.isEmpty()) return TaskBoard.stackables(this) > 0 ? Act.CARRY : Act.WALK;
+        return Act.IDLE;
     }
     double lastX, lastZ;
 
@@ -57,10 +91,76 @@ public class Agent extends EntityCreature {
     }
 
     @Override public boolean isAIEnabled() { return true; }
-    @Override public boolean attackEntityFrom(DamageSource s, float a) { return false; }
     @Override protected boolean canDespawn() { return false; }
-    @Override protected void fall(float d) { }
-    @Override public boolean canBreatheUnderwater() { return true; }
+
+    /**
+     * Hurt as a player is: by mobs, falls, drowning, fire (nothing spared). It heals as a fed player does (a point every
+     * 4 seconds: the agents have no hunger, so they count as fed). It dies as a player does: what it carried falls where
+     * it died (items in the world: picked up again or gone in 5 minutes), and it comes back at the crew's spawn point
+     * with full health and an empty bag (the crew does that: Crew.respawn).
+     */
+    @Override
+    public boolean attackEntityFrom(DamageSource s, float amount) {
+        float before = getHealth();
+        boolean hit = super.attackEntityFrom(s, amount);
+        if (hit && !worldObj.isRemote) {
+            hurtAt = ticksExisted;
+            Events.log("crew: " + getCustomNameTag() + " hurt by " + (s.getEntity() != null ? s.getEntity().getCommandSenderName() : s.getDamageType())
+                    + ", health " + Math.round(before) + " -> " + Math.round(getHealth()));
+        }
+        return hit;
+    }
+
+    int hurtAt = -1000;
+    int[] diedAt;
+
+    @Override
+    public void onLivingUpdate() {
+        super.onLivingUpdate();
+        if (!worldObj.isRemote && !isDead && getHealth() > 0 && getHealth() < getMaxHealth() && ticksExisted % 80 == 0) heal(1.0F);
+    }
+
+    @Override
+    public void onDeath(DamageSource s) {
+        if (!worldObj.isRemote) setCurrentItemOrArmor(0, null);   // the held thing is in the bag: it falls once, with the bag
+        super.onDeath(s);
+        if (worldObj.isRemote) return;
+        for (ItemStack it : bag) {   // the bag falls where it died, as a player's inventory does
+            Ledger.flow(Ledger.Way.DROPPED_AT_DEATH, it);
+            net.minecraft.entity.item.EntityItem e = new net.minecraft.entity.item.EntityItem(worldObj, posX, posY + 0.5, posZ, it.copy());
+            e.delayBeforeCanPickup = 40;
+            e.motionX = (rand.nextDouble() - 0.5) * 0.3; e.motionZ = (rand.nextDouble() - 0.5) * 0.3; e.motionY = 0.2;
+            worldObj.spawnEntityInWorld(e);
+        }
+        bag.clear();
+        setCurrentItemOrArmor(0, null);
+        Ledger.act(this, "died");
+        diedAt = new int[] { (int) Math.floor(posX), (int) Math.floor(posY), (int) Math.floor(posZ) };
+        Events.log("crew: " + getCustomNameTag() + " died (" + s.getDamageType() + (s.getEntity() != null ? ", " + s.getEntity().getCommandSenderName() : "") + ") at "
+                + (int) Math.floor(posX) + " " + (int) Math.floor(posY) + " " + (int) Math.floor(posZ));
+    }
+
+    /** the weapon worth most in its bag: by the attack damage the item gives (a sword over an axe over a pickaxe), 1 bare-handed */
+    double weapon() {
+        double best = 1;
+        for (ItemStack s : bag) best = Math.max(best, damageOf(s));
+        return best;
+    }
+
+    static double damageOf(ItemStack s) {
+        double d = 1;
+        if (s == null) return d;
+        @SuppressWarnings("unchecked") com.google.common.collect.Multimap<String, Object> m = (com.google.common.collect.Multimap<String, Object>) (Object) s.getAttributeModifiers();
+        for (Object o : m.get(SharedMonsterAttributes.attackDamage.getAttributeUnlocalizedName()))
+            d += ((net.minecraft.entity.ai.attributes.AttributeModifier) o).getAmount();
+        return d;
+    }
+
+    ItemStack bestWeapon() {
+        ItemStack best = null;
+        for (ItemStack s : bag) if (damageOf(s) > damageOf(best) || best == null && damageOf(s) > 1) best = s;
+        return best;
+    }
 
     /** the bag goes with the agent into the world's save and comes back with it (nothing is lost between days) */
     @Override

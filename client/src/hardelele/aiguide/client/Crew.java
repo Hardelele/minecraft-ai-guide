@@ -172,7 +172,14 @@ public class Crew {
         if (s == null || s.worldServers == null) return;
         WorldServer w = s.worldServers[0];
         EntityPlayerMP p = playerIn(w);
-        for (java.util.Iterator<Agent> it = agents.iterator(); it.hasNext(); ) if (it.next().isDead) it.remove();
+        for (java.util.Iterator<Agent> it = agents.iterator(); it.hasNext(); ) {
+            Agent d = it.next();
+            if (!d.isDead) continue;
+            it.remove();
+            if (d.getHealth() <= 0) dead.add(new Object[] { d, w.getTotalWorldTime() });   // died (not unloaded): it comes back as a player does
+        }
+        respawn(w);
+        Guard.watch(this, w, p);
         if (current != null && current.ticks > current.max) {   // too long: what is carried goes to the chest, the phase ends
             Events.log("crew phase " + current.name + ": out of time");
             board.cancel(current);
@@ -257,6 +264,46 @@ public class Crew {
                 Ledger.result(r);
                 if (current != null) current.tally(r);
                 if (r.failed()) Events.log("crew: " + a.getCustomNameTag() + " " + t.getClass().getSimpleName() + " -> " + r);
+            }
+        }
+    }
+
+    final List<Object[]> dead = new ArrayList<Object[]>();   // { the agent that died, when }
+
+    /**
+     * As a player respawns: a second after its death the agent is back at the crew's spawn point (the base's standing
+     * cell, else the world's spawn), with full health and an empty bag; its card went back on the board when it died
+     * (the board's lease rule); a card to go back for what it dropped is posted for it (the items lie there 5 minutes).
+     */
+    void respawn(WorldServer w) {
+        for (java.util.Iterator<Object[]> it = dead.iterator(); it.hasNext(); ) {
+            Object[] o = it.next();
+            if (w.getTotalWorldTime() - (Long) o[1] < 20) continue;
+            it.remove();
+            Agent d = (Agent) o[0];
+            int[] at = base != null ? Ground.anchor(this, w) : null;
+            if (at == null) { net.minecraft.util.ChunkCoordinates sp = w.getSpawnPoint(); at = new int[] { sp.posX, w.getTopSolidOrLiquidBlock(sp.posX, sp.posZ), sp.posZ }; }
+            Agent a = new Agent(w);
+            a.number = d.number;
+            a.setCustomNameTag(d.getCustomNameTag());
+            a.setAlwaysRenderNameTag(true);
+            a.setLocationAndAngles(at[0] + 0.5, at[1], at[2] + 0.5, d.rotationYaw, 0);
+            w.spawnEntityInWorld(a);
+            agents.add(a);
+            Collections.sort(agents, new Comparator<Agent>() {
+                @Override public int compare(Agent x, Agent y) { return x.skin() - y.skin(); }
+            });
+            Ledger.act(a, "respawn");
+            Events.log("crew: " + a.getCustomNameTag() + " respawned at " + at[0] + " " + at[1] + " " + at[2] + " (full health, empty bag)");
+            final int[] where = d.diedAt;
+            if (where != null) {   // back for its things: a card like any other (its own, while they lie there)
+                final Agent me = a;
+                Origin was = originNow;
+                originNow = Origin.AUTO_DEFAULT;
+                TaskBoard.Card rc = board.post("recover", () -> new TaskBoard.Seq(new GoTo(where[0] + 0.5, where[1], where[2] + 0.5, 1.5), new Collect(where[0] + 0.5, where[1], where[2] + 0.5, 4)))
+                        .pin(me).prio(6).at(where[0], where[1], where[2]).work(Math.hypot(where[0] - at[0], where[2] - at[2]), 0, 0, 0, 0, 60).optional();
+                rc.phase = null;   // its own business, not a phase's
+                originNow = was;
             }
         }
     }
