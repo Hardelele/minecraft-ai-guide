@@ -791,8 +791,16 @@ public class Commander {
         int px0() { return (bandX0() + bandX1()) / 2 - bandW() / 2; }
 
         /** the panel's height for what is shown now */
+        List<String> routineCache = new ArrayList<String>();
+        long routineAt;
+
+        List<String> routineNames() {   // read from the world's file now and then, not every frame
+            if (System.currentTimeMillis() - routineAt > 2000) { routineAt = System.currentTimeMillis(); try { routineCache = Routines.names(); } catch (Exception e) { routineCache = new ArrayList<String>(); } }
+            return routineCache;
+        }
+
         int panelH() {
-            int h = 8 + 16 + (reply() != null ? 22 : 0) + 6;   // the chat, the guide's reply
+            int h = 8 + 16 + (reply() != null ? 22 : 0) + 6 + (routineNames().isEmpty() ? 0 : 18);   // the chat, the guide's reply, the routines
             List<Agent> sel = selAgents();
             if (sel.size() == 1) h += 14 + (fullInv ? 4 * 20 : 2 * 20) + 18;
             else if (sel.size() > 1) h += sel.size() * 20 + 18;
@@ -823,8 +831,11 @@ public class Commander {
             chat.setFocused(focus);
         }
 
+        volatile String localReply;   // an answer made here (a known routine run), not by the guide
+
         /** the guide's last answer since the player wrote (shown for half a minute) */
         String reply() {
+            if (localReply != null) return localReply;
             if (sentAt < 0) return null;
             String r = null;
             for (int i = sentAt; i < GuiGuide.history.size(); i++) { String[] h = GuiGuide.history.get(i); if (h[0] == null) r = h[1]; }
@@ -839,11 +850,21 @@ public class Commander {
             final String ask = (who.length() > 0 ? "[из режима командира; выбраны агенты " + who + " — приказы только им: crew_order с agents=" + who + " или цели crew_plan] "
                     : "[из режима командира; вся команда] ") + text.trim();
             sentAt = GuiGuide.history.size();
+            localReply = null;
             sentText = text.trim();
             final String player = mc.thePlayer == null ? "Player" : mc.thePlayer.getCommandSenderName();
+            final int[] who2 = picked();
             new Thread(new Runnable() {
                 public void run() {
                     try {
+                        Routines.Routine known = Routines.match(text.trim(), 0.80);   // a routine the crew already knows: at once, without asking
+                        if (known != null) {
+                            int[] ws = who2;
+                            if (ws.length == 0) { List<Integer> all = new ArrayList<Integer>(); for (Agent g : clientAgents()) all.add(g.skin()); ws = new int[all.size()]; for (int i = 0; i < ws.length; i++) ws[i] = all.get(i); }
+                            Routines.run(ws, known.name);
+                            localReply = "Рутина «" + known.name + "»: " + known.description;
+                            return;
+                        }
                         java.lang.reflect.Method m = Class.forName("hardelele.aiguide.Tools").getDeclaredMethod("crewAsk", String.class, String.class);
                         m.setAccessible(true);
                         Director.log("commander: asked the guide: " + text.trim() + " -> " + m.invoke(null, player, ask));
@@ -956,6 +977,14 @@ public class Commander {
         }
 
         void pill(String what) {
+            if (what.startsWith("routine:")) {   // a routine for the picked agents (none picked: the whole crew)
+                int[] ws = picked();
+                if (ws.length == 0) { List<Integer> all = new ArrayList<Integer>(); for (Agent g : clientAgents()) all.add(g.skin()); ws = new int[all.size()]; for (int i = 0; i < ws.length; i++) ws[i] = all.get(i); }
+                Routines.run(ws, what.substring(8));
+                localReply = "Рутина «" + what.substring(8) + "» запущена";
+                sentAt = GuiGuide.history.size();
+                return;
+            }
             if (what.equals("inv")) fullInv = !fullInv;
             else if (what.equals("stop")) Orders.give(picked(), Orders.Kind.STOP, 0, 0, 0, -1, false);
             else if (what.equals("ai")) Orders.give(picked(), Orders.Kind.RELEASE, 0, 0, 0, -1, false);
@@ -1181,6 +1210,12 @@ public class Commander {
                 y += 22;
             } else if (sentAt >= 0 && sentText.length() > 0) { fontRendererObj.drawStringWithShadow("…", x0 + 12, y, 0x708090); }
             y += 2;
+            List<String> rs = routineNames();
+            if (!rs.isEmpty()) {
+                int rx = x0 + 12;
+                for (String n : rs) { if (rx > x1 - 60) break; rx = pill("\u21bb " + n, "routine:" + n, rx, y, gmx, gmy); }
+                y += 18;
+            }
             List<Agent> sel = selAgents();
             if (sel.isEmpty()) {
                 fontRendererObj.drawStringWithShadow("ЛКМ — копать, Ctrl — строить, клик по агенту — выбрать", x0 + 12, y, 0x9AA8B8);

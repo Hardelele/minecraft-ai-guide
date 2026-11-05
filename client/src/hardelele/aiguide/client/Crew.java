@@ -337,6 +337,7 @@ public class Crew {
 
     void load(WorldServer w) {
         loaded = true;
+        Routines.loaded = false;   // this world's routines, read when first asked for
         try {
             java.io.File f = new java.io.File(w.getSaveHandler().getWorldDirectory(), "crew.json");
             if (!f.isFile()) return;

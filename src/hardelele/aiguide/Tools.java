@@ -104,6 +104,14 @@ class Tools {
                         + "Call it again with new goals to change the plan.",
                         P, PD, "goals", "one goal a line"));
             if (crewAvailable())
+                a.add(tool("crew_routine", "The crew's routines: a repeated behaviour the player asks for in words, saved under a short name and run "
+                        + "again later by a click (or by a like request): find the nearest target, do its work, bring what it got to the chest, "
+                        + "again, until the chest has as much as asked or nothing is left near. When the player asks for such a repeated job "
+                        + "(\"keep chopping trees near and put the logs in the chest\"), save it with a name and run it for the agents meant.", P, PD,
+                        "action", "save | run | list | forget", "name", "a short name in the player's language (e.g. Лесоруб)",
+                        "description", "the player's own words of what it does", "target", "tree | ore BLOCK (coal_ore, iron_ore...) | block BLOCK (stone, sand, dirt...)",
+                        "until", "ITEM COUNT for the chest (e.g. log 64), or empty: until nothing is left near", "agents", "all, or agent numbers: 1,3 (for save: run it too; empty: only save)"));
+            if (crewAvailable())
                 a.add(tool("crew_order", "Direct orders to the crew's agents, as the player gives them in the commander view (when the player asks "
                         + "for something at a place: 'take that hill', 'chop this tree', 'all of you here', 'kill the zombie'). The agents ordered "
                         + "do only the player's orders until released. Use find_blocks or player_status for the place.", P, PD,
@@ -180,6 +188,14 @@ class Tools {
                     java.lang.reflect.Method plan = Class.forName("hardelele.aiguide.client.Compiler").getDeclaredMethod("plan", String.class, String.class, origin);
                     plan.setAccessible(true);
                     r = (String) plan.invoke(null, player, str(args, "goals"), llm);
+                }
+            }
+            else if (name.equals("crew_routine")) {
+                if (!crewAvailable()) r = "No crew here.";
+                else {
+                    java.lang.reflect.Method m = Class.forName("hardelele.aiguide.client.Routines").getDeclaredMethod("fromGuide", String.class, String.class, String.class, String.class, String.class, String.class);
+                    m.setAccessible(true);
+                    r = (String) m.invoke(null, str(args, "action"), str(args, "name"), str(args, "description"), str(args, "target"), str(args, "until"), str(args, "agents"));
                 }
             }
             else if (name.equals("crew_order")) {
