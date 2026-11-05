@@ -62,6 +62,31 @@ public class Agent extends EntityCreature {
     @Override protected void fall(float d) { }
     @Override public boolean canBreatheUnderwater() { return true; }
 
+    /** the bag goes with the agent into the world's save and comes back with it (nothing is lost between days) */
+    @Override
+    public void writeEntityToNBT(NBTTagCompound t) {
+        super.writeEntityToNBT(t);
+        net.minecraft.nbt.NBTTagList l = new net.minecraft.nbt.NBTTagList();
+        for (ItemStack s : bag) {
+            NBTTagCompound c = new NBTTagCompound();
+            s.writeToNBT(c);
+            l.appendTag(c);
+        }
+        t.setTag("AIGuideBag", l);
+    }
+
+    @Override
+    public void readEntityFromNBT(NBTTagCompound t) {
+        super.readEntityFromNBT(t);
+        bag.clear();
+        net.minecraft.nbt.NBTTagList l = t.getTagList("AIGuideBag", 10);
+        for (int i = 0; i < l.tagCount(); i++) {
+            ItemStack s = ItemStack.loadItemStackFromNBT(l.getCompoundTagAt(i));
+            if (s != null) bag.add(s);
+        }
+        if (getHeldItem() == null) for (ItemStack s : bag) if (s.getItem() instanceof net.minecraft.item.ItemTool) { setCurrentItemOrArmor(0, s); break; }
+    }
+
     /** the skin: by the number in the name ("Агент 3") */
     int skin() {
         String n = getCustomNameTag();

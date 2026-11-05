@@ -227,6 +227,10 @@ class Compiler {
             }
             int ore = (raw2.containsKey(Day2.IRON_ORE) ? raw2.get(Day2.IRON_ORE) : 0) - Day1.Base.have(c, w, Day2.IRON_ORE) - Day1.Base.have(c, w, Items.iron_ingot);
             int coal = ore > 0 ? Math.max(0, (ore + 7) / 8 - Day1.Base.have(c, w, Items.coal)) : 0;
+            boolean anyPick = false, ironPick = false;   // who can mine it: pickaxes first if nobody can
+            for (Agent a : c.agents) { if (Day1.hasPickaxe(a)) anyPick = true; if (Day2.pickaxeFor(a, Blocks.iron_ore)) ironPick = true; }
+            if (!anyPick && (coal > 0 || ore > 0) && !has(ph, "tools")) ph.add(named(new Day1.Tools(), "tools"));
+            if (!ironPick && ore > 0 && !has(ph, "upgrade")) ph.add(named(new Day1.Upgrade(0, true, false), "upgrade"));
             if (coal > 0 && !Day2.clusters(c, w, Blocks.coal_ore, 40).isEmpty()) ph.add(named(new Day2.OreRun(Blocks.coal_ore, coal), "coal"));
             if (ore > 0) {
                 ph.add(named(new Day2.OreRun(Blocks.iron_ore, ore), "iron"));

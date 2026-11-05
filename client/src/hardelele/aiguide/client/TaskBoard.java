@@ -150,11 +150,17 @@ class TaskBoard {
             return true;
         }
         here = Ground.flood(w, Ground.feet(w, a.posX, a.posY, a.posZ), 48, null);   // where it can walk from where it is
-        if (c.base != null && here.near(c.base[0], c.base[1], c.base[2], 4) == null) {   // cut off from the base: back first (the stuck machine digs a way)
-            Crew.job(a, new Crew.GoTo(c.base[0] + 0.5, c.base[1], c.base[2] + 0.5, 3), Origin.AUTO_DEFAULT);
-            return true;
-        }
         Long r = rest.get(a);
+        if (c.base != null) {
+            int[] b = Ground.anchor(c, w);
+            if (!here.has(b[0], b[1], b[2]) && here.near(b[0], b[1], b[2], 3) == null) {   // cut off from the base: back first (the stuck machine digs a way)
+                if (r == null || r <= now) {
+                    rest.put(a, now + 20 * 20);   // not again at once if it does not get there
+                    Crew.job(a, new Crew.GoTo(b[0] + 0.5, b[1], b[2] + 0.5, 1.5), Origin.AUTO_DEFAULT);
+                    return true;
+                }
+            }
+        }
         Card k = best(a, w);
         if (k != null) { take(k, a, w); return true; }
         final Crew.Task d = r != null && r > now || c.current == null ? null : deficit(a, w);
@@ -235,7 +241,7 @@ class TaskBoard {
                 if (f != null && f.near((int) Math.floor(k.at[0]), (int) Math.floor(k.at[1]), (int) Math.floor(k.at[2]), Crew.REACH + 1) == null) {
                     k.state = State.FAILED;
                     k.last = Result.NO_PATH;
-                    Ledger.result(Result.NO_PATH);
+                    Ledger.result(Result.NO_PATH); if (k.phase != null) k.phase.tally(Result.NO_PATH);
                     Events.log("board: " + k + " cannot be reached from the base -> NO_PATH");
                     continue;
                 }
@@ -257,7 +263,7 @@ class TaskBoard {
                         if (lack > 0) k.shortOf.put(e.getKey(), lack);
                     }
                     if (!needOk && k.needs != null) for (ItemStack s : k.needs) k.shortOf.put(s.getItem(), s.stackSize);   // what the agent would have to hold
-                    Ledger.result(k.last);
+                    Ledger.result(k.last); if (k.phase != null) k.phase.tally(k.last);
                     Events.log("board: " + k + " nobody can take it -> " + k.last);
                 }
             }
@@ -271,7 +277,7 @@ class TaskBoard {
                 }
                 k.tries++;
                 k.last = Result.TIMEOUT;
-                Ledger.result(Result.TIMEOUT);
+                Ledger.result(Result.TIMEOUT); if (k.phase != null) k.phase.tally(Result.TIMEOUT);
                 k.state = k.tries >= k.maxTries ? State.FAILED : State.OPEN;
                 Events.log("board: " + k + " lease out" + (a == null ? "" : " (" + a.getCustomNameTag() + ")") + (k.state == State.OPEN ? ", back on the board" : ", given up"));
             }

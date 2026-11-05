@@ -93,6 +93,8 @@ public class Crew {
         Origin origin = Origin.SCRIPT;
         int ticks, max = 20 * 150;
         boolean timedOut;
+        final java.util.Map<String, Integer> results = new java.util.TreeMap<String, Integer>();   // how its tasks ended
+        void tally(Result r) { Ledger.add(results, r.name(), 1); }
         abstract void start(Crew c, WorldServer w, EntityPlayerMP p);
         /** done: no card of it left on the board, no agent on a job given outside the board's defaults */
         boolean done(Crew c) {
@@ -184,7 +186,8 @@ public class Crew {
                 finished.add(current.kind);
                 int gaveUp = 0;
                 for (TaskBoard.Card k : board.cards) if (k.phase == current && k.state == TaskBoard.State.FAILED && !k.optional) gaveUp++;
-                phaseLog.add(new String[] { current.kind, String.valueOf(current.ticks / 20), String.valueOf(gaveUp), String.valueOf(current.timedOut), current.origin.name() });
+                phaseLog.add(new String[] { current.kind, String.valueOf(current.ticks / 20), String.valueOf(gaveUp), String.valueOf(current.timedOut), current.origin.name(),
+                        current.results.toString() });
                 try {
                     Compiler.afterPhase(this, current, w, current.timedOut);
                 } catch (Exception ex) {
@@ -246,6 +249,7 @@ public class Crew {
                 a.jobs.poll();
                 a.origins.poll();
                 Ledger.result(r);
+                if (current != null) current.tally(r);
                 if (r.failed()) Events.log("crew: " + a.getCustomNameTag() + " " + t.getClass().getSimpleName() + " -> " + r);
             }
         }
@@ -467,8 +471,7 @@ public class Crew {
                 Day1.catchNear(a, w, 2.0);
                 Skills.lightUp(a, w);   // a way dug into the dark gets its torches
                 since = 0;
-                state = ROUTE;   // through the gap: a route again
-                route = null;
+                if (dig == null) { state = ROUTE; route = null; }   // through the gap: a route again (on a dig route: on along it)
             }
             if (ticks > 20 * 90) return Result.TIMEOUT;
             switch (state) {
@@ -503,41 +506,51 @@ public class Crew {
                     if (p[1] > a.posY + 0.5 || a.isCollidedHorizontally || a.isInWater()) a.getJumpHelper().setJumping();
                     if (since > 20 * 5) { route = null; since = 0; }   // no progress on it: a new route (or digging)
                     return Result.RUNNING;
-                default:   // DIG: through what may be dug, toward the point
-                    int[] b = digNext(a, w);
-                    if (b == null || digs >= 48) {
-                        Events.log("crew: " + a.getCustomNameTag() + " has no way to " + (int) x + " " + (int) y + " " + (int) z + " from " + (int) a.posX + " " + (int) a.posY + " " + (int) a.posZ);
-                        return Result.NO_PATH;
+                default:   // DIG: the cheapest way through what may be dug (an opening of its own house only when nothing else goes)
+                    if (dig == null) {
+                        final Agent ag = a;
+                        final WorldServer ww = w;
+                        dig = Ground.digRoute(w, Ground.feet(w, a.posX, a.posY, a.posZ), MathHelper.floor_double(x), MathHelper.floor_double(y), MathHelper.floor_double(z),
+                                Math.max(1.5, within + 0.5), (bx, by, bz) -> {
+                                    if (mayDigThrough(ag, ww, bx, by, bz)) return 4;
+                                    if (instance != null && Ground.mayDig(instance, bx, by, bz, "exit") && Ground.ownWall(instance, bx, by, bz)
+                                            && Skills.breakTicks(ag, ww, bx, by, bz) >= 0) return 12;   // its own wall: dear, the last resort
+                                    return -1;
+                                }, 24);
+                        di = 1;
+                        if (dig == null || digs >= 48) {
+                            Events.log("crew: " + a.getCustomNameTag() + " has no way to " + (int) x + " " + (int) y + " " + (int) z + " from " + (int) a.posX + " " + (int) a.posY + " " + (int) a.posZ);
+                            return Result.NO_PATH;
+                        }
                     }
-                    br = new Break(b[0], b[1], b[2], 0);
-                    digs++;
+                    if (di >= dig.size()) { state = NAV; dig = null; since = 0; return Result.RUNNING; }
+                    int[] n = dig.get(di), cur = dig.get(di - 1);
+                    int up = n[1] - cur[1];
+                    int[][] need = up > 0 ? new int[][] { { cur[0], cur[1] + 2, cur[2] }, { n[0], n[1] + 1, n[2] }, { n[0], n[1], n[2] } }
+                            : up < 0 ? new int[][] { { n[0], n[1] + 2, n[2] }, { n[0], n[1] + 1, n[2] }, { n[0], n[1], n[2] } }
+                            : new int[][] { { n[0], n[1] + 1, n[2] }, { n[0], n[1], n[2] } };
+                    for (int[] c : need) {
+                        if (Ground.passable(w, c[0], c[1], c[2], null)) continue;
+                        if (!mayDigThrough(a, w, c[0], c[1], c[2])) {   // not natural: its own wall (the route chose it as the only way)
+                            if (wallDigs >= 2 || instance == null || !Ground.ownWall(instance, c[0], c[1], c[2])) { dig = null; state = ROUTE; route = null; return Result.RUNNING; }
+                            wallDigs++;
+                            Ground.passages.add(key(c[0], c[1], c[2]));
+                            Events.log("crew: " + a.getCustomNameTag() + " opens a passage in the house wall at " + c[0] + " " + c[1] + " " + c[2] + " (no other way)");
+                        }
+                        br = new Break(c[0], c[1], c[2], 0);
+                        digs++;
+                        return Result.RUNNING;
+                    }
+                    if (Math.abs(a.posX - (n[0] + 0.5)) < 0.45 && Math.abs(a.posZ - (n[2] + 0.5)) < 0.45 && Math.abs(a.posY - n[1]) < 1.1) { di++; return Result.RUNNING; }
+                    a.getMoveHelper().setMoveTo(n[0] + 0.5, n[1], n[2] + 0.5, 1.0D);
+                    if (up > 0 || a.isCollidedHorizontally || a.isInWater()) a.getJumpHelper().setJumping();
+                    if (since > 20 * 6) { dig = null; since = 0; }   // stuck on the way: the route again
                     return Result.RUNNING;
             }
         }
 
-        /** the next block in the way toward the point that the agent may dig: room over the head going up, the cell ahead */
-        int[] digNext(Agent a, WorldServer w) {
-            int x0 = MathHelper.floor_double(a.posX), y0 = MathHelper.floor_double(a.posY + 0.01), z0 = MathHelper.floor_double(a.posZ);
-            double dx = x - a.posX, dz = z - a.posZ;
-            int sx = Math.abs(dx) >= Math.abs(dz) ? (dx > 0 ? 1 : -1) : 0, sz = sx == 0 ? (dz > 0 ? 1 : -1) : 0;
-            int fx = x0 + sx, fz = z0 + sz;
-            int[][] cells = y > a.posY + 0.9 ? new int[][] { { x0, y0 + 2, z0 }, { fx, y0 + 1, fz }, { fx, y0 + 2, fz } }
-                    : y < a.posY - 0.9 ? new int[][] { { fx, y0 + 1, fz }, { fx, y0, fz }, { fx, y0 - 1, fz } }
-                    : new int[][] { { fx, y0 + 1, fz }, { fx, y0, fz } };
-            for (int[] c : cells) {
-                if (Ground.passable(w, c[0], c[1], c[2], null)) continue;
-                if (mayDigThrough(a, w, c[0], c[1], c[2])) return c;
-                if (wallDigs < 2 && instance != null && Ground.mayDig(instance, c[0], c[1], c[2], "exit") && Ground.ownWall(instance, c[0], c[1], c[2])
-                        && Skills.breakTicks(a, w, c[0], c[1], c[2]) >= 0) {   // no way at all: a passage through its own wall (1x2 at most)
-                    wallDigs++;
-                    Ground.passages.add(key(c[0], c[1], c[2]));
-                    Events.log("crew: " + a.getCustomNameTag() + " opens a passage in the house wall at " + c[0] + " " + c[1] + " " + c[2] + " (no way out)");
-                    return c;
-                }
-                return null;
-            }
-            return null;
-        }
+        List<int[]> dig;
+        int di;
 
         int wallDigs;
 
@@ -903,11 +916,31 @@ public class Crew {
         // in front of the house's door (the door looks at the base): chest left of the path, table right of it
         int[] d = doorDir();
         int fx = sx + 2 + d[0] * 4, fz = sz + 2 + d[1] * 4;
-        chest = new int[] { fx - d[1] * 2, ground(w, fx - d[1] * 2, sy, fz + d[0] * 2), fz + d[0] * 2 };
-        table = new int[] { fx + d[1] * 2, ground(w, fx + d[1] * 2, sy, fz - d[0] * 2), fz - d[0] * 2 };
-        if (chest[1] < 0) chest[1] = sy;
-        if (table[1] < 0) table[1] = sy;
+        chest = station(w, fx - d[1] * 2, sy, fz + d[0] * 2, null);
+        table = station(w, fx + d[1] * 2, sy, fz - d[0] * 2, chest);
         Events.log("crew: house site " + sx + " " + sy + " " + sz + ", chest at " + chest[0] + " " + chest[1] + " " + chest[2] + ", table at " + table[0] + " " + table[1] + " " + table[2]);
+    }
+
+    /**
+     * A cell for a station (a chest, a table) near where it is meant to go: something firm to stand it on, and a spot
+     * beside it from which it is reached on foot from the base; the nearest such one (not the other station's cell)
+     */
+    int[] station(WorldServer w, int x, int y, int z, int[] not) {
+        Ground.Flood f = Ground.baseFlood(this, w);
+        int[] best = null;
+        double bd = 1e9;
+        for (int dx = -3; dx <= 3; dx++)
+            for (int dz = -3; dz <= 3; dz++)
+                for (int dy = -3; dy <= 3; dy++) {
+                    int cx = x + dx, cy = y + dy, cz = z + dz;
+                    if (not != null && not[0] == cx && not[2] == cz) continue;
+                    if (!soft(w, cx, cy, cz) || !solid(w, cx, cy - 1, cz)) continue;   // stands on something firm
+                    if (f != null && f.near(cx, cy, cz, REACH) == null) continue;      // reached on foot from the base
+                    double dd = Math.abs(dx) + Math.abs(dz) + Math.abs(dy) * 1.5;
+                    if (dd < bd) { bd = dd; best = new int[] { cx, cy, cz }; }
+                }
+        if (best == null) { int gy = ground(w, x, y, z); best = new int[] { x, gy < 0 ? y : gy, z }; }
+        return best;
     }
 
     /** the house's door looks from the site to the base */

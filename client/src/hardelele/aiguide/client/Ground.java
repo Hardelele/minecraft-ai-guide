@@ -149,10 +149,33 @@ class Ground {
         if (c.base == null) return null;
         long t = w.getTotalWorldTime();
         if (fromBase == null || t - fromBaseAt > 100) {
-            fromBase = flood(w, feet(w, c.base[0] + 0.5, c.base[1], c.base[2] + 0.5), 64, null);
+            fromBase = flood(w, anchor(c, w), 64, null);
             fromBaseAt = t;
         }
         return fromBase;
+    }
+
+    static int[] anchorCell;
+
+    /**
+     * Where "the base" is for walking: the nearest cell one can stand in to the base's point (the point itself may be
+     * built over: a fence, a wall); found again when the one before is no longer free
+     */
+    static int[] anchor(Crew c, WorldServer w) {
+        int[] a = anchorCell;
+        if (a != null && stand(w, a[0], a[1], a[2], null) && Math.abs(a[0] - c.base[0]) + Math.abs(a[2] - c.base[2]) <= 8) return a;
+        int[] best = null;
+        double bd = 1e9;
+        for (int dx = -6; dx <= 6; dx++)
+            for (int dz = -6; dz <= 6; dz++)
+                for (int dy = -3; dy <= 3; dy++) {
+                    int x = c.base[0] + dx, y = c.base[1] + dy, z = c.base[2] + dz;
+                    if (!stand(w, x, y, z, null)) continue;
+                    double d = Math.abs(dx) + Math.abs(dz) + Math.abs(dy) * 1.5;
+                    if (d < bd) { bd = d; best = new int[] { x, y, z }; }
+                }
+        anchorCell = best != null ? best : new int[] { c.base[0], c.base[1], c.base[2] };
+        return anchorCell;
     }
 
     static void changed() {
@@ -163,6 +186,69 @@ class Ground {
     static boolean reachable(Agent a, WorldServer w, int x, int y, int z, double reach) {
         Flood f = flood(w, feet(w, a.posX, a.posY, a.posZ), 64, null);
         return f.near(x, y, z, reach) != null;
+    }
+
+    /** what a dig route may go through and at what cost: 0 free, -1 never */
+    interface DigCost { int cost(int x, int y, int z); }
+
+    /**
+     * The cheapest way on foot from one cell to near a point when the way may also go through blocks (each costing
+     * what the rule says: natural ground a little, a wall of one's own a lot, a station never). Feet cells; a step up
+     * needs room over the head where it starts. Returns the cells, the start first, or null.
+     */
+    static List<int[]> digRoute(WorldServer w, int[] from, int tx, int ty, int tz, double near, DigCost dc, int radius) {
+        java.util.PriorityQueue<long[]> q = new java.util.PriorityQueue<long[]>(64, (p, r) -> Long.compare(p[0], r[0]));
+        Map<Long, Long> parent = new HashMap<Long, Long>();
+        Map<Long, Integer> dist = new HashMap<Long, Integer>();
+        Map<Long, int[]> cell = new HashMap<Long, int[]>();
+        long k0 = Crew.key(from[0], from[1], from[2]);
+        dist.put(k0, 0);
+        cell.put(k0, from);
+        q.add(new long[] { 0, k0 });
+        long found = Long.MIN_VALUE;
+        int popped = 0;
+        while (!q.isEmpty() && popped++ < MAX_NODES) {
+            long[] e = q.poll();
+            long kc = e[1];
+            int[] c = cell.get(kc);
+            if (e[0] > dist.get(kc)) continue;
+            double dx = c[0] + 0.5 - tx, dy = c[1] + 1.6 - ty, dz = c[2] + 0.5 - tz;
+            if (Math.sqrt(dx * dx + dy * dy + dz * dz) <= near) { found = kc; break; }
+            for (int[] d : DIRS)
+                for (int up = -1; up <= 1; up++) {
+                    int nx = c[0] + d[0], ny = c[1] + up, nz = c[2] + d[1];
+                    if (Math.abs(nx - from[0]) > radius || Math.abs(nz - from[2]) > radius) continue;
+                    // the cells to be free: the new feet and head; going up, the head room over the start too
+                    int[][] need = up > 0 ? new int[][] { { c[0], c[1] + 2, c[2] }, { nx, ny, nz }, { nx, ny + 1, nz } }
+                            : up < 0 ? new int[][] { { nx, ny + 2, nz }, { nx, ny + 1, nz }, { nx, ny, nz } }
+                            : new int[][] { { nx, ny, nz }, { nx, ny + 1, nz } };
+                    int cost = 1;
+                    boolean ok = true;
+                    for (int[] n : need) {
+                        if (passable(w, n[0], n[1], n[2], null)) continue;
+                        int k = dc.cost(n[0], n[1], n[2]);
+                        if (k < 0) { ok = false; break; }
+                        cost += k;
+                    }
+                    if (!ok) continue;
+                    if (!floor(w, nx, ny - 1, nz, null) && !liquid(w, nx, ny, nz)) {   // nothing under: only a drop onto a floor below
+                        continue;
+                    }
+                    long kn = Crew.key(nx, ny, nz);
+                    int nd = dist.get(kc) + cost;
+                    Integer od = dist.get(kn);
+                    if (od != null && od <= nd) continue;
+                    dist.put(kn, nd);
+                    parent.put(kn, kc);
+                    cell.put(kn, new int[] { nx, ny, nz });
+                    q.add(new long[] { nd, kn });
+                }
+        }
+        if (found == Long.MIN_VALUE) return null;
+        List<int[]> r = new ArrayList<int[]>();
+        for (Long k = found; k != null; k = parent.get(k)) r.add(cell.get(k));
+        Collections.reverse(r);
+        return r;
     }
 
     // ---- protected zones --------------------------------------------------------------------------------
@@ -249,7 +335,7 @@ class Ground {
         if (c.base == null) return true;
         Set<Long> air = new java.util.HashSet<Long>();
         air.add(Crew.key(x, y, z));
-        int[] base = feet(w, c.base[0] + 0.5, c.base[1], c.base[2] + 0.5);
+        int[] base = anchor(c, w);
         // where a body could end up: in the hole (on what is under it) or where it stood beside it
         int fy = y;
         while (fy > y - 4 && passable(w, x, fy - 1, z, air)) fy--;

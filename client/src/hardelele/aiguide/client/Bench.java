@@ -208,11 +208,12 @@ public class Bench {
                 x.addProperty("cards_given_up", Integer.parseInt(p[2]));
                 x.addProperty("out_of_time", Boolean.parseBoolean(p[3]));
                 x.addProperty("origin", p[4]);
+                if (p.length > 5) x.addProperty("results", p[5]);
                 ph.add(x);
             }
         }
         o.add("phases", ph);
-        Day1.Base b = Day1.lastBase;
+        Day1.Base b = Day1.firstBase != null ? Day1.firstBase : Day1.lastBase;   // against the plan as first laid (a re-laid plan leaves out what stands)
         if (b != null) {   // how much of the base stands: every block of its plan, the door
             int total = b.plan.size() + 1, standing = 0;
             JsonObject byKind = new JsonObject();

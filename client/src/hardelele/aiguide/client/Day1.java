@@ -394,6 +394,7 @@ class Day1 {
     static int[] mine;   // x, y, z, dx, dz of the mouth (for the camera and the next day)
     static int mineDepth;   // the steps planned so far (the stairs' zone reaches as deep)
     static Base lastBase;   // the base laid last (how much of it stands)
+    static Base firstBase;  // the base as first laid in this run (what the day was measured against)
 
     static boolean hasPickaxe(Agent a) {
         for (ItemStack s : a.bag) if (s.getItem() instanceof net.minecraft.item.ItemPickaxe) return true;
@@ -717,6 +718,7 @@ class Day1 {
             c.planSite(w);
             lastBefore = lastBase;
             lastBase = this;
+            if (firstBase == null) firstBase = this;
             IInventory inv = c.chestInv(w);
             int stone = inv == null ? 0 : Crew.count(inv, COBBLE);
             int wood = crewLogs(c, w), torches = 0;

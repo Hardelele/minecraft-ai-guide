@@ -92,11 +92,15 @@ class Tools {
                     "dig", "one block a line: x y z; empty if none"));
             if (crewAvailable())
                 a.add(tool("crew_plan", "Your crew: helper agents with players' bodies who do the early game for the player, on their own (no yes "
-                        + "needed). Give only GOALS, one a line, from this list: summon N (1-5 agents); shelter auto|hut|house|fenced; tools "
-                        + "wood|stone; torches N; gift ITEM [N], ITEM [N] (stone_pickaxe, torch, wooden_pickaxe); mine; gather (at nightfall at "
-                        + "the mine). Never coordinates, never which agent does what: the crew works out the quantities (wood, stone, crafts) "
-                        + "and shares the work itself, and tells you if something cannot be mended. For 'a base by night' e.g.: summon 4, "
-                        + "shelter auto, tools stone, torches 16, gift stone_pickaxe, torch 8, gather. Call it again with new goals to change the plan.",
+                        + "needed). Give only GOALS, one a line, from this list: summon N (1-5 agents); shelter auto|hut|house|fenced (build a base); "
+                        + "tools wood|stone|iron (pickaxes for the crew); torches N; make ITEM N, ITEM N (any item by its game name, e.g. "
+                        + "iron_pickaxe 1, iron_sword 1: the crew finds the ore, smelts and crafts it); gift ITEM [N], ITEM [N] (to the player); "
+                        + "light (torches where the base and the mine are dark); inside (the crew goes into its house and waits there, e.g. "
+                        + "for the night); mine; gather (at nightfall at the mine). Never coordinates, never which agent does what: the crew "
+                        + "works out the quantities (wood, stone, ore, crafts) and shares the work itself, and tells you if something cannot "
+                        + "be mended. For 'a base by night' e.g.: summon 4, shelter auto, tools stone, torches 16, gift stone_pickaxe, torch 8, "
+                        + "gather. For 'iron tools' e.g.: make iron_pickaxe 1, iron_sword 1, gift iron_pickaxe 1, iron_sword 1, light. "
+                        + "Call it again with new goals to change the plan.",
                         P, PD, "goals", "one goal a line"));
             if (false && crewAvailable())
                 a.add(tool("helpers","Your crew: helper agents with players' bodies who do the early game for the player, together and on their "
