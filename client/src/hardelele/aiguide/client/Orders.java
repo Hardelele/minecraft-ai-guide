@@ -94,14 +94,14 @@ class Orders {
     /** what the order is in the crew's skills */
     static Crew.Task task(Crew c, WorldServer w, Agent a, Kind kind, int x, int y, int z, int entityId, String item, int n) {
         switch (kind) {
-            case MOVE: {
-                int gy = Crew.ground(w, x, y + 1, z);
-                return new Crew.GoTo(x + 0.5, gy < 0 ? y + 1 : gy, z + 0.5, 0.8);
+            case MOVE: {   // onto the top of the block clicked (climbing up to it when there is a way), a walk only: nothing dug
+                return new Crew.GoTo(x + 0.5, y + 1, z + 0.5, 0.8).walkOnly();
             }
-            case CHOP: {   // the trunk's lowest log, the tree down, what fell picked up
-                int by = y;
-                while (by > 0 && isLog(w.getBlock(x, by - 1, z))) by--;
-                return new TaskBoard.Seq(new Crew.Chop(x, by, z), new Crew.Collect(x + 0.5, by, z + 0.5, 5)).lenient();
+            case CHOP: {   // the whole tree the block is of (trunk and branches), what fell picked up
+                List<int[]> logs = Fell.tree(w, x, y, z);
+                if (logs.isEmpty()) return null;
+                int[] l0 = logs.get(0);
+                return new TaskBoard.Seq(new Fell(logs), new Crew.Collect(l0[0] + 0.5, l0[1], l0[2] + 0.5, 6)).lenient();
             }
             case MINE: {   // the clicked block's vein (one kind of block, touching), or the block alone
                 Block b = w.getBlock(x, y, z);
@@ -185,6 +185,91 @@ class Orders {
         s.add(new Skills.Craft(it, -1, crafts * l.out.stackSize));
     }
 
+    /**
+     * The player's designations, painted on the ground: blocks to dig out (from the top down: nothing of them is left
+     * hanging) or to build (from the bottom up, each on the one under it), a card each on the board. For the picked
+     * agents (shared round them), or for whoever is free when none is picked.
+     */
+    static void designate(final int[] agents, final boolean build, final List<int[]> blocks, final String material) {
+        final Crew c = Crew.ensure();
+        c.queue.add(new Runnable() {
+            public void run() {
+                WorldServer w = net.minecraft.server.MinecraftServer.getServer().worldServers[0];
+                List<int[]> bs = new ArrayList<int[]>(blocks);
+                java.util.Collections.sort(bs, (p, q) -> build ? p[1] - q[1] : q[1] - p[1]);
+                List<Agent> who = new ArrayList<Agent>();
+                for (int n : agents) for (Agent g : c.agents) if (g.skin() == n && !g.isDead) who.add(g);
+                Map<Long, TaskBoard.Card> at = new HashMap<Long, TaskBoard.Card>();
+                for (TaskBoard.Card k : c.board.cards) if (k.open() && k.at != null && (k.kind.equals("paint dig") || k.kind.equals("paint build")))
+                    at.put(Crew.key((int) Math.floor(k.at[0]), (int) Math.floor(k.at[1]), (int) Math.floor(k.at[2])), k);
+                net.minecraft.item.Item mat = build ? Compiler.item(material) : null;
+                int n = 0, skipped = 0;
+                Origin was = Crew.originNow;
+                Crew.originNow = Origin.PLAYER;
+                for (final int[] b : bs) {
+                    long key = Crew.key(b[0], b[1], b[2]);
+                    if (at.containsKey(key)) continue;   // painted already
+                    Block blk = w.getBlock(b[0], b[1], b[2]);
+                    Crew.Task t;
+                    if (build) {
+                        if (mat == null || !(Crew.soft(w, b[0], b[1], b[2]) || blk.getMaterial().isReplaceable())) { skipped++; continue; }
+                        t = task(c, w, null, Kind.PLACE, b[0], b[1], b[2], -1, material, 1);
+                    } else {
+                        if (blk.getMaterial() == Material.air || blk.getMaterial().isLiquid() || blk.getBlockHardness(w, b[0], b[1], b[2]) < 0
+                                || !Ground.mayDig(c, b[0], b[1], b[2], "gather")) { skipped++; continue; }   // nothing there, bedrock, or the crew's own (its base, its stations)
+                        t = new TaskBoard.Seq(new Crew.Mine(new ArrayList<int[]>(java.util.Arrays.asList(b))), new Crew.Collect(b[0] + 0.5, b[1], b[2] + 0.5, 4)).lenient();
+                    }
+                    final Crew.Task tt = t;
+                    TaskBoard.Card k = c.board.post(build ? "paint build" : "paint dig", () -> tt).prio(8 + (build ? -b[1] : b[1]) * 0.001).at(b[0] + 0.5, b[1], b[2] + 0.5).lease(20 * 300);
+                    k.placeChecked = true;   // (its own way there is the dig's: not the base's walk)
+                    k.phase = null;
+                    if (!who.isEmpty()) { Agent g = who.get(n % who.size()); k.pin(g); g.commanded = true; }
+                    TaskBoard.Card dep = at.get(Crew.key(b[0], b[1] + (build ? -1 : 1), b[2]));   // the one above (dig) or below (build) first
+                    if (dep != null) k.after(dep);
+                    at.put(key, k);
+                    n++;
+                }
+                Crew.originNow = was;
+                Events.log("order: " + (build ? "build " + material : "dig") + " " + n + " blocks" + (skipped > 0 ? " (" + skipped + " not)" : "") + (who.isEmpty() ? " for anyone free" : " for " + who.size() + " agents"));
+            }
+        });
+    }
+
+    /** the designations inside a box taken back */
+    static void erase(final int x0, final int y0, final int z0, final int x1, final int y1, final int z1) {
+        final Crew c = Crew.ensure();
+        c.queue.add(new Runnable() {
+            public void run() {
+                int n = 0;
+                for (TaskBoard.Card k : c.board.cards) {
+                    if (!k.open() || k.at == null || !(k.kind.equals("paint dig") || k.kind.equals("paint build"))) continue;
+                    double x = k.at[0], y = k.at[1], z = k.at[2];
+                    if (x < Math.min(x0, x1) || x > Math.max(x0, x1) + 1 || y < Math.min(y0, y1) || y > Math.max(y0, y1) || z < Math.min(z0, z1) || z > Math.max(z0, z1) + 1) continue;
+                    if (k.holder != null) { Crew.clearJobs(k.holder); c.board.release(k.holder, k); }
+                    k.state = TaskBoard.State.FAILED;
+                    k.last = Result.GONE;
+                    n++;
+                }
+                Events.log("order: " + n + " designations taken back");
+            }
+        });
+    }
+
+    /** what is painted and not done yet (for the screen: the client reads the board) */
+    static List<int[]> painted() {
+        List<int[]> out = new ArrayList<int[]>();
+        Crew c = Crew.instance;
+        if (c == null) return out;
+        try {
+            for (TaskBoard.Card k : new ArrayList<TaskBoard.Card>(c.board.cards))
+                if (k.open() && k.at != null && (k.kind.equals("paint dig") || k.kind.equals("paint build")))
+                    out.add(new int[] { (int) Math.floor(k.at[0]), (int) Math.floor(k.at[1]), (int) Math.floor(k.at[2]), k.kind.equals("paint build") ? 1 : 0, k.holder != null ? 1 : 0 });
+        } catch (Exception e) {
+            // read from another thread: the next frame shows it
+        }
+        return out;
+    }
+
     /** the guide's crew_order tool: the same orders as the commander's clicks (the agents by number, a place) */
     static String fromGuide(String agents, String order, int x, int y, int z) {
         Crew c = Crew.ensure();
@@ -220,7 +305,7 @@ class Orders {
     /** what a right click on this block means: a tree is chopped, ore mined, the crew's chest gets the bag, else go there */
     static Kind meaning(net.minecraft.world.World w, int[] chest, int x, int y, int z) {
         Block b = w.getBlock(x, y, z);
-        if (isLog(b)) return Kind.CHOP;
+        if ((isLog(b) || b.getMaterial() == Material.leaves) && !Fell.tree(w, x, y, z).isEmpty()) return Kind.CHOP;   // any block of a grown tree
         if (chest != null && chest[0] == x && chest[1] == y && chest[2] == z) return Kind.DEPOSIT;
         String n = Block.blockRegistry.getNameForObject(b);
         if (n != null && n.contains("_ore")) return Kind.MINE;

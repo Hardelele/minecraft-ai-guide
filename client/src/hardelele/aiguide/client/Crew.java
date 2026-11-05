@@ -511,6 +511,8 @@ public class Crew {
         List<int[]> route;
         Break br;
         GoTo(double x, double y, double z, double within) { this.x = x; this.y = y; this.z = z; this.within = within; }
+        boolean noDig;   // a walk only (the player's "go there"): never dig a way, no way is NO_PATH
+        GoTo walkOnly() { noDig = true; return this; }
 
         public Result step(Agent a, WorldServer w) {
             ticks++;
@@ -539,10 +541,10 @@ public class Crew {
                     return Result.RUNNING;
                 case ROUTE:
                     if (route == null) {
-                        if (++routes > 6) { state = DIG; return Result.RUNNING; }
+                        if (++routes > 6) { if (noDig) return Result.NO_PATH; state = DIG; return Result.RUNNING; }
                         Ground.Flood f = Ground.flood(w, Ground.feet(w, a.posX, a.posY, a.posZ), 48, null);
                         int[] to = f.near(MathHelper.floor_double(x), MathHelper.floor_double(y), MathHelper.floor_double(z), Math.max(1.5, within + 0.5));
-                        if (to == null) { state = DIG; return Result.RUNNING; }   // no walk there at all
+                        if (to == null) { if (noDig) return Result.NO_PATH; state = DIG; return Result.RUNNING; }   // no walk there at all (a walk only: no way)
                         route = f.route(to);
                         ri = 0;
                     }

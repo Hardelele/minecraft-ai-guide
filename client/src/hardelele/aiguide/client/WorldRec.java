@@ -74,6 +74,7 @@ public class WorldRec implements IWorldAccess {
             WorldRec r = new WorldRec(dir, w);
             w.addWorldAccess(r);
             FMLCommonHandler.instance().bus().register(r);
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(r);
             active = r;
             Events.log("worldrec: start " + dir + " (world copied: " + size(new File(dir, "world")) / 1024 / 1024 + " MB)");
             return "ok";
@@ -97,6 +98,7 @@ public class WorldRec implements IWorldAccess {
         active = null;
         try {
             FMLCommonHandler.instance().bus().unregister(r);
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.unregister(r);
             r.w.removeWorldAccess(r);
             r.out.writeByte(0);
             r.out.close();
@@ -130,10 +132,12 @@ public class WorldRec implements IWorldAccess {
             out.writeLong(w.getWorldTime());
             out.writeBoolean(w.isRaining());
             Entity center = w.playerEntities.isEmpty() ? null : (Entity) w.playerEntities.get(0);
+            int[] base = Crew.instance == null ? null : Crew.instance.base;   // no player (the headless bench): around the crew's base
             for (Object o : w.loadedEntityList) {
                 Entity en = (Entity) o;
                 if (en.isDead && !(en instanceof EntityLivingBase)) continue;
                 if (center != null && en.getDistanceSqToEntity(center) > R * R) continue;
+                if (center == null && base != null && !(en instanceof Agent) && en.getDistanceSq(base[0], base[1], base[2]) > 64 * 64) continue;
                 entity(en);
             }
             for (long k : changed) {
@@ -212,6 +216,21 @@ public class WorldRec implements IWorldAccess {
 
     static long key(int x, int y, int z) {
         return ((long) x & 0x3FFFFFF) << 38 | ((long) y & 0xFFF) << 26 | ((long) z & 0x3FFFFFF);
+    }
+
+    /**
+     * A block broken or put by anyone with hands (players, the agents' hands): also known this way. The world tells its
+     * listeners of a change only in chunks a player keeps ticking (a headless server has none): breaking and placing
+     * are the changes that matter, and these events come everywhere.
+     */
+    @SubscribeEvent
+    public void broken(net.minecraftforge.event.world.BlockEvent.BreakEvent e) {
+        if (active == this && e.world == w) changed.add(key(e.x, e.y, e.z));
+    }
+
+    @SubscribeEvent
+    public void placed(net.minecraftforge.event.world.BlockEvent.PlaceEvent e) {
+        if (active == this && e.world == w) changed.add(key(e.x, e.y, e.z));
     }
 
     // ---- what the world tells its listeners -------------------------------------------------------------

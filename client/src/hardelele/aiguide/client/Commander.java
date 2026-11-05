@@ -59,6 +59,8 @@ public class Commander {
     net.minecraft.client.entity.EntityOtherPlayerMP eye;
     boolean hideWas;
     double[] camAt;   // the view as it is: x y z, turn, tilt
+    int edgeX, edgeY, lastMx, lastMy;   // the screen's edge the mouse is at (or went out over)
+    boolean lastIn;
     static volatile int drawn;   // frames the commander's screen was drawn (a check)
 
     /**
@@ -67,18 +69,18 @@ public class Commander {
      */
     void filmKey(int code, boolean shift) {
         Cam c = Cam.get();
-        if (code == Keyboard.KEY_K && camAt != null) {
+        if (code == Keyboard.KEY_K && shift) { c.keys.clear(); c.release(); Director.log("path: keys cleared"); }
+        else if (code == Keyboard.KEY_K && camAt != null) {
             double t = c.keys.isEmpty() ? 0 : c.keys.get(c.keys.size() - 1).t + 60;
             c.keys.add(new Cam.Key(t, camAt[0], camAt[1], camAt[2], camAt[3], camAt[4], 70 + mc.gameSettings.fovSetting * 40));
             Director.log("path: key " + c.keys.size() + " at " + (int) t + " ticks");
         } else if (code == Keyboard.KEY_P) {
             c.playPath(shift ? new java.io.File(mc.mcDataDir, "path-" + System.currentTimeMillis() + ".mp4").getAbsolutePath() : null);
-        } else if (code == Keyboard.KEY_C) { c.keys.clear(); c.release(); Director.log("path: keys cleared"); }
-        else if (code == Keyboard.KEY_F && !selected.isEmpty()) {
+        } else if (code == Keyboard.KEY_F && !selected.isEmpty()) {
             c.autoOn = false;
             Cam.Shot s = c.planFollow(selected.iterator().next(), 20 * 600);
             if (s != null) c.start(s);
-        } else if (code == Keyboard.KEY_G) {
+        } else if (code == Keyboard.KEY_N) {
             c.autoOn = !c.autoOn;
             if (!c.autoOn) c.release();
             Director.log("autocam by action: " + (c.autoOn ? "on" : "off"));
@@ -172,12 +174,22 @@ public class Commander {
             if (Keyboard.isKeyDown(Keyboard.KEY_D)) { mxp -= fz; mzp += fx; }
             if (Keyboard.isKeyDown(Keyboard.KEY_Q)) yaw -= 90 * dt;
             if (Keyboard.isKeyDown(Keyboard.KEY_E)) yaw += 90 * dt;
-            int mx = Mouse.getX(), my = Mouse.getY(), m = 4;
-            if (Mouse.isInsideWindow()) {
-                if (mx < m) { mxp += fz; mzp -= fx; }
-                if (mx > mc.displayWidth - m) { mxp -= fz; mzp += fx; }
-                if (my < m) { mxp -= fx; mzp -= fz; }
-                if (my > mc.displayHeight - m) { mxp += fx; mzp += fz; }
+            // the screen's edge: a band of 12 pixels; the mouse gone out over an edge keeps the camera going that way
+            int mx = Mouse.getX(), my = Mouse.getY(), m = 12;
+            boolean in = Mouse.isInsideWindow();
+            if (in) { edgeX = mx < m ? -1 : mx > mc.displayWidth - m ? 1 : 0; edgeY = my < m ? -1 : my > mc.displayHeight - m ? 1 : 0; }
+            else if (lastIn) {   // it has just left: over the edge it was nearest to
+                edgeX = lastMx < mc.displayWidth / 6 ? -1 : lastMx > mc.displayWidth * 5 / 6 ? 1 : 0;
+                edgeY = lastMy < mc.displayHeight / 6 ? -1 : lastMy > mc.displayHeight * 5 / 6 ? 1 : 0;
+            }
+            if (in) { lastMx = mx; lastMy = my; }
+            lastIn = in;
+            boolean dragging = Mouse.isButtonDown(0) || Mouse.isButtonDown(1);   // not while painting or ordering with a drag near the edge... unless it is outside
+            if (!dragging || !in) {
+                if (edgeX < 0) { mxp += fz; mzp -= fx; }
+                if (edgeX > 0) { mxp -= fz; mzp += fx; }
+                if (edgeY < 0) { mxp -= fx; mzp -= fz; }
+                if (edgeY > 0) { mxp += fx; mzp += fz; }
             }
         }
         px += mxp * speed;
@@ -496,19 +508,217 @@ public class Commander {
         GL11.glPopMatrix();
     }
 
+    // ---- pointing at the world: what is under the mouse, what a click would do, the painted designations ----------
+
+    static final String[] PAINT_MATERIALS = { "planks", "cobblestone", "dirt", "log", "glass" };
+    int paintMat, depth = 1;
+    // a stroke being painted: from, to (blocks), build or dig, the height it lies at
+    int[] paintFrom, paintTo;
+    boolean painting, paintBuild;
+    // an erase stroke (right button dragged)
+    int[] eraseFrom, eraseTo;
+    // an armed order (from the command card or its key): the next left click is it
+    enum Armed { NONE, MOVE, CHOP, ATTACK, GUARD }
+    Armed armed = Armed.NONE;
+    // under the mouse now
+    Object hover;
+    List<int[]> hoverBlocks = new ArrayList<int[]>();
+    String hoverLabel = "";
+
+    /** the blocks of a vein: the same block touching, up to 32 */
+    List<int[]> vein(int x, int y, int z) {
+        List<int[]> out = new ArrayList<int[]>();
+        net.minecraft.block.Block b = mc.theWorld.getBlock(x, y, z);
+        java.util.ArrayDeque<int[]> q = new java.util.ArrayDeque<int[]>();
+        java.util.Set<Long> seen = new java.util.HashSet<Long>();
+        q.add(new int[] { x, y, z });
+        seen.add(Crew.key(x, y, z));
+        while (!q.isEmpty() && out.size() < 32) {
+            int[] c = q.poll();
+            out.add(c);
+            for (int[] d : Skills.SIDE) {
+                int nx = c[0] + d[0], ny = c[1] + d[1], nz = c[2] + d[2];
+                if (mc.theWorld.getBlock(nx, ny, nz) == b && seen.add(Crew.key(nx, ny, nz))) q.add(new int[] { nx, ny, nz });
+            }
+        }
+        return out;
+    }
+
+    static boolean isOre(net.minecraft.block.Block b) {
+        String n = net.minecraft.block.Block.blockRegistry.getNameForObject(b);
+        return n != null && n.contains("_ore");
+    }
+
+    String nameOf(net.minecraft.block.Block b, int meta) {
+        net.minecraft.item.Item it = net.minecraft.item.Item.getItemFromBlock(b);
+        return it == null ? b.getLocalizedName() : new ItemStack(it, 1, b.damageDropped(meta)).getDisplayName();
+    }
+
+    /** what is under the mouse, its outline and what a click would do (every frame) */
+    void hoverNow() {
+        hoverBlocks.clear();
+        hover = Mouse.isInsideWindow() ? pick(Mouse.getX(), Mouse.getY()) : null;
+        boolean alt = Keyboard.isKeyDown(Keyboard.KEY_LMENU) || Keyboard.isKeyDown(Keyboard.KEY_RMENU);
+        boolean ctrl = Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL);
+        String rmb = null, lmb = null;
+        if (hover instanceof Entity) {
+            Entity en = (Entity) hover;
+            AxisAlignedBB bb = en.boundingBox;
+            hoverBlocks.add(new int[] { Integer.MIN_VALUE });   // an entity: its box is drawn from hoverEntity
+            if (en instanceof Agent) { lmb = "выбрать " + ((Agent) en).getCustomNameTag(); rmb = "идти к нему"; }
+            else if (en instanceof IMob) { rmb = "атаковать: " + en.getCommandSenderName(); lmb = armed == Armed.ATTACK ? "атаковать" : null; }
+            else rmb = "идти сюда";
+        } else if (hover instanceof MovingObjectPosition) {
+            MovingObjectPosition m = (MovingObjectPosition) hover;
+            net.minecraft.block.Block b = mc.theWorld.getBlock(m.blockX, m.blockY, m.blockZ);
+            List<int[]> tree = (Orders.isLog(b) || b.getMaterial() == net.minecraft.block.material.Material.leaves) ? Fell.tree(mc.theWorld, m.blockX, m.blockY, m.blockZ) : new ArrayList<int[]>();
+            int[] ch = Crew.instance == null ? null : Crew.instance.chest;
+            if (alt) { hoverBlocks.add(new int[] { m.blockX, m.blockY, m.blockZ }); rmb = "только идти: встать сюда"; }
+            else if (!tree.isEmpty()) { hoverBlocks.addAll(tree); rmb = "рубить дерево (" + tree.size() + " бр.)"; }
+            else if (isOre(b)) { List<int[]> v = vein(m.blockX, m.blockY, m.blockZ); hoverBlocks.addAll(v); rmb = "копать: " + nameOf(b, mc.theWorld.getBlockMetadata(m.blockX, m.blockY, m.blockZ)) + " ×" + v.size(); }
+            else if (ch != null && ch[0] == m.blockX && ch[1] == m.blockY && ch[2] == m.blockZ) { hoverBlocks.add(new int[] { m.blockX, m.blockY, m.blockZ }); rmb = "сложить в сундук"; }
+            else { hoverBlocks.add(new int[] { m.blockX, m.blockY, m.blockZ }); rmb = "идти сюда"; }
+            lmb = ctrl ? "строить: " + materialName() : "копать: " + nameOf(b, mc.theWorld.getBlockMetadata(m.blockX, m.blockY, m.blockZ));
+        }
+        if (armed != Armed.NONE) lmb = armed == Armed.MOVE ? "идти (только идти)" : armed == Armed.CHOP ? "рубить дерево" : armed == Armed.ATTACK ? "атаковать" : "охранять это место";
+        StringBuilder l = new StringBuilder();
+        if (lmb != null) l.append("ЛКМ: ").append(lmb);
+        if (rmb != null && !selected.isEmpty() && armed == Armed.NONE) l.append(l.length() > 0 ? "   " : "").append("ПКМ: ").append(rmb);
+        hoverLabel = l.toString();
+    }
+
+    String materialName() {
+        net.minecraft.item.Item it = Compiler.item(PAINT_MATERIALS[paintMat]);
+        return it == null ? PAINT_MATERIALS[paintMat] : new ItemStack(it).getDisplayName();
+    }
+
+    /** where the ray under the mouse meets the level y + 0.5 (a stroke keeps its height), as a block */
+    int[] onLevel(int mx, int my, int y) {
+        Vec3[] r = ray(mx, my);
+        if (r == null) return null;
+        double dy = r[1].yCoord - r[0].yCoord;
+        if (Math.abs(dy) < 1e-6) return null;
+        double t = (y + 0.5 - r[0].yCoord) / dy;
+        if (t < 0) return null;
+        return new int[] { MathHelper.floor_double(r[0].xCoord + (r[1].xCoord - r[0].xCoord) * t), y, MathHelper.floor_double(r[0].zCoord + (r[1].zCoord - r[0].zCoord) * t) };
+    }
+
+    /** the blocks a stroke takes: the rectangle from-to, as deep (dig: down) or as high (build: up) as the depth; only what would change */
+    List<int[]> strokeCells(int[] a, int[] b, boolean build) {
+        List<int[]> out = new ArrayList<int[]>();
+        if (a == null || b == null) return out;
+        int x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]), z0 = Math.min(a[2], b[2]), z1 = Math.max(a[2], b[2]);
+        if ((x1 - x0 + 1) * (z1 - z0 + 1) * depth > 4096) return out;   // too big a stroke: nothing (a smaller one)
+        for (int k = 0; k < depth; k++) {
+            int y = build ? a[1] + k : a[1] - k;
+            for (int x = x0; x <= x1; x++)
+                for (int z = z0; z <= z1; z++) {
+                    net.minecraft.block.Block bl = mc.theWorld.getBlock(x, y, z);
+                    boolean empty = bl.getMaterial() == net.minecraft.block.material.Material.air || bl.getMaterial().isReplaceable();
+                    if (build ? empty : !empty && !bl.getMaterial().isLiquid()) out.add(new int[] { x, y, z });
+                }
+        }
+        return out;
+    }
+
+    @SubscribeEvent
+    public void pointing(RenderWorldLastEvent e) {   // the outline under the mouse, the stroke, the painted designations, the queued orders' lines
+        if (!on || !haveView) return;
+        GL11.glPushMatrix();
+        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT | GL11.GL_LINE_BIT);
+        GL11.glTranslated(-rx, -ry, -rz);
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glDisable(GL11.GL_LIGHTING);
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        GL11.glDepthMask(false);
+        Tessellator t = Tessellator.instance;
+        // the painted designations, still to do (red: dig, blue: build; brighter when someone is on it)
+        List<int[]> pd = Orders.painted();
+        if (!pd.isEmpty()) {
+            t.startDrawingQuads();
+            for (int[] c : pd) box(t, c[0], c[1], c[2], c[3] == 1 ? 0.3f : 1f, c[3] == 1 ? 0.6f : 0.35f, c[3] == 1 ? 1f : 0.3f, c[4] == 1 ? 0.45f : 0.25f);
+            t.draw();
+        }
+        // the stroke being painted
+        if (painting && paintFrom != null) {
+            t.startDrawingQuads();
+            for (int[] c : strokeCells(paintFrom, paintTo, paintBuild)) box(t, c[0], c[1], c[2], paintBuild ? 0.3f : 1f, paintBuild ? 0.7f : 0.45f, paintBuild ? 1f : 0.2f, 0.4f);
+            t.draw();
+        }
+        if (eraseFrom != null && eraseTo != null) {
+            t.startDrawingQuads();
+            int x0 = Math.min(eraseFrom[0], eraseTo[0]), x1 = Math.max(eraseFrom[0], eraseTo[0]), z0 = Math.min(eraseFrom[2], eraseTo[2]), z1 = Math.max(eraseFrom[2], eraseTo[2]);
+            for (int x = x0; x <= x1; x++) for (int z = z0; z <= z1; z++) box(t, x, eraseFrom[1], z, 0.6f, 0.6f, 0.6f, 0.25f);
+            t.draw();
+        }
+        // the outline of what is under the mouse
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        GL11.glLineWidth(2f);
+        if (hover instanceof Entity) {
+            AxisAlignedBB bb = ((Entity) hover).boundingBox;
+            boolean mob = hover instanceof IMob;
+            outline(t, bb.minX, bb.minY, bb.minZ, bb.maxX, bb.maxY, bb.maxZ, mob ? 1f : 0.4f, mob ? 0.3f : 1f, 0.3f, 0.9f);
+        } else for (int[] c : hoverBlocks) if (c.length == 3) outline(t, c[0], c[1], c[2], c[0] + 1, c[1] + 1, c[2] + 1, 1f, 1f, 0.4f, 0.8f);
+        // each picked agent: a line through the places of its orders, in their order
+        if (Crew.instance != null && !selected.isEmpty()) {
+            try {
+                for (Agent ca : clientAgents()) {
+                    if (!selected.contains(ca.skin())) continue;
+                    t.startDrawing(GL11.GL_LINE_STRIP);
+                    t.setColorRGBA_F(0.4f, 1f, 0.5f, 0.8f);
+                    t.addVertex(ca.posX, ca.boundingBox.minY + 0.1, ca.posZ);
+                    Agent sa = Cam.serverAgent(ca.skin());
+                    TaskBoard.Card held = sa == null ? null : Crew.instance.board.leased.get(sa);
+                    if (held != null && held.at != null) t.addVertex(held.at[0], held.at[1] + 0.1, held.at[2]);
+                    for (TaskBoard.Card k : new ArrayList<TaskBoard.Card>(Crew.instance.board.cards))
+                        if (k != held && k.open() && k.at != null && k.only != null && sa != null && TaskBoard.same(k.only, sa) && k.origin == Origin.PLAYER) t.addVertex(k.at[0], k.at[1] + 0.1, k.at[2]);
+                    t.draw();
+                }
+            } catch (Exception ex) {
+                // the board changed meanwhile: the next frame draws it
+            }
+        }
+        GL11.glDepthMask(true);
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
+        GL11.glPopAttrib();
+        GL11.glPopMatrix();
+    }
+
+    static void box(Tessellator t, int bx, int by, int bz, float r, float g, float b, float a) {
+        t.setColorRGBA_F(r, g, b, a);
+        double x0 = bx + 0.02, y0 = by + 0.02, z0 = bz + 0.02, x1 = bx + 0.98, y1 = by + 0.98, z1 = bz + 0.98;
+        t.addVertex(x0, y1, z0); t.addVertex(x0, y1, z1); t.addVertex(x1, y1, z1); t.addVertex(x1, y1, z0);
+        t.addVertex(x0, y0, z0); t.addVertex(x1, y0, z0); t.addVertex(x1, y0, z1); t.addVertex(x0, y0, z1);
+        t.addVertex(x0, y0, z0); t.addVertex(x0, y1, z0); t.addVertex(x1, y1, z0); t.addVertex(x1, y0, z0);
+        t.addVertex(x0, y0, z1); t.addVertex(x1, y0, z1); t.addVertex(x1, y1, z1); t.addVertex(x0, y1, z1);
+        t.addVertex(x0, y0, z0); t.addVertex(x0, y0, z1); t.addVertex(x0, y1, z1); t.addVertex(x0, y1, z0);
+        t.addVertex(x1, y0, z0); t.addVertex(x1, y1, z0); t.addVertex(x1, y1, z1); t.addVertex(x1, y0, z1);
+    }
+
+    static void outline(Tessellator t, double x0, double y0, double z0, double x1, double y1, double z1, float r, float g, float b, float a) {
+        t.startDrawing(GL11.GL_LINES);
+        t.setColorRGBA_F(r, g, b, a);
+        double[][] c = { { x0, y0, z0 }, { x1, y0, z0 }, { x1, y0, z1 }, { x0, y0, z1 }, { x0, y1, z0 }, { x1, y1, z0 }, { x1, y1, z1 }, { x0, y1, z1 } };
+        int[][] e = { { 0, 1 }, { 1, 2 }, { 2, 3 }, { 3, 0 }, { 4, 5 }, { 5, 6 }, { 6, 7 }, { 7, 4 }, { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 } };
+        for (int[] k : e) { t.addVertex(c[k[0]][0], c[k[0]][1], c[k[0]][2]); t.addVertex(c[k[1]][0], c[k[1]][1], c[k[1]][2]); }
+        t.draw();
+    }
+
     // ---- the screen: the mouse free, the panel ---------------------------------------------------------
 
     static final String[][] CRAFTS = { { "wooden_pickaxe", "1" }, { "stone_pickaxe", "1" }, { "iron_pickaxe", "1" }, { "iron_sword", "1" }, { "torch", "8" },
             { "furnace", "1" }, { "crafting_table", "1" }, { "chest", "1" } };
     static final String[][] SMELTS = { { "iron_ore", "1" }, { "iron_ore", "4" }, { "iron_ore", "8" } };
+    // the command card: name, key (shown), id
+    static final String[][] CARD = { { "Идти", "M" }, { "Рубить", "B" }, { "Атака", "X" }, { "Охрана", "G" }, { "Стоп", "H" }, { "ИИ", "R" }, { "Крафт", "" }, { "Плавка", "" }, { "Чертёж", "" } };
 
     class Screen extends GuiScreen {
         int downX, downY, downButton = -1;
-        boolean dragging;
+        boolean dragging, selecting;
         long lastClick;
         int lastClickSkin = -1;
-        int menu;          // 0 none, 1 craft, 2 smelt, 3 build
-        boolean guardPick;  // the next left click on the ground: where the picked ones stand guard
+        int menu;          // 0 none, 1 craft, 2 smelt, 3 blueprints
         static final int PANEL = 46, ROW = 22;
 
         @Override public boolean doesGuiPauseGame() { return false; }
@@ -518,9 +728,9 @@ public class Commander {
         @Override
         public void initGui() {
             buttonList.clear();
-            String[] main = { "Стоп", "ИИ", "Охрана", "Крафт", "Плавка", "Строить" };
-            int bw = 52, x = width - main.length * (bw + 2) - 2;
-            for (int i = 0; i < main.length; i++) buttonList.add(new net.minecraft.client.gui.GuiButton(i, x + i * (bw + 2), height - 22, bw, 20, main[i]));
+            int bw = 44, x = width - CARD.length * (bw + 2) - 2;
+            for (int i = 0; i < CARD.length; i++)
+                buttonList.add(new net.minecraft.client.gui.GuiButton(i, x + i * (bw + 2), height - 22, bw, 20, (armedIs(i) || menu > 0 && i == 5 + menu ? "§e" : "") + CARD[i][0]));
             int y = height - PANEL - ROW;
             if (menu == 1) for (int i = 0; i < CRAFTS.length; i++) buttonList.add(new net.minecraft.client.gui.GuiButton(100 + i, 4 + i * 102, y, 100, 20, shown(CRAFTS[i][0]) + (CRAFTS[i][1].equals("1") ? "" : " ×" + CRAFTS[i][1])));
             if (menu == 2) for (int i = 0; i < SMELTS.length; i++) buttonList.add(new net.minecraft.client.gui.GuiButton(200 + i, 4 + i * 102, y, 100, 20, shown(SMELTS[i][0]) + " ×" + SMELTS[i][1]));
@@ -529,6 +739,10 @@ public class Commander {
                 buttonList.add(new net.minecraft.client.gui.GuiButton(310, 4 + BLUEPRINTS.length * 82, y, 80, 20, shown(MATERIALS[material])));
                 buttonList.add(new net.minecraft.client.gui.GuiButton(311, 4 + (BLUEPRINTS.length + 1) * 82, y, 60, 20, "повернуть"));
             }
+        }
+
+        boolean armedIs(int i) {
+            return i == 0 && armed == Armed.MOVE || i == 1 && armed == Armed.CHOP || i == 2 && armed == Armed.ATTACK || i == 3 && armed == Armed.GUARD;
         }
 
         /** the item's name as the game shows it in the player's language (its lang files), never its id */
@@ -542,26 +756,32 @@ public class Commander {
 
         /** a card's kind in words for the player */
         String doingRu(String kind) {
-            String k = kind.replace("order ", "");
+            String k = kind.replace("order ", "").replace("paint ", "");
             String[][] m = { { "move", "идёт" }, { "chop", "рубит" }, { "mine", "копает" }, { "attack", "атакует" }, { "deposit", "несёт в сундук" }, { "guard", "охраняет" },
-                    { "craft", "крафтит" }, { "smelt", "плавит" }, { "place", "строит" }, { "ore", "добывает руду" }, { "smelt", "плавит" }, { "make", "крафтит" }, { "inside", "в дом" },
-                    { "light", "ставит факелы" }, { "recover", "за своими вещами" }, { "camp", "лагерь" }, { "carry", "носит" }, { "torches", "факелы" }, { "dig", "копает" } };
-            for (String[] p : m) if (k.equals(p[0])) return (kind.startsWith("order ") ? "приказ: " : "") + p[1];
+                    { "craft", "крафтит" }, { "smelt", "плавит" }, { "place", "строит" }, { "ore", "добывает руду" }, { "make", "крафтит" }, { "inside", "в дом" },
+                    { "light", "ставит факелы" }, { "recover", "за своими вещами" }, { "camp", "лагерь" }, { "carry", "носит" }, { "torches", "факелы" }, { "dig", "копает" },
+                    { "build", "строит" } };
+            for (String[] p : m) if (k.equals(p[0])) return (kind.startsWith("order ") ? "приказ: " : kind.startsWith("paint ") ? "разметка: " : "") + p[1];
             return k;
         }
 
-        String short_(String item) {
-            return item.replace("wooden_", "дер. ").replace("stone_", "кам. ").replace("iron_", "жел. ").replace("pickaxe", "кирка").replace("sword", "меч")
-                    .replace("torch", "факелы").replace("furnace", "печь").replace("crafting_table", "верстак").replace("chest", "сундук");
+        void arm(Armed a) {
+            armed = armed == a ? Armed.NONE : a;
+            menu = 0;
+            blueprint = -1;
+            initGui();
         }
 
         @Override
         protected void actionPerformed(net.minecraft.client.gui.GuiButton b) {
             int id = b.id;
-            if (id == 0 && !selected.isEmpty()) Orders.give(picked(), Orders.Kind.STOP, 0, 0, 0, -1, false);
-            else if (id == 1 && !selected.isEmpty()) Orders.give(picked(), Orders.Kind.RELEASE, 0, 0, 0, -1, false);
-            else if (id == 2) { guardPick = true; menu = 0; blueprint = -1; }
-            else if (id >= 3 && id <= 5) { menu = menu == id - 2 ? 0 : id - 2; if (menu != 3) blueprint = -1; }
+            if (id == 0) arm(Armed.MOVE);
+            else if (id == 1) arm(Armed.CHOP);
+            else if (id == 2) arm(Armed.ATTACK);
+            else if (id == 3) arm(Armed.GUARD);
+            else if (id == 4 && !selected.isEmpty()) Orders.give(picked(), Orders.Kind.STOP, 0, 0, 0, -1, false);
+            else if (id == 5 && !selected.isEmpty()) Orders.give(picked(), Orders.Kind.RELEASE, 0, 0, 0, -1, false);
+            else if (id >= 6 && id <= 8) { menu = menu == id - 5 ? 0 : id - 5; armed = Armed.NONE; if (menu != 3) blueprint = -1; }
             else if (id >= 100 && id < 200 && !selected.isEmpty()) Orders.give(picked(), Orders.Kind.CRAFT, 0, 0, 0, -1, Keyboard.isKeyDown(Keyboard.KEY_LSHIFT), CRAFTS[id - 100][0], Integer.parseInt(CRAFTS[id - 100][1]));
             else if (id >= 200 && id < 300 && !selected.isEmpty()) Orders.give(new int[] { picked()[0] }, Orders.Kind.SMELT, 0, 0, 0, -1, Keyboard.isKeyDown(Keyboard.KEY_LSHIFT), SMELTS[id - 200][0], Integer.parseInt(SMELTS[id - 200][1]));
             else if (id >= 300 && id < 310) blueprint = blueprint == id - 300 ? -1 : id - 300;
@@ -573,9 +793,10 @@ public class Commander {
         @Override
         protected void keyTyped(char c, int code) {
             lastInput = System.currentTimeMillis();
-            if (code == Keyboard.KEY_ESCAPE && (blueprint >= 0 || guardPick || menu != 0)) { blueprint = -1; guardPick = false; menu = 0; initGui(); return; }
+            if (code == Keyboard.KEY_ESCAPE && (blueprint >= 0 || armed != Armed.NONE || menu != 0 || painting)) { blueprint = -1; armed = Armed.NONE; menu = 0; painting = false; initGui(); return; }
             if (code == Keyboard.KEY_ESCAPE || code == key.getKeyCode()) { mc.displayGuiScreen(null); return; }
             boolean ctrl = Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL);
+            boolean shift = Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT);
             if (code >= Keyboard.KEY_1 && code <= Keyboard.KEY_4) {
                 int g = code - Keyboard.KEY_1 + 1;
                 if (ctrl) groups.put(g, new LinkedHashSet<Integer>(selected));
@@ -583,11 +804,27 @@ public class Commander {
                 return;
             }
             if (code == Keyboard.KEY_Z && blueprint >= 0) turn = (turn + 1) & 3;
-            if (code == Keyboard.KEY_K || code == Keyboard.KEY_P || code == Keyboard.KEY_C || code == Keyboard.KEY_F || code == Keyboard.KEY_G)
-                filmKey(code, Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT));
+            if (code == Keyboard.KEY_M) arm(Armed.MOVE);
+            if (code == Keyboard.KEY_B) arm(Armed.CHOP);
+            if (code == Keyboard.KEY_X) arm(Armed.ATTACK);
+            if (code == Keyboard.KEY_G) arm(Armed.GUARD);
+            if (code == Keyboard.KEY_K || code == Keyboard.KEY_P || code == Keyboard.KEY_F || code == Keyboard.KEY_N) filmKey(code, shift);
             if (code == Keyboard.KEY_V && Cam.instance != null) { Cam.instance.autoOn = false; Cam.instance.release(); }   // back to the commander's own view
             if (code == Keyboard.KEY_H && !selected.isEmpty()) Orders.give(picked(), Orders.Kind.STOP, 0, 0, 0, -1, false);       // hold
             if (code == Keyboard.KEY_R && !selected.isEmpty()) Orders.give(picked(), Orders.Kind.RELEASE, 0, 0, 0, -1, false);    // back to the AI
+        }
+
+        /** an armed order at the click: go there only, chop the tree, attack the mob, guard the place */
+        void armedClick(Object o, boolean shift) {
+            if (selected.isEmpty() || o == null) return;
+            if (armed == Armed.ATTACK && o instanceof Entity && o instanceof IMob) order(o, shift);
+            else if (o instanceof MovingObjectPosition) {
+                MovingObjectPosition m = (MovingObjectPosition) o;
+                if (armed == Armed.MOVE) { Orders.give(picked(), Orders.Kind.MOVE, m.blockX, m.blockY, m.blockZ, -1, shift); mark(m.blockX + 0.5, m.blockY + 1, m.blockZ + 0.5, 0x40FF60); }
+                else if (armed == Armed.CHOP) { Orders.give(picked(), Orders.Kind.CHOP, m.blockX, m.blockY, m.blockZ, -1, shift); mark(m.blockX + 0.5, m.blockY + 1, m.blockZ + 0.5, 0xFFC040); }
+                else if (armed == Armed.GUARD) { Orders.give(picked(), Orders.Kind.GUARD, m.blockX, m.blockY, m.blockZ, -1, shift); mark(m.blockX + 0.5, m.blockY + 1, m.blockZ + 0.5, 0xFF8040); }
+            }
+            if (!shift) { armed = Armed.NONE; initGui(); }
         }
 
         @Override
@@ -598,34 +835,59 @@ public class Commander {
             int b = Mouse.getEventButton(), mx = Mouse.getEventX(), my = Mouse.getEventY();
             int guiY = (mc.displayHeight - my) / scale;
             if (guiY >= height - PANEL - (menu != 0 ? ROW : 0) && downButton < 0) { super.handleMouseInput(); return; }   // the panel: its buttons
-            int wheel = Mouse.getEventDWheel();
-            if (wheel != 0) dist = Math.max(6, Math.min(70, dist * (wheel > 0 ? 0.88 : 1.14)));
             boolean shift = Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT);
+            boolean ctrl = Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL);
+            boolean alt = Keyboard.isKeyDown(Keyboard.KEY_LMENU) || Keyboard.isKeyDown(Keyboard.KEY_RMENU);
+            int wheel = Mouse.getEventDWheel();
+            if (wheel != 0) {
+                if (shift) depth = Math.max(1, Math.min(8, depth + (wheel > 0 ? 1 : -1)));                                   // how deep (dig) or high (build) a stroke goes
+                else if (ctrl) paintMat = (paintMat + (wheel > 0 ? 1 : PAINT_MATERIALS.length - 1)) % PAINT_MATERIALS.length;   // what is built
+                else dist = Math.max(6, Math.min(70, dist * (wheel > 0 ? 0.88 : 1.14)));
+            }
             if (b == -1) {   // a move
-                if (downButton == 0 && (Math.abs(mx - downX) > 6 || Math.abs(my - downY) > 6)) dragging = true;
+                if (downButton >= 0 && (Math.abs(mx - downX) > 6 || Math.abs(my - downY) > 6)) dragging = true;
                 if (downButton == 2) yaw += Mouse.getEventDX() * 0.4;
+                if (painting && paintFrom != null) { int[] to = onLevel(mx, my, paintLevel()); if (to != null) paintTo = new int[] { to[0], paintFrom[1], to[2] }; }
+                if (downButton == 1 && dragging && eraseFrom != null) { int[] to = onLevel(mx, my, eraseFrom[1]); if (to != null) eraseTo = to; }
                 return;
             }
             if (Mouse.getEventButtonState()) {   // pressed
                 downButton = b; downX = mx; downY = my; dragging = false;
-                if (b == 1) {
-                    if (blueprint >= 0 || guardPick) { blueprint = -1; guardPick = false; initGui(); }   // a right click puts the tool away
-                    else order(pick(mx, my), shift);
+                if (b == 0) {
+                    Object o = pick(mx, my);
+                    if (armed != Armed.NONE) { armedClick(o, shift); downButton = -1; return; }
+                    if (blueprint >= 0) return;   // placed on release
+                    if (o instanceof Agent) { selecting = true; return; }
+                    if (o instanceof MovingObjectPosition) {   // a stroke: dig (or, with Ctrl, build on top of what is clicked)
+                        MovingObjectPosition m = (MovingObjectPosition) o;
+                        paintBuild = ctrl;
+                        if (paintBuild) {
+                            int[][] d = { { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { -1, 0, 0 }, { 1, 0, 0 } };
+                            paintFrom = new int[] { m.blockX + d[m.sideHit][0], m.blockY + d[m.sideHit][1], m.blockZ + d[m.sideHit][2] };
+                        } else paintFrom = new int[] { m.blockX, m.blockY, m.blockZ };
+                        paintTo = paintFrom.clone();
+                        painting = true;
+                    } else selecting = true;
+                } else if (b == 1) {
+                    Object o = pick(mx, my);
+                    if (o instanceof MovingObjectPosition) { MovingObjectPosition m = (MovingObjectPosition) o; eraseFrom = new int[] { m.blockX, m.blockY, m.blockZ }; eraseTo = null; }
                 }
                 return;
             }
-            if (b == 0 && downButton == 0) {   // released: a box, or a click
+            // released
+            if (b == 0 && downButton == 0) {
                 if (blueprint >= 0 && !dragging) { build(buildAt()); if (!shift) { blueprint = -1; initGui(); } }
-                else if (guardPick && !dragging) {
-                    Object o = pick(mx, my);
-                    if (o instanceof MovingObjectPosition && !selected.isEmpty()) {
-                        MovingObjectPosition m = (MovingObjectPosition) o;
-                        Orders.give(picked(), Orders.Kind.GUARD, m.blockX, m.blockY, m.blockZ, -1, shift);
-                        mark(m.blockX + 0.5, m.blockY + 1, m.blockZ + 0.5, 0xFF8040);
+                else if (painting) {
+                    List<int[]> cells = strokeCells(paintFrom, paintTo, paintBuild);
+                    if (!cells.isEmpty()) {
+                        Orders.designate(picked(), paintBuild, cells, PAINT_MATERIALS[paintMat]);
+                        mark(paintTo[0] + 0.5, paintTo[1] + 1, paintTo[2] + 0.5, paintBuild ? 0x4090FF : 0xFF6040);
+                        Director.log("commander: " + (paintBuild ? "build " + PAINT_MATERIALS[paintMat] : "dig") + " " + cells.size() + " blocks" + (selected.isEmpty() ? " (anyone)" : " (picked)"));
                     }
-                    guardPick = false;
-                } else if (dragging) selectBox(downX, downY, mx, my, shift);
-                else {
+                    painting = false;
+                    paintFrom = paintTo = null;
+                } else if (selecting && dragging) selectBox(downX, downY, mx, my, shift);
+                else if (selecting) {
                     Object o = pick(mx, my);
                     if (o instanceof Agent) {
                         int s = ((Agent) o).skin();
@@ -635,14 +897,31 @@ public class Commander {
                         lastClick = System.currentTimeMillis();
                     } else if (!shift) selected.clear();
                 }
+                selecting = false;
+            } else if (b == 1 && downButton == 1) {
+                if (dragging && eraseFrom != null && eraseTo != null) {   // a right drag: the designations there taken back
+                    Orders.erase(eraseFrom[0], eraseFrom[1] - 8, eraseFrom[2], eraseTo[0], eraseFrom[1] + 8, eraseTo[2]);
+                } else if (blueprint >= 0 || armed != Armed.NONE) { blueprint = -1; armed = Armed.NONE; initGui(); }   // a right click puts the tool away
+                else if (alt) {   // only walk: onto the top of that block
+                    Object o = pick(mx, my);
+                    if (o instanceof MovingObjectPosition && !selected.isEmpty()) {
+                        MovingObjectPosition m = (MovingObjectPosition) o;
+                        Orders.give(picked(), Orders.Kind.MOVE, m.blockX, m.blockY, m.blockZ, -1, shift);
+                        mark(m.blockX + 0.5, m.blockY + 1, m.blockZ + 0.5, 0x40FF60);
+                    }
+                } else order(pick(mx, my), shift);
+                eraseFrom = eraseTo = null;
             }
             downButton = -1;
             dragging = false;
         }
 
+        int paintLevel() { return paintFrom == null ? 0 : paintFrom[1]; }
+
         @Override
         public void drawScreen(int gmx, int gmy, float pt) {
             drawn++;
+            hoverNow();
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             for (Agent a : clientAgents()) {   // names and health over every agent
                 float[] s = toScreen(a.posX, a.boundingBox.maxY + 0.45, a.posZ);
@@ -655,40 +934,63 @@ public class Commander {
                 String n = a.getCustomNameTag();
                 fontRendererObj.drawStringWithShadow(n, x - fontRendererObj.getStringWidth(n) / 2, y - 10, sel ? 0x80FF80 : 0xFFFFFF);
             }
-            if (dragging && downButton == 0) {   // the box being dragged
+            if (dragging && selecting) {   // the box being dragged
                 int x0 = downX / scale, y0 = (mc.displayHeight - downY) / scale, x1 = Mouse.getX() / scale, y1 = (mc.displayHeight - Mouse.getY()) / scale;
                 Gui.drawRect(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1), 0x3040FF60);
             }
-            String tool = blueprint >= 0 ? "Строить: " + BLUEPRINTS[blueprint] + " (" + shown(MATERIALS[material]) + ")  ЛКМ: поставить, Shift: ещё, Z: повернуть, ПКМ/Esc: отмена"
-                    : guardPick ? "Охрана: ЛКМ по земле, где стоять" : null;
-            if (tool != null) fontRendererObj.drawStringWithShadow(tool, 4, 4, 0xFFE080);
+            // the label at the mouse: what a click does here
+            String label = painting ? (paintBuild ? "Строить: " + materialName() : "Копать") + " ×" + strokeCells(paintFrom, paintTo, paintBuild).size() + (depth > 1 ? "  (глубина " + depth + ")" : "")
+                    : blueprint >= 0 ? "Чертёж: " + BLUEPRINTS[blueprint] + " — ЛКМ: поставить, Z: повернуть" : hoverLabel;
+            if (label != null && !label.isEmpty() && guiYOf(gmy) < height - PANEL) {
+                int lw = fontRendererObj.getStringWidth(label);
+                int lx = Math.min(width - lw - 4, gmx + 10), ly = gmy + 10;
+                Gui.drawRect(lx - 2, ly - 2, lx + lw + 2, ly + 9, 0xA0000000);
+                fontRendererObj.drawStringWithShadow(label, lx, ly, 0xFFFFE0);
+            }
             panel();
             super.drawScreen(gmx, gmy, pt);
+            for (Object o : buttonList) {   // a button's hint under the mouse: what it does, its key
+                net.minecraft.client.gui.GuiButton bt = (net.minecraft.client.gui.GuiButton) o;
+                if (bt.id < CARD.length && gmx >= bt.xPosition && gmx < bt.xPosition + 44 && gmy >= bt.yPosition && gmy < bt.yPosition + 20) {
+                    String[] hint = { "Идти: ЛКМ по месту — только идти, ничего не копая", "Рубить: ЛКМ по дереву — всё дерево", "Атака: ЛКМ по мобу", "Охрана: ЛКМ по месту — стоять и отбиваться",
+                            "Стоп: стоять, ждать приказа", "ИИ: вернуть агента под план гида", "Крафт: что сделать (материалы найдут сами)", "Плавка: руду из сундука в печь", "Чертёж: готовые постройки" };
+                    String h = hint[bt.id] + (CARD[bt.id][1].isEmpty() ? "" : "   [" + CARD[bt.id][1] + "]");
+                    int hw = fontRendererObj.getStringWidth(h);
+                    int hx = Math.max(2, Math.min(width - hw - 2, gmx - hw / 2)), hy = bt.yPosition - 12;
+                    Gui.drawRect(hx - 2, hy - 2, hx + hw + 2, hy + 9, 0xE0000000);
+                    fontRendererObj.drawStringWithShadow(h, hx, hy, 0xFFFFFF);
+                }
+            }
         }
 
-        /** the bottom: the picked agents, each with its health, what it does (its card) and what it carries */
+        int guiYOf(int gmy) { return gmy; }
+
+        /** the bottom: the picked agents (health, what each does and where, its bag), the help line of what is armed */
         void panel() {
             int y0 = height - PANEL;
             Gui.drawRect(0, y0, width, height, 0xB0101418);
-            fontRendererObj.drawStringWithShadow("WASD/край  колесо  Q/E  ЛКМ: выбрать/рамка  ПКМ: приказ (Shift: очередь)  Ctrl+1-4/1-4  H: стоп  R: ИИ  |  K: ключ  P/Shift+P: путь/запись  C  F: следить  G: режиссёр  V: вид  F7",
-                    4, y0 + 2, 0x909090);
+            String help = armed != Armed.NONE ? "Приказ «" + CARD[armed.ordinal() - 1][0] + "»: ЛКМ по цели (Shift: ещё), ПКМ/Esc: отмена"
+                    : painting ? "Отпусти — готово.  Shift+колесо: глубина " + depth + "   Ctrl+колесо: материал «" + materialName() + "»"
+                    : "ЛКМ: копать (рамка — область)  Ctrl+ЛКМ: строить «" + materialName() + "»  Shift+колесо: глубина " + depth + "  ПКМ: приказ  Alt+ПКМ: только идти  ПКМ-рамка: стереть  F7";
+            fontRendererObj.drawStringWithShadow(help, 4, y0 + 2, 0xA0A0A0);
             int x = 4;
-            if (selected.isEmpty()) fontRendererObj.drawStringWithShadow("Выдели агентов: клик по агенту, рамка мышью, двойной клик — все", 4, y0 + 18, 0xFFE080);
+            if (selected.isEmpty()) fontRendererObj.drawStringWithShadow("Никто не выбран: копать/строить возьмутся свободные. Выбрать: клик по агенту, рамка от агента, двойной клик — все", 4, y0 + 15, 0xFFE080);
             for (int s : selected) {
                 Agent a = Cam.serverAgent(s);
                 if (a == null) continue;
                 TaskBoard.Card k = Crew.instance == null ? null : Crew.instance.board.leased.get(a);
-                String doing = k != null ? doingRu(k.kind) : a.commanded ? "ждёт приказа" : "ИИ";
+                String doing = k != null ? doingRu(k.kind) + (k.at != null ? " → " + (int) Math.floor(k.at[0]) + " " + (int) Math.floor(k.at[1]) + " " + (int) Math.floor(k.at[2]) : "") : a.commanded ? "ждёт приказа" : "ИИ";
                 StringBuilder bag = new StringBuilder();
                 try {
                     for (ItemStack it : new ArrayList<ItemStack>(a.bag)) { if (bag.length() > 34) { bag.append("…"); break; } bag.append(bag.length() > 0 ? ", " : "").append(it.getDisplayName()).append(it.stackSize > 1 ? " ×" + it.stackSize : ""); }
                 } catch (Exception ex) {
                     // read from the server's thread: the next frame shows it
                 }
-                fontRendererObj.drawStringWithShadow(a.getCustomNameTag() + "  " + Math.round(a.getHealth()) + "♥  " + doing, x, y0 + 13, 0xFFFFFF);
+                String line = a.getCustomNameTag() + "  " + Math.round(a.getHealth()) + "♥  " + doing;
+                fontRendererObj.drawStringWithShadow(line, x, y0 + 13, 0xFFFFFF);
                 fontRendererObj.drawStringWithShadow(bag.length() == 0 ? "(пусто)" : bag.toString(), x, y0 + 24, 0xB0B0B0);
-                x += Math.max(140, fontRendererObj.getStringWidth(bag.toString()) + 12);
-                if (x > width - 340) break;
+                x += Math.max(150, Math.max(fontRendererObj.getStringWidth(line), fontRendererObj.getStringWidth(bag.toString())) + 12);
+                if (x > width - CARD.length * 46 - 150) break;
             }
         }
     }
