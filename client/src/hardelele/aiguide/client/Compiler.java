@@ -121,7 +121,7 @@ class Compiler {
     static String plan(final String player, String text, final Origin origin) {
         final Goals g = new Goals();
         String err = parse(text, g);
-        if (err != null) { Director.log("compiler: rejected: " + err); return err; }
+        if (err != null) { Events.log("compiler: rejected: " + err); return err; }
         Crew.ensure();
         final Crew c = Crew.instance;
         final StringBuilder answer = new StringBuilder();
@@ -208,7 +208,7 @@ class Compiler {
         String sum = (again ? "The crew's plan, changed (done stays done): " : "The crew's plan: ") + (kinds.length() == 0 ? "nothing left to do" : kinds.toString()) + ". Wood " + logs + " logs" + (baseLogs > 0 ? " (the base " + baseLogs + ")" : "") + ", stone " + cobble
                 + (baseNote.isEmpty() ? "" : "; base: " + baseNote) + "; crafts and smelts " + steps + ". The crew shares the work itself; "
                 + "if something fails it is mended or you are told.";
-        Director.log("compiler: goals " + g + " -> " + sum);
+        Events.log("compiler: goals " + g + " -> " + sum);
         return sum;
     }
 
@@ -257,7 +257,7 @@ class Compiler {
             int torches = Day1.get(bill, "torch");
             if (torches > 0) lack.put(Day1.TORCH, torches);
         }
-        Director.log("replan: after " + ph.kind + (outOfTime ? " (out of time)" : "") + ": " + what + "; short of " + names(lack));
+        Events.log("replan: after " + ph.kind + (outOfTime ? " (out of time)" : "") + ": " + what + "; short of " + names(lack));
         List<Crew.Phase> mend = new ArrayList<Crew.Phase>();
         List<String> cannot = new ArrayList<String>();
         for (Map.Entry<Item, Integer> e : lack.entrySet()) topUp(c, w, e.getKey(), e.getValue(), mend, cannot, 0);
@@ -272,7 +272,7 @@ class Compiler {
             }
             StringBuilder k = new StringBuilder();
             for (Crew.Phase x : mend) k.append(k.length() > 0 ? ", " : "").append(x.kind);
-            Director.log("replan: " + k + " (" + replans + "/4)");
+            Events.log("replan: " + k + " (" + replans + "/4)");
             return;
         }
         tellGuide(c, "The crew's " + ph.kind + " ended" + (outOfTime ? " out of time" : "") + " with: " + what
@@ -309,8 +309,15 @@ class Compiler {
             int have = Day1.Base.have(c, w, e.getKey()) + (e.getKey() == Day1.LOG ? Day1.Base.have(c, w, Day1.LOG2) : 0);
             topUp(c, w, e.getKey(), e.getValue() - have, mend, cannot, depth + 1);
         }
-        if (item == Day1.TORCH || item == Items.coal) mend.add(named(new Day1.Upgrade(item == Day1.TORCH ? n : n * 4, false, false), "upgrade"));
-        else if (item == Items.stone_pickaxe) mend.add(named(new Day1.Upgrade(0, true, true), "upgrade"));
+        Crew.Phase made = null;   // one upgrade makes torches and a pickaxe together
+        for (Crew.Phase x : mend) if (x instanceof Day1.Upgrade) made = x;
+        if (item == Day1.TORCH || item == Items.coal) {
+            if (made != null) ((Day1.Upgrade) made).torches += item == Day1.TORCH ? n : n * 4;
+            else mend.add(named(new Day1.Upgrade(item == Day1.TORCH ? n : n * 4, false, false), "upgrade"));
+        } else if (item == Items.stone_pickaxe) {
+            if (made != null) ((Day1.Upgrade) made).giftPickaxe = true;
+            else mend.add(named(new Day1.Upgrade(0, false, true), "upgrade"));
+        }
         else if (item == Items.wooden_pickaxe || item == Items.stick || item == Day1.PLANKS) { if (!has(mend, "tools")) mend.add(named(new Day1.Tools(), "tools")); }
         else if (item == Day1.FURNACE) mend.add(named(new Day1.Upgrade(0, false, false), "upgrade"));
         // the base's own things (fences, a door) are made by its Prepare when it goes again
@@ -347,15 +354,15 @@ class Compiler {
 
     /** a word to the guide (the server mod), which may answer with new goals */
     static void tellGuide(Crew c, String text) {
-        if (told >= 2 || c.player == null) { Director.log("replan: not told to the guide (" + told + "): " + text); return; }
+        if (told >= 2 || c.player == null) { Events.log("replan: not told to the guide (" + told + "): " + text); return; }
         told++;
         try {
             java.lang.reflect.Method m = Class.forName("hardelele.aiguide.Tools").getDeclaredMethod("crewEvent", String.class, String.class);
             m.setAccessible(true);
             Object r = m.invoke(null, c.player, text);
-            Director.log("replan: told the guide (" + told + "/2): " + text + " -> " + r);
+            Events.log("replan: told the guide (" + told + "/2): " + text + " -> " + r);
         } catch (Exception e) {
-            Director.log("replan: the guide is not there: " + e);
+            Events.log("replan: the guide is not there: " + e);
         }
     }
 }

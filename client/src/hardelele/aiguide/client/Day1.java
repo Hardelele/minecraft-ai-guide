@@ -77,7 +77,7 @@ class Day1 {
 
     /** a line an agent says: to the events (there are no speech bubbles yet) */
     static void say(Agent a, String line) {
-        Director.log("crew: " + a.getCustomNameTag() + " says: " + line);
+        Events.log("crew: " + a.getCustomNameTag() + " says: " + line);
     }
 
     static int logs(List<ItemStack> bag) {
@@ -251,7 +251,7 @@ class Day1 {
             for (int i = 0; i < n - 1 - (carry ? 1 : 0); i++)
                 c.board.post("chop", () -> carry ? new ChopMore(c, target) : new TaskBoard.Seq(new ChopMore(c, target), c.new Stash(null, 0))).prio(2);
             if (carry) c.board.post("carry", () -> new Courier(c, "chop")).prio(1.5);
-            Director.log("crew: wood chain for " + target + " logs: camp, " + (n - 1 - (carry ? 1 : 0)) + " chop" + (carry ? ", carry" : "") + " cards");
+            Events.log("crew: wood chain for " + target + " logs: camp, " + (n - 1 - (carry ? 1 : 0)) + " chop" + (carry ? ", carry" : "") + " cards");
         }
     }
 
@@ -389,6 +389,7 @@ class Day1 {
 
     static int[] mine;   // x, y, z, dx, dz of the mouth (for the camera and the next day)
     static int mineDepth;   // the steps planned so far (the stairs' zone reaches as deep)
+    static Base lastBase;   // the base laid last (how much of it stands)
 
     static boolean hasPickaxe(Agent a) {
         for (ItemStack s : a.bag) if (s.getItem() instanceof net.minecraft.item.ItemPickaxe) return true;
@@ -402,11 +403,11 @@ class Day1 {
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             c.planSite(w);
             int[] m = mine != null ? mine : mineSpot(c, w);
-            if (m == null) { Director.log("crew: no place for a mine"); return; }
+            if (m == null) { Events.log("crew: no place for a mine"); return; }
             mine = m;
             mineDepth = Math.max(mineDepth, depth);
             Ground.markMineWay(c, w);   // the floor of the way there is kept from now on
-            Director.log("crew: mine at " + m[0] + " " + m[1] + " " + m[2] + " going " + m[3] + " " + m[4]);
+            Events.log("crew: mine at " + m[0] + " " + m[1] + " " + m[2] + " going " + m[3] + " " + m[4]);
             for (int k = 0; k < 2; k++) {   // two lanes abreast, for whoever has a pickaxe
                 final int sx = m[0] + (m[3] == 0 ? k : 0), sz = m[2] + (m[4] == 0 ? k : 0), y = m[1], dx = m[3], dz = m[4], n = depth;
                 c.board.post("dig", () -> new TaskBoard.Seq(new Crew.GoTo(sx + 0.5, y, sz + 0.5, 0.8), new Steps(sx, y, sz, dx, dz, n), c.new Stash(null, 0)))
@@ -573,8 +574,8 @@ class Day1 {
             final TaskBoard.Card gift = c.board.post("gift", () -> {
                 Crew.Task[] s = new Crew.Task[give.size()];
                 for (int i = 0; i < s.length; i++) s[i] = new Skills.Give(give.get(i).getItem(), give.get(i).stackSize);
-                return new TaskBoard.Seq(s).lenient();
-            }).need(a -> { for (ItemStack g : give) if (Skills.count(a.bag, g.getItem(), -1) == 0) return false; return true; }).needs(give).prio(4);
+                return new TaskBoard.Seq(s);   // each Give fetches from the chest what the bag lacks; a shortfall fails the card with what was short
+            }).prio(4);
             for (Agent g : c.agents)
                 c.board.post("watch", () -> new Crew.Look(px, py + 1.5, pz, 50)).need(a -> gift.state != TaskBoard.State.OPEN).pin(g).prio(1).lease(20 * 30);
         }
@@ -690,21 +691,44 @@ class Day1 {
             return n;
         }
 
+        int size;
+        Base lastBefore;
+
+        /** blocks of the plan standing as planned */
+        int standing(WorldServer w) {
+            int n = 0;
+            for (int[] b : plan) {
+                Block is = w.getBlock(b[0], b[1], b[2]);
+                if (is == Crew.block(b[3]) || b[3] == 1 && (is == Blocks.log || is == Blocks.log2)) n++;
+            }
+            return n;
+        }
+
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             c.planSite(w);
+            lastBefore = lastBase;
+            lastBase = this;
             IInventory inv = c.chestInv(w);
             int stone = inv == null ? 0 : Crew.count(inv, COBBLE);
             int wood = crewLogs(c, w), torches = 0;
             if (inv != null) torches = Crew.count(inv, TORCH);
             for (Agent a : c.agents) torches += Skills.count(a.bag, TORCH, -1);
             int size = maxSize;   // the biggest the wood allows (what stands already and what is made already do not count)
-            for (; size > 0; size--) {
+            Base before = lastBefore;
+            if (before != null && before.standing(w) > 0) {   // a base begun before: the same one, on (what it lacks is fetched by need)
+                size = before.size;
                 lay(c, w, size, stone);
-                if (logsFor(toMake(c, w)) <= wood) break;
+            } else {
+                for (; size > 0; size--) {
+                    lay(c, w, size, stone);
+                    if (logsFor(toMake(c, w)) <= wood) break;
+                }
+                if (size == 0) lay(c, w, 0, stone);
             }
-            if (size == 0) lay(c, w, 0, stone);
+            this.size = size;
+            max = 20 * (90 + 2 * plan.size());   // the time it may take: by the work there is
             Map<String, Integer> b = toMake(c, w);
-            Director.log("crew: base of size " + size + ", " + plan.size() + " blocks, bill " + b + ", wood " + wood + " logs (needs " + logsFor(b) + "), torches " + torches);
+            Events.log("crew: base of size " + size + ", " + plan.size() + " blocks, bill " + b + ", wood " + wood + " logs (needs " + logsFor(b) + "), torches " + torches);
             show(c, w);
             final Base self = this;
             final Map<String, Integer> bill = b;
@@ -715,7 +739,7 @@ class Day1 {
             List<TaskBoard.Card> builds = new ArrayList<TaskBoard.Card>();
             for (int i = 0; i < c.agents.size(); i++) builds.add(c.board.post("build", () -> new Crew.Build(self)).after(prep).prio(3).at(Crew.site[0] + 2, Crew.site[1], Crew.site[2] + 2).lease(20 * 300));
             c.board.post("door", () -> new TaskBoard.Seq(new Take(c, Items.wooden_door, 1), new Skills.PlaceFrom(dr[0], dr[1], dr[2], Items.wooden_door, -1))).after(builds).prio(3).at(dr[0], dr[1], dr[2]);
-            Director.log("crew: " + (size == 2 ? "wood enough for a house with a fence" : size == 1 ? "a house, the fence later" : "little wood: a hut"));
+            Events.log("crew: " + (size == 2 ? "wood enough for a house with a fence" : size == 1 ? "a house, the fence later" : "little wood: a hut"));
         }
     }
 
@@ -742,7 +766,7 @@ class Day1 {
             if (i >= steps.size()) return Result.OK;
             Result r = steps.get(i).step(a, w);
             if (r == Result.RUNNING) return r;
-            if (r.failed()) Director.log("crew: prepare step " + i + " -> " + r);
+            if (r.failed()) Events.log("crew: prepare step " + i + " -> " + r);
             i++;
             return Result.RUNNING;
         }
@@ -750,12 +774,13 @@ class Day1 {
 
     /** nightfall: the crew comes to the mouth of the mine and looks down into it; one puts a torch there */
     static class Gather extends Crew.Phase {
-        Gather() { max = 20 * 40; }
+        Gather() { max = 20 * 40; }   // set in start by the way the agents have to walk
         void start(Crew c, WorldServer w, EntityPlayerMP p) {
             int[] m = mine;
             if (m == null) { new Crew.Cheer().start(c, w, p); return; }
             c.board.goals.clear();   // the day's work is over: no default work
             int k = 0, n = c.agents.size();
+            double far = 0;
             final double mx = m[0] + 0.5 + m[3] * 2.5 + (m[3] == 0 ? 0.5 : 0), mz = m[2] + 0.5 + m[4] * 2.5 + (m[4] == 0 ? 0.5 : 0);
             front = new double[] { mx, m[1] - 2, mz };
             Crew.front = front;
@@ -771,8 +796,10 @@ class Day1 {
                 c.board.post("gather", () -> torch
                         ? new TaskBoard.Seq(new Crew.GoTo(tx, ty, tz, 0.7), new Skills.PlaceFrom(tx0, ty0, tz0, TORCH, -1), new Crew.Look(mx, my - 2.5, mz, 20 * 30)).lenient()
                         : new TaskBoard.Seq(new Crew.GoTo(tx, ty, tz, 0.7), new Crew.Look(mx, my - 2.5, mz, 20 * 30)).lenient()).pin(a).prio(2);
+                far = Math.max(far, Crew.dist(a, tx, ty, tz));
                 k++;
             }
+            max = 20 * (60 + (int) far);   // the walk there (a block a second at worst), the torch, the half minute of looking
             if (torcher != null) say(torcher, "Посвечу у входа");
         }
     }

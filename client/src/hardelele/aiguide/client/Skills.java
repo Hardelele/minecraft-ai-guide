@@ -467,7 +467,7 @@ class Skills {
             if (++ticks < 6) return Result.RUNNING;
             Result r = placeFromBag(a, w, x, y, z, item, meta);
             if (r == Result.BUSY) return ++aside > 20 * 15 ? Result.BLOCKED : Result.RUNNING;   // someone is moving out of the way
-            if (r == Result.BLOCKED) Director.log("crew: " + a.getCustomNameTag() + " cannot put " + Ledger.name(new ItemStack(item)) + " at " + x + " " + y + " " + z + " (" + Ledger.name(new ItemStack(w.getBlock(x, y, z))) + " there)");
+            if (r == Result.BLOCKED) Events.log("crew: " + a.getCustomNameTag() + " cannot put " + Ledger.name(new ItemStack(item)) + " at " + x + " " + y + " " + z + " (" + Ledger.name(new ItemStack(w.getBlock(x, y, z))) + " there)");
             return r;
         }
     }
@@ -480,6 +480,8 @@ class Skills {
         final int n;
         int ticks, caught = -1;
         Crew.GoTo walk;
+        Crew.Task fetch;
+        boolean fetched;
         Give(Agent to, Item item, int n) { this.to = to; this.player = false; this.item = item; this.n = n; }
         Give(Item item, int n) { this.to = null; this.player = true; this.item = item; this.n = n; }
         public Result step(Agent a, WorldServer w) {
@@ -491,6 +493,16 @@ class Skills {
                 if (++caught < 26) return Result.RUNNING;
                 Day1.catchNear(to, w, 3.0);
                 return Result.OK;
+            }
+            if (fetch != null) {   // what the bag lacks, from the chest first
+                Result r = fetch.step(a, w);
+                if (r == Result.RUNNING) return r;
+                fetch = null;
+                fetched = true;
+            }
+            if (!fetched && count(a.bag, item, -1) < n && Crew.instance != null && Crew.instance.chestInv(w) != null) {
+                fetch = new Day1.Take(Crew.instance, item, n - count(a.bag, item, -1));
+                return Result.RUNNING;
             }
             if (count(a.bag, item, -1) == 0) return Result.NO_ITEMS;
             if (Crew.dist(a, t.posX, t.boundingBox.minY, t.posZ) > 2.8) {

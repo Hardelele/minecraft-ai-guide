@@ -205,7 +205,7 @@ class TaskBoard {
                 return r;
             }
         }, k.origin);
-        Director.log("board: " + a.getCustomNameTag() + " takes " + k + (k.tries > 0 ? " (try " + (k.tries + 1) + ")" : ""));
+        Events.log("board: " + a.getCustomNameTag() + " takes " + k + (k.tries > 0 ? " (try " + (k.tries + 1) + ")" : ""));
     }
 
     void finish(Card k, Agent a, Result r) {
@@ -214,7 +214,7 @@ class TaskBoard {
         if (r == Result.OK) { k.state = State.DONE; k.doneBy = a; return; }
         k.tries++;
         k.state = k.tries >= k.maxTries || k.only != null && r == Result.NO_TOOL ? State.FAILED : State.OPEN;
-        Director.log("board: " + k + " by " + a.getCustomNameTag() + " -> " + r + (k.state == State.OPEN ? ", back on the board" : ", given up"));
+        Events.log("board: " + k + " by " + a.getCustomNameTag() + " -> " + r + (k.state == State.OPEN ? ", back on the board" : ", given up"));
     }
 
     void release(Agent a, Card k) {
@@ -236,7 +236,7 @@ class TaskBoard {
                     k.state = State.FAILED;
                     k.last = Result.NO_PATH;
                     Ledger.result(Result.NO_PATH);
-                    Director.log("board: " + k + " cannot be reached from the base -> NO_PATH");
+                    Events.log("board: " + k + " cannot be reached from the base -> NO_PATH");
                     continue;
                 }
             }
@@ -258,7 +258,7 @@ class TaskBoard {
                     }
                     if (!needOk && k.needs != null) for (ItemStack s : k.needs) k.shortOf.put(s.getItem(), s.stackSize);   // what the agent would have to hold
                     Ledger.result(k.last);
-                    Director.log("board: " + k + " nobody can take it -> " + k.last);
+                    Events.log("board: " + k + " nobody can take it -> " + k.last);
                 }
             }
             if (k.state != State.LEASED) continue;
@@ -273,7 +273,7 @@ class TaskBoard {
                 k.last = Result.TIMEOUT;
                 Ledger.result(Result.TIMEOUT);
                 k.state = k.tries >= k.maxTries ? State.FAILED : State.OPEN;
-                Director.log("board: " + k + " lease out" + (a == null ? "" : " (" + a.getCustomNameTag() + ")") + (k.state == State.OPEN ? ", back on the board" : ", given up"));
+                Events.log("board: " + k + " lease out" + (a == null ? "" : " (" + a.getCustomNameTag() + ")") + (k.state == State.OPEN ? ", back on the board" : ", given up"));
             }
         }
     }
@@ -407,7 +407,7 @@ class TaskBoard {
             Result r = steps[i].step(a, w);
             if (r == Result.RUNNING) return r;
             if (r.failed() && !lenient) return r;
-            if (r.failed()) Director.log("crew: " + a.getCustomNameTag() + " step " + steps[i].getClass().getSimpleName() + " -> " + r + " (going on)");
+            if (r.failed()) Events.log("crew: " + a.getCustomNameTag() + " step " + steps[i].getClass().getSimpleName() + " -> " + r + " (going on)");
             i++;
             return i >= steps.length ? Result.OK : Result.RUNNING;
         }

@@ -148,7 +148,7 @@ public class Crew {
                 c.phases.add(ph_(ph));
             }
         });
-        Director.log("crew order: " + w + " " + count);
+        Events.log("crew order: " + w + " " + count);
         return "Queued for the crew: " + w + (c.phases.isEmpty() && c.current == null ? " (starts now)" : " (after the orders before it)") + ".";
     }
 
@@ -166,7 +166,7 @@ public class Crew {
         EntityPlayerMP p = playerIn(w);
         for (java.util.Iterator<Agent> it = agents.iterator(); it.hasNext(); ) if (it.next().isDead) it.remove();
         if (current != null && current.ticks > current.max) {   // too long: what is carried goes to the chest, the phase ends
-            Director.log("crew phase " + current.name + ": out of time");
+            Events.log("crew phase " + current.name + ": out of time");
             board.cancel(current);
             for (Agent a : agents) {
                 clearJobs(a);
@@ -179,31 +179,34 @@ public class Crew {
         if (current != null) {
             current.ticks++;
             if (current.done(this) && current.ticks > 10) {
-                Director.log("crew phase done: " + current.name + " in " + current.ticks / 20 + " s");
+                Events.log("crew phase done: " + current.name + " in " + current.ticks / 20 + " s");
                 status = "done " + current.name;
                 finished.add(current.kind);
+                int gaveUp = 0;
+                for (TaskBoard.Card k : board.cards) if (k.phase == current && k.state == TaskBoard.State.FAILED && !k.optional) gaveUp++;
+                phaseLog.add(new String[] { current.kind, String.valueOf(current.ticks / 20), String.valueOf(gaveUp), String.valueOf(current.timedOut), current.origin.name() });
                 try {
                     Compiler.afterPhase(this, current, w, current.timedOut);
                 } catch (Exception ex) {
-                    Director.log("replan failed: " + ex);
+                    Events.log("replan failed: " + ex);
                 }
                 current = null;
                 save(w);
                 Ledger.save(w.getSaveHandler().getWorldDirectory());
-                Director.log(Ledger.report());
-                Director.log(board.summary());
+                Events.log(Ledger.report());
+                Events.log(board.summary());
                 StringBuilder at = new StringBuilder("crew at:");
                 for (Agent a : agents) at.append(' ').append(a.getCustomNameTag()).append(' ').append((int) Math.floor(a.posX)).append(' ').append((int) Math.floor(a.posY)).append(' ').append((int) Math.floor(a.posZ))
                         .append(" on ").append(Ledger.name(new ItemStack(w.getBlock(MathHelper.floor_double(a.posX), MathHelper.floor_double(a.posY) - 1, MathHelper.floor_double(a.posZ))))).append(';');
-                Director.log(at.toString());
+                Events.log(at.toString());
             }
         }
         while (current == null && !phases.isEmpty() && skip.contains(phases.peek().kind)) {
-            Director.log("crew phase skipped: " + phases.poll().name);
+            Events.log("crew phase skipped: " + phases.poll().name);
         }
         if (current == null && !phases.isEmpty() && p != null && (!gated || allowed.contains(phases.peek().kind))) {
             current = phases.poll();
-            Director.log("crew phase: " + current.name);
+            Events.log("crew phase: " + current.name);
             status = current.name;
             started.add(current.kind);
             originNow = current.origin;
@@ -236,14 +239,14 @@ public class Crew {
                 StringBuilder at = new StringBuilder();
                 StackTraceElement[] st = ex.getStackTrace();
                 for (int i = 0; i < Math.min(4, st.length); i++) at.append(" @ ").append(st[i].getClassName().replace("hardelele.aiguide.client.", "")).append(':').append(st[i].getLineNumber());
-                Director.log("crew task failed: " + ex + at);
+                Events.log("crew task failed: " + ex + at);
                 r = Result.BLOCKED;
             }
             if (r.done()) {
                 a.jobs.poll();
                 a.origins.poll();
                 Ledger.result(r);
-                if (r.failed()) Director.log("crew: " + a.getCustomNameTag() + " " + t.getClass().getSimpleName() + " -> " + r);
+                if (r.failed()) Events.log("crew: " + a.getCustomNameTag() + " " + t.getClass().getSimpleName() + " -> " + r);
             }
         }
     }
@@ -264,7 +267,7 @@ public class Crew {
             java.io.File f = new java.io.File(w.getSaveHandler().getWorldDirectory(), "crew.json");
             java.nio.file.Files.write(f.toPath(), o.toString().getBytes("UTF-8"));
         } catch (Exception e) {
-            Director.log("crew: not saved: " + e);
+            Events.log("crew: not saved: " + e);
         }
     }
 
@@ -283,9 +286,9 @@ public class Crew {
             if (o.has("table")) table = g.fromJson(o.get("table"), int[].class);
             if (o.has("mine")) Day1.mine = g.fromJson(o.get("mine"), int[].class);
             if (o.has("furnace")) Day1.furnace = g.fromJson(o.get("furnace"), int[].class);
-            Director.log("crew: the base of the day before is known: " + o);
+            Events.log("crew: the base of the day before is known: " + o);
         } catch (Exception e) {
-            Director.log("crew: not loaded: " + e);
+            Events.log("crew: not loaded: " + e);
         }
     }
 
@@ -294,20 +297,26 @@ public class Crew {
         for (Object o : w.loadedEntityList)
             if (o instanceof Agent && !agents.contains(o) && !((Agent) o).isDead) {
                 agents.add((Agent) o);
-                Director.log("crew: " + ((Agent) o).getCustomNameTag() + " is back");
+                Events.log("crew: " + ((Agent) o).getCustomNameTag() + " is back");
             }
         Collections.sort(agents, new Comparator<Agent>() {
             @Override public int compare(Agent x, Agent y) { return x.skin() - y.skin(); }
         });
     }
 
+    /** on the headless bench: the fake player who stands in for a real one (asks, receives the gift) */
+    static volatile EntityPlayerMP standIn;
+
     EntityPlayerMP playerIn(WorldServer w) {
         for (Object o : w.playerEntities) {
             EntityPlayerMP p = (EntityPlayerMP) o;
             if (player == null || p.getCommandSenderName().equals(player)) return p;
         }
-        return null;
+        return standIn;
     }
+
+    /** every phase as it ended: kind, seconds, cards given up (not optional), out of time, origin */
+    static final List<String[]> phaseLog = java.util.Collections.synchronizedList(new ArrayList<String[]>());
 
     // ---- geometry ------------------------------------------------------------------------------------
 
@@ -476,7 +485,7 @@ public class Crew {
                 default:   // DIG: through what may be dug, toward the point
                     int[] b = digNext(a, w);
                     if (b == null || digs >= 48) {
-                        Director.log("crew: " + a.getCustomNameTag() + " has no way to " + (int) x + " " + (int) y + " " + (int) z + " from " + (int) a.posX + " " + (int) a.posY + " " + (int) a.posZ);
+                        Events.log("crew: " + a.getCustomNameTag() + " has no way to " + (int) x + " " + (int) y + " " + (int) z + " from " + (int) a.posX + " " + (int) a.posY + " " + (int) a.posZ);
                         return Result.NO_PATH;
                     }
                     br = new Break(b[0], b[1], b[2], 0);
@@ -867,7 +876,7 @@ public class Crew {
         table = new int[] { fx + d[1] * 2, ground(w, fx + d[1] * 2, sy, fz - d[0] * 2), fz - d[0] * 2 };
         if (chest[1] < 0) chest[1] = sy;
         if (table[1] < 0) table[1] = sy;
-        Director.log("crew: house site " + sx + " " + sy + " " + sz + ", chest at " + chest[0] + " " + chest[1] + " " + chest[2] + ", table at " + table[0] + " " + table[1] + " " + table[2]);
+        Events.log("crew: house site " + sx + " " + sy + " " + sz + ", chest at " + chest[0] + " " + chest[1] + " " + chest[2] + ", table at " + table[0] + " " + table[1] + " " + table[2]);
     }
 
     /** the house's door looks from the site to the base */
@@ -927,7 +936,7 @@ public class Crew {
                         if (spot == null) continue;
                         stones.add(new int[] { x, y, z, spot[0], spot[1], spot[2] });
                     }
-            Director.log("crew: " + stones.size() + " stone blocks open to the air near the base");
+            Events.log("crew: " + stones.size() + " stone blocks open to the air near the base");
             for (Agent a : c.agents) {
                 int[] seed = null;
                 double bd = 1e9;
@@ -1048,7 +1057,7 @@ public class Crew {
                 for (int z = z0 + 1; z <= z0 + 3; z++) plan.add(new int[] { x, y0 + 4, z, 0 });
             plan.add(new int[] { x0 + 2, y0 + 5, z0 + 2, 1 });
             show(c, w);
-           Director.log("crew: house plan of " + plan.size() + " blocks at " + x0 + " " + y0 + " " + z0 + (roof == 2 ? " (stone roof)" : ""));
+           Events.log("crew: house plan of " + plan.size() + " blocks at " + x0 + " " + y0 + " " + z0 + (roof == 2 ? " (stone roof)" : ""));
             for (Agent a : c.agents) Crew.job(a, new Build(this));
         }
         /** the see-through plan for the camera (the client draws it) */
@@ -1067,7 +1076,7 @@ public class Crew {
             }
             m.add("place", put);
             m.add("dig", new JsonArray());
-            if (Pilot.instance != null) Pilot.instance.inbox.add(m);
+            Events.ghost(m);
             shownAt = ticks;
         }
         boolean done(Crew c) {
@@ -1177,7 +1186,7 @@ public class Crew {
             ItemStack in = item(a, cur[3]);   // what is put comes out of the bag (Skills: the right item, its own place sound)
             Result r = in == null ? Result.NO_ITEMS : Skills.placeFromBag(a, w, cur[0], cur[1], cur[2], in.getItem(), in.getMetadata());
             if (r == Result.BUSY) h.skipped.put(key(cur[0], cur[1], cur[2]), h.ticks + 60);   // someone moves out of the cell: another block meanwhile
-            else if (r != Result.OK) Director.log("crew: " + a.getCustomNameTag() + " build " + Ledger.name(in) + " at " + cur[0] + " " + cur[1] + " " + cur[2] + " -> " + r);
+            else if (r != Result.OK) Events.log("crew: " + a.getCustomNameTag() + " build " + Ledger.name(in) + " at " + cur[0] + " " + cur[1] + " " + cur[2] + " -> " + r);
             if (r == Result.BLOCKED) h.skipped.put(key(cur[0], cur[1], cur[2]), h.ticks + 200);   // someone stands there, or nothing to put it against: in 10 s again
             h.claimed.remove(key(cur[0], cur[1], cur[2]));
             cur = null;

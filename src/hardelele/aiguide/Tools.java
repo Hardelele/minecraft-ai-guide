@@ -35,6 +35,12 @@ class Tools {
         instance = this;
     }
 
+    /** the headless bench asks the guide as its fake player would (a player's own words) */
+    static String crewAsk(String player, String text) {
+        if (instance == null || instance.mod.assistant == null) return "no guide";
+        return instance.mod.assistant.ask(player, text) ? "asked" : "busy";
+    }
+
     /** the crew (client mod, by reflection) tells the guide what it could not mend; the guide may answer with crew_plan */
     static String crewEvent(String player, String text) {
         if (instance == null || instance.mod.assistant == null) return "no guide";

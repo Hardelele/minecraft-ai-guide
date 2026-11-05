@@ -105,7 +105,7 @@ public class Ledger {
             java.nio.file.Files.write(new File(worldDir, "ledger.json").toPath(), g.toJson(o).getBytes("UTF-8"));
             dirty = 0;
         } catch (Exception e) {
-            Director.log("ledger: not saved: " + e);
+            Events.log("ledger: not saved: " + e);
         }
     }
 }
