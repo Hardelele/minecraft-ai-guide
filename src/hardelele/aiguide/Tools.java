@@ -51,8 +51,14 @@ class Tools {
     JsonArray definitions(boolean mcp) {
         JsonArray a = new JsonArray();
         String P = mcp ? "player" : null, PD = "the player's name";
-        a.add(tool("find_items", "Find items and blocks by name (in any language, part of the name works). Returns ids for the other tools.",
-                "query", "a name or a part of it"));
+        a.add(tool("find_items", "Find items and blocks by name (in any language, part of the name works). Returns ids for the other tools "
+                + "and, in {braces}, what each block is (ore, wood, machine...).", "query", "a name or a part of it"));
+        a.add(tool("describe_area", "The area around the player (or a point) in words: whether they are under cover and the way out, the ground, "
+                + "trees and groves, ores (exposed or buried), lava, water and other dangers, machines and storage; with coordinates, "
+                + "distances on foot and walking routes. focus narrows it: trees, ores, danger, built, exits, terrain, or a block name to find "
+                + "the nearest such blocks (e.g. 'Медная руда', 'Сундук').", P, PD,
+                "at", "x y z of the centre; empty for the player", "radius", "blocks around, 16-64 (default 48)",
+                "focus", "all (default), trees, ores, danger, built, exits, terrain, or a block name"));
         a.add(tool("how_to_make", "All the ways to get an item: crafting grids, furnace, machines of every mod.",
                 "item", "an id from find_items, or a name"));
         a.add(tool("what_uses", "What an item is used for: recipes that take it.", "item", "an id from find_items, or a name"));
@@ -226,7 +232,8 @@ class Tools {
             AIGuide.LOG.warn("tool " + name + " failed", e);
             r = "error: " + e;
         }
-        int max = name.equals("read_guide") || name.equals("inspect_blocks") ? MAX_GUIDE : MAX_RESULT;   // a guide is read whole
+        int max = name.equals("read_guide") || name.equals("inspect_blocks") ? MAX_GUIDE   // a guide is read whole
+                : name.equals("describe_area") ? 8000 : MAX_RESULT;
         return r.length() > max ? r.substring(0, max) + "\n... (cut)" : r;
     }
 
@@ -245,7 +252,8 @@ class Tools {
     /** the tools that look at or act in the world around a player: on the server thread */
     String world(final String name, final JsonObject args, final String player) throws Exception {
         final boolean act = name.equals("fetch") || name.equals("craft") || name.equals("mark") || name.equals("build");
-        if (!name.equals("where_is") && !name.equals("storage_overview") && !name.equals("plan_crafting") && !name.equals("inspect_blocks") && !act)
+        if (!name.equals("where_is") && !name.equals("storage_overview") && !name.equals("plan_crafting") && !name.equals("inspect_blocks")
+                && !name.equals("describe_area") && !act)
             return "unknown tool " + name;
         if (act && !mod.config.actions) return "Actions are switched off on this server.";
         final ItemStack item = args.has("item") ? resolve(str(args, "item")) : null;
@@ -309,6 +317,17 @@ class Tools {
                     }
                     if (p.func_70092_e(at[0], at[1], at[2]) > 64 * 64) return "The point is more than 64 blocks from the player.";
                     return new Inspect(mod).around(p, at, Math.max(1, Math.min(10, num(args, "radius", 4))), MAX_GUIDE - 100);
+                }
+                if (name.equals("describe_area")) {
+                    int[] at = { (int) Math.floor(p.field_70165_t), (int) Math.floor(p.field_70163_u), (int) Math.floor(p.field_70161_v) };
+                    String[] w = str(args, "at").trim().split("[\\s,]+");
+                    if (w.length == 3) try {
+                        at = new int[] { Integer.parseInt(w[0]), Integer.parseInt(w[1]), Integer.parseInt(w[2]) };
+                    } catch (NumberFormatException e) {
+                        return "Bad point '" + str(args, "at") + "': x y z, or empty.";
+                    }
+                    if (p.func_70092_e(at[0], at[1], at[2]) > 128 * 128) return "The point is more than 128 blocks from the player.";
+                    return new Area(mod).describe(p, at, Math.max(16, Math.min(64, num(args, "radius", 48))), str(args, "focus"));
                 }
                 if (name.equals("plan_crafting"))
                     return new Planner(mod, mod.storage.totals(p, mod.config.storageRadius, true)).plan(item, count);
@@ -416,8 +435,19 @@ class Tools {
         List<String[]> hits = search(q, 15);
         if (hits.isEmpty()) return "Nothing found for '" + q + "'. Try a shorter part of the name or another language.";
         StringBuilder b = new StringBuilder();
-        for (String[] h : hits) b.append(h[2]).append("  [").append(h[0]).append("]\n");
+        for (String[] h : hits) b.append(h[2]).append("  [").append(h[0]).append("]  {").append(label(h[0])).append("}\n");
         return b.toString();
+    }
+
+    /** what an item is: the block's labels when it is a block (ore, wood, machine...), else "item" (or "fluid") */
+    String label(String key) {
+        if (key.startsWith("fluid:")) return "fluid";
+        ItemStack s = mod.recipes.stacks.get(key);
+        if (s == null) return "?";
+        Block bl = Block.func_149634_a(s.func_77973_b());
+        if (bl == null || bl.func_149688_o() == net.minecraft.block.material.Material.field_151579_a) return "item";
+        int meta = s.func_77960_j() == RecipeIndex.WILD ? 0 : s.func_77960_j();
+        return "block: " + mod.semantics.labels(bl, meta & 15);
     }
 
     ItemStack resolve(String item) {

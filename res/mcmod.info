@@ -2,7 +2,7 @@
   "modid": "aiguide",
   "name": "AI Guide",
   "description": "An assistant in the chat that knows your modpack: ask \"? question\" and a language model answers, looking up item names, recipes of the crafting table and machines, your inventory and the guides of the server. Server-side only.",
-  "version": "0.3",
+  "version": "0.4",
   "mcversion": "1.7.10",
   "authorList": ["hardelele"]
 }]

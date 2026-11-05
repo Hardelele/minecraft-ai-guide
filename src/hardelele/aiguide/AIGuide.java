@@ -37,7 +37,7 @@ import org.apache.logging.log4j.Logger;
  */
 @Mod(modid = AIGuide.ID, name = "AI Guide", version = AIGuide.VERSION, acceptableRemoteVersions = "*")
 public class AIGuide {
-    public static final String ID = "aiguide", VERSION = "0.3";
+    public static final String ID = "aiguide", VERSION = "0.4";
     static final Logger LOG = LogManager.getLogger("AIGuide");
 
     GuideConfig config;
@@ -53,6 +53,7 @@ public class AIGuide {
     ClientLink link;
     McpServer mcp;
     Learner learner;
+    Semantics semantics;
     int ticks;
     Thread serverThread;
     final ConcurrentLinkedQueue<Runnable> mainQueue = new ConcurrentLinkedQueue<Runnable>();
@@ -72,6 +73,7 @@ public class AIGuide {
         link.start();
         mcp = new McpServer(this);
         learner = new Learner(this);
+        semantics = new Semantics(this);
     }
 
     @Mod.EventHandler
@@ -97,6 +99,8 @@ public class AIGuide {
         recipes.build(config.sources);
         tools.names = null;
         knowledge.load();
+        semantics.load(new File(config.dir, "labels-llm.json"));
+        if (config.labelUnknown) semantics.labelUnknown();
         LOG.info("ready in {} ms; ask with \"{} question\" or /guide", System.currentTimeMillis() - t0, config.prefix);
         if (config.mcpEnabled) mcp.start();
         if (Boolean.getBoolean(ID + ".selftest")) SelfTest.run(this);

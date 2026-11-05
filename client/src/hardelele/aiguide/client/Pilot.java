@@ -147,6 +147,7 @@ public class Pilot {
             ticks = 0;
             replans = 0;
             hitStarted = false;
+            behind = null;
             if (t.equals("goto") && !plan()) fail("no way there");
         } else if (t.equals("close")) {
             if (mc.currentScreen != null && !(mc.currentScreen instanceof GuiGuide)) mc.thePlayer.closeScreen();
@@ -405,7 +406,7 @@ public class Pilot {
     int clock, taken;
 
     static final String ASK = System.getProperty("aiguide.client.ask");   // a question asked in the window once in the world
-    int askAt = -1;
+    int askAt = -1, answered;
 
     void shots() {
         if (ASK != null && server >= 0) {
@@ -414,7 +415,8 @@ public class Pilot {
                 askAt = clock;
                 mc.displayGuiScreen(new GuiGuide());
                 GuiGuide.ask(ASK.replace('_', ' '));
-            } else if (askAt > 0 && !GuiGuide.waiting && clock > askAt + 40 && clock < askAt + 10000) {
+            } else if (askAt > 0 && GuiGuide.waiting) answered = clock;
+            else if (askAt > 0 && askAt < 1 << 30 && !GuiGuide.waiting && clock > answered + 40) {
                 net.minecraft.util.ScreenShotHelper.saveScreenshot(mc.mcDataDir, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
                 System.out.println("[AIGuideClient] window shot, history " + GuiGuide.history.size());
                 askAt = 1 << 30;   // once
