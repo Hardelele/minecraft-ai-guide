@@ -37,7 +37,8 @@ class TaskBoard {
         double prio = 1;
         double[] at;          // where the work is (for distance)
         Need need;
-        final Map<Item, Integer> wants = new LinkedHashMap<Item, Integer>();   // chest quantities it counts on
+        final Map<Item, Integer> wants = new LinkedHashMap<Item, Integer>();   // chest quantities it aims at (targets, not start conditions)
+        final Map<Item, Integer> unit = new LinkedHashMap<Item, Integer>();    // what one unit of its work takes: enough of that to start
         int lease = 20 * 240, tries;
         boolean optional;     // nice to have: its failure does not fail the phase
         Card optional() { optional = true; return this; }
@@ -58,7 +59,8 @@ class TaskBoard {
         Card need(Need n) { need = n; return this; }
         List<ItemStack> needs;   // the things the 'need' asks the agent to hold (for the shortfall when nobody has them)
         Card needs(List<ItemStack> l) { needs = l; return this; }
-        Card wants(Item i, int n) { wants.put(i, n); return this; }
+        /** the one rule for processing cards: aims at n, starts when there is one unit's worth (what is short is topped up meanwhile) */
+        Card wants(Item i, int n, int perUnit) { wants.put(i, n); unit.put(i, Math.max(1, Math.min(n, perUnit))); return this; }
         boolean leaseSet;
         Card lease(int ticks) { lease = ticks; leaseSet = true; return this; }
         /** the card's own work, its lease from the one estimate (Budget); without it the card has its phase's time */
@@ -121,7 +123,7 @@ class TaskBoard {
         if (k.sameAs != null && k.sameAs.doneBy == null && k.sameAs.state != State.FAILED) return false;
         if (k.need != null && !k.need.ok(a)) return false;
         if (k.at != null && here != null && here.near((int) Math.floor(k.at[0]), (int) Math.floor(k.at[1]), (int) Math.floor(k.at[2]), Crew.REACH + 1) == null) return false;   // it cannot walk there from where it is
-        for (Map.Entry<Item, Integer> e : k.wants.entrySet()) if (chestFree(w, e.getKey(), null) < e.getValue()) return false;
+        for (Map.Entry<Item, Integer> e : k.unit.entrySet()) if (chestFree(w, e.getKey(), null) < e.getValue()) return false;
         return true;
     }
 
@@ -133,6 +135,19 @@ class TaskBoard {
     }
 
     Ground.Flood here;   // the walk from the agent being matched (set by feed and preempt)
+
+    final Map<Agent, Object[]> floods = new HashMap<Agent, Object[]>();   // agent -> { the cell it was made from, when, the flood }
+
+    /** where an agent can walk: made again only when it has moved to another cell or 2 s have passed (the search is not cheap) */
+    Ground.Flood floodOf(Agent a, WorldServer w) {
+        int[] f = Ground.feet(w, a.posX, a.posY, a.posZ);
+        long k = Crew.key(f[0], f[1], f[2]);
+        Object[] o = floods.get(a);
+        if (o != null && (Long) o[0] == k && now - (Long) o[1] < 40) return (Ground.Flood) o[2];
+        Ground.Flood fl = Ground.flood(w, f, 48, null);
+        floods.put(a, new Object[] { k, now, fl });
+        return fl;
+    }
 
     Card best(Agent a, WorldServer w) {
         Card best = null;
@@ -152,7 +167,7 @@ class TaskBoard {
             Ledger.act(a, "haul");
             return true;
         }
-        here = Ground.flood(w, Ground.feet(w, a.posX, a.posY, a.posZ), 48, null);   // where it can walk from where it is
+        here = floodOf(a, w);   // where it can walk from where it is
         if (c.base != null) {
             int[] b = Ground.anchor(c, w);
             if (!here.has(b[0], b[1], b[2]) && here.near(b[0], b[1], b[2], 3) == null) {   // cut off from the base: back first (the stuck machine digs a way)
@@ -186,7 +201,7 @@ class TaskBoard {
 
     /** an agent on a default job leaves it when a card it fits is waiting */
     boolean preempt(Agent a, WorldServer w) {
-        here = Ground.flood(w, Ground.feet(w, a.posX, a.posY, a.posZ), 48, null);
+        here = floodOf(a, w);
         Card k = best(a, w);
         if (k == null) return false;
         Crew.clearJobs(a);
@@ -203,7 +218,8 @@ class TaskBoard {
         k.since = now;
         leased.put(a, k);
         if (!k.wants.isEmpty()) {
-            Map<Item, Integer> h = new HashMap<Item, Integer>(k.wants);
+            Map<Item, Integer> h = new HashMap<Item, Integer>();   // what is there of the target is held for it, no more
+            for (Map.Entry<Item, Integer> e : k.wants.entrySet()) h.put(e.getKey(), Math.min(e.getValue(), chestFree(w, e.getKey(), null)));
             held.put(k, h);
         }
         final Crew.Task t = k.make.make();

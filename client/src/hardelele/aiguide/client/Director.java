@@ -471,7 +471,8 @@ public class Director {
         if (cmd.equals("autocam")) {   // total [shot]: cut to whoever of the crew is working, orbit them a little; chase someone if nobody works
             String[] a = arg.split(" ");
             int total = Integer.parseInt(a[0]), shot = a.length > 1 ? Integer.parseInt(a[1]) : 110;
-            if (t == 0 || autoT >= shot) autoShot();
+            autoLen = shot;
+            if (t == 0 || autoT >= shot || Cam.get().done()) autoShot();
             autoT++;
             return t >= total;
         }        if (cmd.equals("quit")) {
@@ -737,6 +738,32 @@ public class Director {
 
     /** a new shot of the crew at work: the agent that works now (another than the last one when it can), from its side */
     void autoShot() {
+        autoT = 0;
+        // through the one camera (Cam: a body of its own posed every frame, the path checked, speed and turn limited)
+        Cam c = Cam.get();
+        camMode = 0;
+        Agent work = null;
+        if (Crew.instance != null)
+            for (Agent s : Crew.instance.agents)
+                if (s.ticksExisted - s.actAt <= 12 && (work == null || s.skin() != autoLast)) work = s;
+        Cam.Shot s = null;
+        if (work != null && work.actKind == 1) s = c.planChop(autoLast);
+        if (s == null && work != null && work.actKind == 3) s = c.planPlace(autoLast);
+        if (s == null && work != null) s = c.planFollow(work.skin(), autoLen);
+        if (s == null && Crew.instance != null && !Crew.instance.agents.isEmpty())
+            s = c.planFollow(Crew.instance.agents.get(rnd.nextInt(Crew.instance.agents.size())).skin(), autoLen);
+        if (s != null) {
+            if (s.len < autoLen) s.len = autoLen;
+            c.start(s);
+            autoLast = work != null ? work.skin() : autoLast;
+            event("autocam: " + s.name);
+        }
+    }
+
+    int autoLen = 110;
+
+    /** the old camera's way of picking a shot (the player moved as the camera): kept for old scripts, not used by autocam */
+    void autoShotOld() {
         autoT = 0;
         Agent pick = null;
         int best = -1;

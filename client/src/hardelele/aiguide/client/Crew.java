@@ -231,7 +231,7 @@ public class Crew {
                 continue;
             }
             Task t = a.jobs.peek();
-            if (t == null && board.feed(a, w)) t = a.jobs.peek();   // idle: the board gives it something
+            if (t == null && (w.getTotalWorldTime() + a.skin()) % 10 == 0 && board.feed(a, w)) t = a.jobs.peek();   // idle: the board gives it something (asked twice a second, not every tick)
             else if (t != null && w.getTotalWorldTime() % 20 == a.skin() && !a.origins.isEmpty() && a.origins.peek() == Origin.AUTO_DEFAULT
                     && !board.leased.containsKey(a) && board.preempt(a, w)) t = a.jobs.peek();   // a card waits: the default work stops
             if (t == null) {   // nothing to do: it looks at the player when the player is near

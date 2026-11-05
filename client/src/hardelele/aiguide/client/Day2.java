@@ -157,7 +157,7 @@ class Day2 {
             int[] f = Day1.furnace;
             if (f == null) return;
             c.board.post("smelt", () -> new TaskBoard.Seq(new Day1.Take(c, in, n), new Day1.Take(c, fuel, fuelN), new Skills.Smelt(in, -1, n, fuel), c.new Stash(null, 0)))
-                    .wants(in, n).wants(fuel, fuelN).prio(3).at(f[0], f[1], f[2]);
+                    .wants(in, n, 1).wants(fuel, fuelN, 1).prio(3).at(f[0], f[1], f[2]);
         }
     }
 

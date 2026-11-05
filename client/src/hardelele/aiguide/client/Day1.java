@@ -281,7 +281,7 @@ class Day1 {
                 s.add(new GiveRound(c, Items.wooden_pickaxe));
                 s.add(c.new Stash(null, 0));   // the spare sticks go to the chest
                 return new TaskBoard.Seq(s.toArray(new Crew.Task[0]));
-            }).wants(LOG, logs).prio(3).at(t[0], t[1], t[2]);
+            }).wants(LOG, logs, 1).prio(3).at(t[0], t[1], t[2]);
         }
     }
 
@@ -570,14 +570,14 @@ class Day1 {
                 }
                 if (gp) s.add(new Skills.Craft(Items.stone_pickaxe, -1, 1));
                 return new TaskBoard.Seq(s.toArray(new Crew.Task[0]));
-            }).wants(COBBLE, cobble).prio(3).at(f[0], f[1], f[2]);
-            if (sticks > 0) fc.wants(Items.stick, sticks);
-            if (torches > 0) fc.wants(LOG, logs);
+            }).wants(COBBLE, cobble, built ? Math.min(cobble, 3) : 8).prio(3).at(f[0], f[1], f[2]);
+            if (sticks > 0) fc.wants(Items.stick, sticks, 1);
+            if (torches > 0) fc.wants(LOG, logs, 1);
             int without = 0;
             for (Agent a : c.agents) if (Skills.count(a.bag, Items.stone_pickaxe, -1) == 0) without++;
             if (crewStone) for (int k = 0; k < Math.min(without, c.agents.size() - 1); k++)   // a stone pickaxe for each of the others who has none, made by himself
                 c.board.post("stone pickaxe", () -> new TaskBoard.Seq(new Take(c, COBBLE, 3), new Take(c, Items.stick, 2), new Skills.Craft(Items.stone_pickaxe, -1, 1)))
-                        .need(a -> Skills.count(a.bag, Items.stone_pickaxe, -1) == 0).wants(COBBLE, 3).wants(Items.stick, 2).prio(2).at(t[0], t[1], t[2]).optional();
+                        .need(a -> Skills.count(a.bag, Items.stone_pickaxe, -1) == 0).wants(COBBLE, 3, 3).wants(Items.stick, 2, 2).prio(2).at(t[0], t[1], t[2]).optional();
         }
     }
 
@@ -757,7 +757,7 @@ class Day1 {
             final int[] t = c.table, dr = doorAt;
             int logs = logsFor(b) - get(b, "log");
             // the materials made at the table, into the chest; then everyone builds; the door last
-            TaskBoard.Card prep = c.board.post("prepare", () -> new Prepare(c, bill)).wants(LOG, Math.min(logs, wood)).prio(4).at(t[0], t[1], t[2]);
+            TaskBoard.Card prep = c.board.post("prepare", () -> new Prepare(c, bill)).wants(LOG, Math.min(logs, wood), 1).prio(4).at(t[0], t[1], t[2]);
             List<TaskBoard.Card> builds = new ArrayList<TaskBoard.Card>();
             for (int i = 0; i < c.agents.size(); i++) builds.add(c.board.post("build", () -> new Crew.Build(self)).after(prep).prio(3).at(Crew.site[0] + 2, Crew.site[1], Crew.site[2] + 2));
             c.board.post("door", () -> new TaskBoard.Seq(new Take(c, Items.wooden_door, 1), new Skills.PlaceFrom(dr[0], dr[1], dr[2], Items.wooden_door, -1))).after(builds).prio(3).at(dr[0], dr[1], dr[2]);

@@ -36,7 +36,16 @@ public class Recorder {
     volatile boolean running;
     Process ff;
     Thread writer;
-    long frames, sent;
+    long frames, sent, dropped;
+
+    /** the stamps so far on disk (a take cut short still has them) */
+    void flushStamps() {
+        try {
+            java.nio.file.Files.write(new File(path + ".frames.txt").toPath(), stamps.toString().getBytes("UTF-8"));
+        } catch (Exception ex) {
+            // later
+        }
+    }
     String path;
 
     static Recorder instance;
@@ -72,7 +81,12 @@ public class Recorder {
                         queue.put(f);
                         stamps.append(lastStamp).append('\n');
                         frames++;
+                    } else {   // the encoder is behind: this frame is lost; marked, never silent
+                        dropped++;
+                        stamps.append("DROP ").append(lastStamp).append('\n');
+                        if (dropped % 30 == 1) Director.log("recorder: " + dropped + " frames dropped (the encoder is behind)");
                     }
+                    if (frames % 600 == 0) flushStamps();
                     GL15.glUnmapBuffer(GL21.GL_PIXEL_PACK_BUFFER);
                 }
                 lastStamp = System.currentTimeMillis();
@@ -91,7 +105,7 @@ public class Recorder {
         w = mc.displayWidth;
         h = mc.displayHeight;
         size = w * h * 4;
-        for (int i = 0; i < 6; i++) pool.add(new byte[size]);
+        for (int i = 0; i < 24; i++) pool.add(new byte[size]);   // room for the encoder to fall behind a little without a frame lost
         pbo = new int[] { GL15.glGenBuffers(), GL15.glGenBuffers() };
         for (int id : pbo) {
             GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, id);
