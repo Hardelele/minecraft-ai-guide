@@ -404,7 +404,7 @@ class Day1 {
     static class Mine extends Crew.Phase {
         int depth = 8;   // steps down (a second mine goes on deeper: the steps already dug give nothing)
         Mine() { max = 20 * 200; }
-        Mine(int depth) { this(); this.depth = depth; }
+        Mine(int depth) { this(); this.depth = depth; max = 20 * (60 + 18 * depth); }   // the time it may take: by the steps to dig
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             c.planSite(w);
             int[] m = mine != null ? mine : mineSpot(c, w);

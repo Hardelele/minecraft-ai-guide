@@ -212,7 +212,7 @@ class Ground {
             long kc = e[1];
             int[] c = cell.get(kc);
             if (e[0] > dist.get(kc)) continue;
-            double dx = c[0] + 0.5 - tx, dy = c[1] + 1.6 - ty, dz = c[2] + 0.5 - tz;
+            double dx = c[0] + 0.5 - (tx + 0.5), dy = c[1] + 1.6 - (ty + 0.5), dz = c[2] + 0.5 - (tz + 0.5);   // as Flood.near counts it
             if (Math.sqrt(dx * dx + dy * dy + dz * dz) <= near) { found = kc; break; }
             for (int[] d : DIRS)
                 for (int up = -1; up <= 1; up++) {

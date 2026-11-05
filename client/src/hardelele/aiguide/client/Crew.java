@@ -512,12 +512,21 @@ public class Crew {
                         final WorldServer ww = w;
                         dig = Ground.digRoute(w, Ground.feet(w, a.posX, a.posY, a.posZ), MathHelper.floor_double(x), MathHelper.floor_double(y), MathHelper.floor_double(z),
                                 Math.max(1.5, within + 0.5), (bx, by, bz) -> {
+                                    if (Ground.passages.contains(key(bx, by, bz))) return 1;   // a passage opened (or being opened) by the crew: everyone's way
                                     if (mayDigThrough(ag, ww, bx, by, bz)) return 4;
                                     if (instance != null && Ground.mayDig(instance, bx, by, bz, "exit") && Ground.ownWall(instance, bx, by, bz)
-                                            && Skills.breakTicks(ag, ww, bx, by, bz) >= 0) return 12;   // its own wall: dear, the last resort
+                                            && Skills.breakTicks(ag, ww, bx, by, bz) >= 0) return 30;   // its own wall: dear, the last resort (a walk round to a passage is cheaper)
                                     return -1;
                                 }, 24);
                         di = 1;
+                        if (dig != null)   // the openings this way makes in its own wall are the crew's passages from now on (others take them too)
+                            for (int i = 1; i < dig.size(); i++) {
+                                int[] n0 = dig.get(i);
+                                for (int dy = 0; dy <= 2; dy++)
+                                    if (instance != null && !Ground.passable(w, n0[0], n0[1] + dy, n0[2], null) && Ground.ownWall(instance, n0[0], n0[1] + dy, n0[2])
+                                            && Ground.passages.add(key(n0[0], n0[1] + dy, n0[2])))
+                                        Events.log("crew: " + a.getCustomNameTag() + " will open a passage in the house wall at " + n0[0] + " " + (n0[1] + dy) + " " + n0[2] + " (no other way)");
+                            }
                         if (dig == null || digs >= 48) {
                             Events.log("crew: " + a.getCustomNameTag() + " has no way to " + (int) x + " " + (int) y + " " + (int) z + " from " + (int) a.posX + " " + (int) a.posY + " " + (int) a.posZ);
                             return Result.NO_PATH;
@@ -531,11 +540,9 @@ public class Crew {
                             : new int[][] { { n[0], n[1] + 1, n[2] }, { n[0], n[1], n[2] } };
                     for (int[] c : need) {
                         if (Ground.passable(w, c[0], c[1], c[2], null)) continue;
-                        if (!mayDigThrough(a, w, c[0], c[1], c[2])) {   // not natural: its own wall (the route chose it as the only way)
-                            if (wallDigs >= 2 || instance == null || !Ground.ownWall(instance, c[0], c[1], c[2])) { dig = null; state = ROUTE; route = null; return Result.RUNNING; }
-                            wallDigs++;
-                            Ground.passages.add(key(c[0], c[1], c[2]));
-                            Events.log("crew: " + a.getCustomNameTag() + " opens a passage in the house wall at " + c[0] + " " + c[1] + " " + c[2] + " (no other way)");
+                        if (!mayDigThrough(a, w, c[0], c[1], c[2])) {   // not natural: a passage of the crew's in its own wall (planned with the route)
+                            if (!Ground.passages.contains(key(c[0], c[1], c[2])) || instance == null || !Ground.ownWall(instance, c[0], c[1], c[2])) { dig = null; state = ROUTE; route = null; return Result.RUNNING; }
+                            Events.log("crew: " + a.getCustomNameTag() + " opens a passage in the house wall at " + c[0] + " " + c[1] + " " + c[2]);
                         }
                         br = new Break(c[0], c[1], c[2], 0);
                         digs++;
@@ -1063,19 +1070,32 @@ public class Crew {
     /** dig blocks one after another, each from where it is seen and reached */
     static class Mine implements Task {
         final List<int[]> blocks;
-        int i, tries;
+        int i, tries, mined, missed;
         GoTo walk;
         Break br;
+        boolean onTarget;
         Mine(List<int[]> blocks) { this.blocks = blocks; }
         public Result step(Agent a, WorldServer w) {
-            if (i >= blocks.size()) return Result.OK;
+            if (i >= blocks.size()) return mined > 0 || missed == 0 ? Result.OK : Result.BLOCKED;   // nothing got at: not a success
             int[] b = blocks.get(i);
-            if (br != null) { if (br.step(a, w) != Result.RUNNING) { br = null; } return Result.RUNNING; }
+            if (br != null) {
+                Result r = br.step(a, w);
+                if (r == Result.RUNNING) return r;
+                br = null;
+                if (onTarget && r == Result.OK) mined++;
+                if (r == Result.NO_TOOL && onTarget) return Result.NO_TOOL;
+                Ground.changed();
+                Skills.lightUp(a, w);
+                return Result.RUNNING;
+            }
             if (soft(w, b[0], b[1], b[2]) || w.getBlock(b[0], b[1], b[2]).getMaterial().isLiquid()) { i++; tries = 0; walk = null; return Result.RUNNING; }   // gone already
-            boolean seen = eyeDist(a, b[0], b[1], b[2]) <= REACH && blocker(a, w, b[0], b[1], b[2]) == null;
-            if (seen) { br = new Break(b[0], b[1], b[2], 0.75); return Result.RUNNING; }
+            int[] in = blocker(a, w, b[0], b[1], b[2]);
+            if (eyeDist(a, b[0], b[1], b[2]) <= REACH) {
+                if (in == null) { br = new Break(b[0], b[1], b[2], 0.75); onTarget = true; return Result.RUNNING; }
+                if (GoTo.mayDigThrough(a, w, in[0], in[1], in[2])) { br = new Break(in[0], in[1], in[2], 0); onTarget = false; return Result.RUNNING; }   // rock in the way: through it
+            }
             if (walk == null) {
-                if (++tries > 3) { i++; tries = 0; return Result.RUNNING; }
+                if (++tries > 3) { i++; tries = 0; missed++; return Result.RUNNING; }   // could not get at it
                 walk = b.length > 5 && tries == 1 ? new GoTo(b[3] + 0.5, b[4], b[5] + 0.5, 0.7)
                         : new GoTo(b[0] + 0.5, b[1] + 1, b[2] + 0.5 + (tries == 3 ? 1.5 : 0), 1.8);
             }

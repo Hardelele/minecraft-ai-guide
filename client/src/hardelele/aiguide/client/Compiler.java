@@ -211,6 +211,7 @@ class Compiler {
         // what is made (iron things and the like): their raw things from the ground, smelted, made at the table
         List<ItemStack> make = new ArrayList<ItemStack>(g.make);
         if (ironTools) make.add(new ItemStack(Items.iron_pickaxe, n));
+        if (g.light && torches == 0) make.add(new ItemStack(Day1.TORCH, 16));   // lighting the base and the mine takes torches
         for (ItemStack it : g.gift)   // a gift the day-one phases do not make is made here
             if (it.getItem() != Items.stone_pickaxe && it.getItem() != Day1.TORCH && it.getItem() != Items.wooden_pickaxe) {
                 boolean listed = false;
@@ -226,7 +227,9 @@ class Compiler {
                 if (need > 0) unfold(it.getItem(), need, raw2, st2, 0);
             }
             int ore = (raw2.containsKey(Day2.IRON_ORE) ? raw2.get(Day2.IRON_ORE) : 0) - Day1.Base.have(c, w, Day2.IRON_ORE) - Day1.Base.have(c, w, Items.iron_ingot);
-            int coal = ore > 0 ? Math.max(0, (ore + 7) / 8 - Day1.Base.have(c, w, Items.coal)) : 0;
+            int coalForMade = 0;   // coal in what is made (a torch: a quarter of one), from coal ore when there is some
+            for (ItemStack it : make) if (it.getItem() == Day1.TORCH) coalForMade += (Math.max(0, it.stackSize - Day1.Base.have(c, w, Day1.TORCH)) + 3) / 4;
+            int coal = Math.max(0, (ore > 0 ? (ore + 7) / 8 : 0) + coalForMade - Day1.Base.have(c, w, Items.coal));
             boolean anyPick = false, ironPick = false;   // who can mine it: pickaxes first if nobody can
             for (Agent a : c.agents) { if (Day1.hasPickaxe(a)) anyPick = true; if (Day2.pickaxeFor(a, Blocks.iron_ore)) ironPick = true; }
             if (!anyPick && (coal > 0 || ore > 0) && !has(ph, "tools")) ph.add(named(new Day1.Tools(), "tools"));
