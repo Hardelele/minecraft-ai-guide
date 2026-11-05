@@ -38,7 +38,7 @@ class TaskBoard {
         double[] at;          // where the work is (for distance)
         Need need;
         final Map<Item, Integer> wants = new LinkedHashMap<Item, Integer>();   // chest quantities it counts on
-        int lease = 20 * 240, tries, maxTries = 2;
+        int lease = 20 * 240, tries;
         boolean optional;     // nice to have: its failure does not fail the phase
         Card optional() { optional = true; return this; }
         State state = State.OPEN;
@@ -59,7 +59,10 @@ class TaskBoard {
         List<ItemStack> needs;   // the things the 'need' asks the agent to hold (for the shortfall when nobody has them)
         Card needs(List<ItemStack> l) { needs = l; return this; }
         Card wants(Item i, int n) { wants.put(i, n); return this; }
-        Card lease(int ticks) { lease = ticks; return this; }
+        boolean leaseSet;
+        Card lease(int ticks) { lease = ticks; leaseSet = true; return this; }
+        /** the card's own work, its lease from the one estimate (Budget); without it the card has its phase's time */
+        Card work(double walk, int dig, int place, int craft, int smelt, int waitTicks) { return lease(Budget.ticks(walk, dig, place, craft, smelt, waitTicks)); }
         boolean open() { return state == State.OPEN || state == State.LEASED; }
         public String toString() { return "#" + id + " " + kind; }
     }
@@ -71,7 +74,7 @@ class TaskBoard {
     final Map<Card, Map<Item, Integer>> held = new HashMap<Card, Map<Item, Integer>>();   // chest quantities held by a card
     final Map<String, List<Agent>> stations = new HashMap<String, List<Agent>>();
     final Map<Item, Integer> goals = new LinkedHashMap<Item, Integer>();
-    final Map<Agent, Long> rest = new HashMap<Agent, Long>();
+    final Retry retry = new Retry();   // the crew's one retry policy: cards, an agent's default work, its way home
     int next = 1;
     long now;
 
@@ -112,7 +115,7 @@ class TaskBoard {
 
     /** can this agent take the card at all */
     boolean fits(Card k, Agent a, WorldServer w) {
-        if (k.state != State.OPEN || !ready(k)) return false;
+        if (k.state != State.OPEN || !ready(k) || !retry.allowed(k, now)) return false;
         if (k.only != null && k.only != a) return false;
         if (k.sameAs != null && k.sameAs.doneBy != null && k.sameAs.doneBy != a) return false;
         if (k.sameAs != null && k.sameAs.doneBy == null && k.sameAs.state != State.FAILED) return false;
@@ -150,12 +153,11 @@ class TaskBoard {
             return true;
         }
         here = Ground.flood(w, Ground.feet(w, a.posX, a.posY, a.posZ), 48, null);   // where it can walk from where it is
-        Long r = rest.get(a);
         if (c.base != null) {
             int[] b = Ground.anchor(c, w);
             if (!here.has(b[0], b[1], b[2]) && here.near(b[0], b[1], b[2], 3) == null) {   // cut off from the base: back first (the stuck machine digs a way)
-                if (r == null || r <= now) {
-                    rest.put(a, now + 20 * 20);   // not again at once if it does not get there
+                if (retry.allowed("home " + a.getEntityId(), now)) {
+                    retry.postpone("home " + a.getEntityId(), now, 20 * 20);   // not again at once if it does not get there
                     Crew.job(a, new Crew.GoTo(b[0] + 0.5, b[1], b[2] + 0.5, 1.5), Origin.AUTO_DEFAULT);
                     return true;
                 }
@@ -163,14 +165,15 @@ class TaskBoard {
         }
         Card k = best(a, w);
         if (k != null) { take(k, a, w); return true; }
-        final Crew.Task d = r != null && r > now || c.current == null ? null : deficit(a, w);
+        final Crew.Task d = !retry.allowed("default " + a.getEntityId(), now) || c.current == null ? null : deficit(a, w);
         if (d != null) {
             Crew.job(a, new Crew.Task() {
                 public Result step(Agent ag, WorldServer ww) {
                     Result x = d.step(ag, ww);
                     if (x.done()) {
                         releaseBlocks(ag);
-                        if (x.failed()) rest.put(ag, now + 20 * 10);   // nothing came of it: not again at once
+                        if (x.failed()) retry.failed("default " + ag.getEntityId(), now);   // nothing came of it: the retry policy says when again
+                        else retry.ok("default " + ag.getEntityId());
                     }
                     return x;
                 }
@@ -194,6 +197,7 @@ class TaskBoard {
     }
 
     void take(final Card k, final Agent a, WorldServer w) {
+        if (!k.leaseSet && k.phase != null) k.lease = k.phase.max;   // no estimate of its own: the time of its phase
         k.state = State.LEASED;
         k.holder = a;
         k.since = now;
@@ -219,7 +223,8 @@ class TaskBoard {
         k.last = r;
         if (r == Result.OK) { k.state = State.DONE; k.doneBy = a; return; }
         k.tries++;
-        k.state = k.tries >= k.maxTries || k.only != null && r == Result.NO_TOOL ? State.FAILED : State.OPEN;
+        boolean last = retry.failed(k, now);   // backed off before anyone takes it again; given up after the policy's tries
+        k.state = last || k.only != null && r == Result.NO_TOOL ? State.FAILED : State.OPEN;
         Events.log("board: " + k + " by " + a.getCustomNameTag() + " -> " + r + (k.state == State.OPEN ? ", back on the board" : ", given up"));
     }
 
@@ -246,7 +251,7 @@ class TaskBoard {
                     continue;
                 }
             }
-            if (k.state == State.OPEN && ready(k) && now % 20 == 0) {   // nobody can take it (no tool, no items, no one pinned): given up after a while
+            if (k.state == State.OPEN && ready(k) && retry.allowed(k, now) && now % 20 == 0) {   // nobody can take it (no tool, no items, no one pinned): given up after a while
                 boolean someone = false;
                 Ground.Flood keep = here;
                 here = null;   // (where each one could walk is checked when it takes a card, not here)
@@ -278,7 +283,7 @@ class TaskBoard {
                 k.tries++;
                 k.last = Result.TIMEOUT;
                 Ledger.result(Result.TIMEOUT); if (k.phase != null) k.phase.tally(Result.TIMEOUT);
-                k.state = k.tries >= k.maxTries ? State.FAILED : State.OPEN;
+                k.state = retry.failed(k, now) ? State.FAILED : State.OPEN;
                 Events.log("board: " + k + " lease out" + (a == null ? "" : " (" + a.getCustomNameTag() + ")") + (k.state == State.OPEN ? ", back on the board" : ", given up"));
             }
         }
@@ -362,7 +367,7 @@ class TaskBoard {
     }
 
     boolean chestThere(WorldServer w) {
-        return c.chest != null && w.getBlock(c.chest[0], c.chest[1], c.chest[2]) == Blocks.chest;
+        return Roles.is(w, c.chest, Roles.Role.CHEST);
     }
 
     static int stackables(Agent a) {

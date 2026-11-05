@@ -139,6 +139,24 @@ class Skills {
 
     static final int[][] SIDE = { { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { -1, 0, 0 }, { 1, 0, 0 } };
 
+    /**
+     * What a block put at x y z would be put against: the faces of firm neighbours to click (the block below first,
+     * then the sides, then above); a door only on the floor under it. The one rule for every placement decision: the
+     * placing itself and the choosing of what can be put next.
+     */
+    static List<int[]> supports(WorldServer w, int x, int y, int z, boolean door) {
+        List<int[]> clicks = new ArrayList<int[]>();
+        if (door) {
+            if (Crew.solid(w, x, y - 1, z)) clicks.add(new int[] { x, y - 1, z, 1 });
+            return clicks;
+        }
+        for (int i : new int[] { 0, 2, 3, 4, 5, 1 }) {
+            int nx = x + SIDE[i][0], ny = y + SIDE[i][1], nz = z + SIDE[i][2];
+            if (Crew.solid(w, nx, ny, nz)) clicks.add(new int[] { nx, ny, nz, i ^ 1 });   // the neighbour's side that looks at the place
+        }
+        return clicks;
+    }
+
     /** how light it is where the agent stands (blocks' light and the sky's, as the game counts it) */
     static int light(Agent a, WorldServer w) {
         int x = MathHelper.floor_double(a.posX), y = MathHelper.floor_double(a.posY + 0.5), z = MathHelper.floor_double(a.posZ);
@@ -155,9 +173,7 @@ class Skills {
         int[][] spots = { { x + 1, y + 1, z }, { x - 1, y + 1, z }, { x, y + 1, z + 1 }, { x, y + 1, z - 1 }, { x, y, z } };
         for (int[] s : spots) {
             if (!Crew.soft(w, s[0], s[1], s[2]) || s[0] == x && s[1] == y + 1 && s[2] == z) continue;
-            boolean onWall = false;
-            for (int[] d : SIDE) if (d[1] == 0 && Crew.solid(w, s[0] + d[0], s[1], s[2] + d[2])) onWall = true;
-            if (!onWall && !Crew.solid(w, s[0], s[1] - 1, s[2])) continue;
+            if (supports(w, s[0], s[1], s[2], false).isEmpty()) continue;   // the placing's own rule
             if (placeFromBag(a, w, s[0], s[1], s[2], Day1.TORCH, -1) == Result.OK) {
                 Events.log("crew: " + a.getCustomNameTag() + " puts up a torch at " + s[0] + " " + s[1] + " " + s[2] + " (dark)");
                 return true;
@@ -204,14 +220,7 @@ class Skills {
         FakePlayer p = hands(a, w);
         // where to click: a door on the floor under it (its own use puts both halves), anything else on a solid
         // neighbour's face: the block below first, then the sides, then above
-        List<int[]> clicks = new ArrayList<int[]>();
-        if (item instanceof net.minecraft.item.ItemDoor) {
-            if (Crew.solid(w, x, y - 1, z)) clicks.add(new int[] { x, y - 1, z, 1 });
-        } else
-            for (int i : new int[] { 0, 2, 3, 4, 5, 1 }) {
-                int nx = x + SIDE[i][0], ny = y + SIDE[i][1], nz = z + SIDE[i][2];
-                if (Crew.solid(w, nx, ny, nz)) clicks.add(new int[] { nx, ny, nz, i ^ 1 });   // the neighbour's side that looks at the place
-            }
+        List<int[]> clicks = supports(w, x, y, z, item instanceof net.minecraft.item.ItemDoor);
         for (int[] c : clicks) {
             ItemStack one = in.copy();
             one.stackSize = 1;
@@ -359,8 +368,8 @@ class Skills {
         return res;
     }
 
-    static boolean nearBlock(Agent a, WorldServer w, int[] at, Block b, double r) {
-        return at != null && w.getBlock(at[0], at[1], at[2]) == b && Crew.dist(a, at[0] + 0.5, at[1], at[2] + 0.5) <= r;
+    static boolean nearRole(Agent a, WorldServer w, int[] at, Roles.Role role, double r) {
+        return Roles.is(w, at, role) && Crew.dist(a, at[0] + 0.5, at[1], at[2] + 0.5) <= r;
     }
 
     // ---- tasks --------------------------------------------------------------------------------------------
@@ -380,14 +389,14 @@ class Skills {
             if (l == null) return made >= n ? Result.OK : made > 0 ? Result.OK : Result.NO_ITEMS;
             int[] t = Crew.instance == null ? null : Crew.instance.table;
             if (!l.small()) {   // the 3x3 grid: at the table
-                if (t == null || w.getBlock(t[0], t[1], t[2]) != Blocks.crafting_table) return Result.NO_ITEMS;   // a station is missing
-                if (!nearBlock(a, w, t, Blocks.crafting_table, 2.8)) {   // a table is everyone's at once: each stands at its own side
+                if (!Roles.is(w, t, Roles.Role.TABLE)) return Result.NO_ITEMS;   // a station is missing
+                if (!nearRole(a, w, t, Roles.Role.TABLE, 2.8)) {   // a table is everyone's at once: each stands at its own side
                     double ang = Math.toRadians(a.skin() * 72 + 20);
                     if (walk == null) walk = new Crew.GoTo(t[0] + 0.5 + Math.sin(ang) * 1.6, t[1], t[2] + 0.5 + Math.cos(ang) * 1.6, 0.6);
                     Result r = walk.step(a, w);
                     if (r == Result.RUNNING) return r;
                     walk = null;
-                    if (r != Result.OK && !nearBlock(a, w, t, Blocks.crafting_table, 3.2)) return r;
+                    if (r != Result.OK && !nearRole(a, w, t, Roles.Role.TABLE, 3.2)) return r;
                 }
                 Crew.face(a, t[0] + 0.5, t[1] + 0.9, t[2] + 0.5);
                 a.act(t[0], t[1], t[2], 2);

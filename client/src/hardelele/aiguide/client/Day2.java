@@ -84,6 +84,12 @@ class Day2 {
         return out;
     }
 
+    /** how far a cluster is from the base (the way there is at least that long) */
+    static double far(Crew c, WorldServer w, List<int[]> cl) {
+        int[] b = Ground.anchor(c, w), o = cl.get(0);
+        return Math.abs(o[0] - b[0]) + Math.abs(o[1] - b[1]) + Math.abs(o[2] - b[2]);
+    }
+
     static boolean pickaxeFor(Agent a, Block ore) {
         for (ItemStack s : a.bag) if (s.getItem() instanceof net.minecraft.item.ItemPickaxe && s.canItemHarvestBlock(ore)) return true;
         return false;
@@ -97,13 +103,17 @@ class Day2 {
     static class OreRun extends Crew.Phase {
         final Block ore;
         final int n, level;
-        OreRun(Block ore, int n) { this.ore = ore; this.n = n; this.level = ore == Blocks.iron_ore ? 1 : 0; max = 20 * 600; }
+        OreRun(Block ore, int n) { this.ore = ore; this.n = n; this.level = ore == Blocks.iron_ore ? 1 : 0; }
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             c.planSite(w);
             List<List<int[]>> all = clusters(c, w, ore, 40);
             int there = 0;
             for (List<int[]> cl : all) there += cl.size();
             Events.log("crew: " + all.size() + " clusters of " + Ledger.name(new ItemStack(ore)) + " around (" + there + " blocks), " + n + " wanted");
+            double walk = 0;
+            int dig = 0, got = 0;
+            for (List<int[]> cl : all) { if (got >= n) break; got += cl.size(); walk += far(c, w, cl) * 2; dig += (int) far(c, w, cl) * 2 + cl.size(); }
+            budget(walk, dig, 0, 0, 0, 0);   // there and back for every cluster, dug at worst
             if (all.isEmpty()) return;   // none: the cards cannot be posted; the compiler is told by the failure below
             final Set<Long> taken = new HashSet<Long>();
             int planned = 0;
@@ -129,7 +139,8 @@ class Day2 {
                         }
                         return t.step(a, ww);
                     }
-                }).need(a -> pickaxeFor(a, ore)).needs(java.util.Arrays.asList(new ItemStack(level >= 1 ? Items.stone_pickaxe : Items.wooden_pickaxe))).prio(3);
+                }).need(a -> pickaxeFor(a, ore)).needs(java.util.Arrays.asList(new ItemStack(level >= 1 ? Items.stone_pickaxe : Items.wooden_pickaxe))).prio(3)
+                        .work(far(c, w, cl), (int) far(c, w, cl) * 2 + cl.size(), 0, 0, 0, 0);   // the way there (dug at worst) and the blocks to mine
             }
         }
     }
@@ -138,9 +149,10 @@ class Day2 {
     static class SmeltOre extends Crew.Phase {
         final Item in;
         final int n;
-        SmeltOre(Item in, int n) { this.in = in; this.n = n; max = 20 * (60 + 11 * n); }
+        SmeltOre(Item in, int n) { this.in = in; this.n = n; }
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             final Item fuel = Day2.fuel(c, w, n);
+            budget(30, 0, 0, 0, n, 0);
             final int fuelN = fuelFor(fuel, n);
             int[] f = Day1.furnace;
             if (f == null) return;
@@ -164,9 +176,12 @@ class Day2 {
     /** make things at the table from the chest: each item's parts taken, then crafted (one card a kind) */
     static class Make extends Crew.Phase {
         final List<ItemStack> items;
-        Make(List<ItemStack> items) { this.items = items; max = 20 * 180; }
+        Make(List<ItemStack> items) { this.items = items; }
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             int[] t = c.table;
+            int allCrafts = 0;
+            for (ItemStack it : items) allCrafts += it.stackSize;
+            budget(30, 0, 0, allCrafts, 0, 0);
             for (final ItemStack it : items) {
                 c.board.post("make", () -> {
                     List<Crew.Task> s = new ArrayList<Crew.Task>();
@@ -192,7 +207,7 @@ class Day2 {
      */
     static class Shelter extends Crew.Phase {
         final int wait;
-        Shelter(int waitTicks) { this.wait = waitTicks; max = 20 * 180 + waitTicks; }
+        Shelter(int waitTicks) { this.wait = waitTicks; }
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             Day1.Base b = Day1.lastBase;
             int[] s = Crew.site;
@@ -203,6 +218,7 @@ class Day2 {
                 for (int z = z0 + 1; z <= z0 + 2 * half - 1; z++)
                     if (Ground.stand(w, x, y0, z, null)) spots.add(new int[] { x, y0, z });
             Events.log("crew: " + spots.size() + " free spots inside the house");
+            budget(60, 4, 0, 0, 0, wait);   // the way in (a wall opened at worst), the wait
             final double[] look = b.doorAt == null ? new double[] { s[0] + 2.5, y0 + 1.5, s[2] + 2.5 } : new double[] { b.doorAt[0] + 0.5, b.doorAt[1] + 1.5, b.doorAt[2] + 0.5 };
             int k = 0;
             for (Agent a : c.agents) {
@@ -210,7 +226,7 @@ class Day2 {
                 final int[] sp = spots.get((k * 3) % spots.size());
                 k++;
                 c.board.post("inside", () -> new TaskBoard.Seq(new Crew.GoTo(sp[0] + 0.5, sp[1], sp[2] + 0.5, 0.7), new Crew.Look(look[0], look[1], look[2], wait)))
-                        .pin(a).prio(3).at(sp[0], sp[1], sp[2]).lease(20 * 180 + wait);
+                        .pin(a).prio(3).at(sp[0], sp[1], sp[2]).work(40, 0, 0, 0, 0, wait);
             }
         }
     }
@@ -220,7 +236,7 @@ class Day2 {
      * less than 7 light (the sky does not count: it is the night's light) gets a torch, from the torches the crew has.
      */
     static class Light extends Crew.Phase {
-        Light() { max = 20 * 240; }
+        Light() { }
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             List<int[]> dark = new ArrayList<int[]>();
             int[] s = Crew.site;
@@ -237,6 +253,7 @@ class Day2 {
                     if (w.getSavedLightValue(EnumSkyBlock.Block, x, y, z) < 7) dark.add(new int[] { x, y, z });
                 }
             Events.log("crew: " + dark.size() + " dark spots at the base and in the mine");
+            budget(dark.size() * 8, 0, dark.size(), 0, 0, 0);
             for (final int[] d : dark)
                 c.board.post("light", () -> new TaskBoard.Seq(new Crew.GoTo(d[0] + 0.5, d[1], d[2] + 0.5, 1.2), new Skills.PlaceFrom(d[0], d[1], d[2], Day1.TORCH, -1)))
                         .need(a -> Skills.count(a.bag, Day1.TORCH, -1) > 0).prio(2).at(d[0], d[1], d[2]).optional();

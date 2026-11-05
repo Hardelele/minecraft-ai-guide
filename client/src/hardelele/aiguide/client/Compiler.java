@@ -319,9 +319,9 @@ class Compiler {
         List<Crew.Phase> mend = new ArrayList<Crew.Phase>();
         List<String> cannot = new ArrayList<String>();
         for (Map.Entry<Item, Integer> e : lack.entrySet()) topUp(c, w, e.getKey(), e.getValue(), mend, cannot, 0);
-        if ((!mend.isEmpty() || way) && cannot.isEmpty() && replans < 4 && (repeats.containsKey(ph.kind) ? repeats.get(ph.kind) : 0) < 2) {
+        if ((!mend.isEmpty() || way) && cannot.isEmpty() && replans < 4 && !phaseRetry.givenUp(ph.kind)) {
             replans++;
-            repeats.put(ph.kind, (repeats.containsKey(ph.kind) ? repeats.get(ph.kind) : 0) + 1);
+            phaseRetry.failed(ph.kind, 0);   // the one retry policy: a phase goes again at most its tries
             Crew.Phase again = again(ph);
             if (again != null) mend.add(named(again, ph.kind));
             for (int i = mend.size() - 1; i >= 0; i--) {   // before what was planned next
@@ -390,7 +390,7 @@ class Compiler {
 
     static final java.util.Set<String> succeeded = new java.util.HashSet<String>();
     static boolean quarryFailed;
-    static final Map<String, Integer> repeats = new java.util.HashMap<String, Integer>();
+    static final Retry phaseRetry = new Retry();
 
     /** a fresh phase like this one (same parameters) */
     static Crew.Phase again(Crew.Phase ph) {

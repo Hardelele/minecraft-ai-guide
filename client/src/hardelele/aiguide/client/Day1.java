@@ -218,7 +218,7 @@ class Day1 {
         public Result step(Agent a, WorldServer w) {
             if (steps.isEmpty()) {
                 int[] t = c.table, k = c.chest;
-                boolean table = w.getBlock(t[0], t[1], t[2]) == Blocks.crafting_table, chest = w.getBlock(k[0], k[1], k[2]) == Blocks.chest;
+                boolean table = Roles.is(w, t, Roles.Role.TABLE), chest = Roles.is(w, k, Roles.Role.CHEST);
                 if (table && chest) return Result.OK;
                 if (logs(a.bag) < 3) return Result.NO_ITEMS;
                 say(a, "Ставлю лагерь: верстак и сундук");
@@ -238,11 +238,12 @@ class Day1 {
     static class WoodChain extends Crew.Phase {
         final int target;
         WoodChain(int perAgent) { this(perAgent, Base.woodNeeded()); }
-        WoodChain(int perAgent, int target) { this.target = target; max = 20 * 300; }
+        WoodChain(int perAgent, int target) { this.target = target; }
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             if (c.base == null) c.base = new int[] { (int) Math.floor(p.posX), (int) Math.floor(p.boundingBox.minY), (int) Math.floor(p.posZ) };
             c.planSite(w);
             c.board.goals.put(LOG, target);
+            budget(target * 3, target * 3, 2, 8, 0, 0);   // logs and the leaves round them, the camp
             int n = c.agents.size();
             boolean carry = n >= 3;
             int[] t = c.table;
@@ -259,7 +260,7 @@ class Day1 {
 
     /** the crafter takes logs, makes planks and sticks, a wooden pickaxe for each and sticks to spare, hands them round */
     static class Tools extends Crew.Phase {
-        Tools() { max = 20 * 150; }
+        Tools() { }
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             c.planSite(w);
             if (c.agents.isEmpty()) return;
@@ -269,6 +270,7 @@ class Day1 {
             final int n = without;
             // a pickaxe is 3 planks and 2 sticks; 2 planks make 4 sticks; to spare: the stone pickaxes' (n + the player's) and 4 for torches
             final int sticks = 2 * n + 2 * (n + 1) + 4, planks = 3 * n + (sticks + 3) / 4 * 2, logs = (planks + 3) / 4;
+            budget(40 + 20 * n, 0, 0, logs + (sticks + 3) / 4 + n, 0, 0);   // to the chest and the table, the crafts, the hand-overs
             int[] t = c.table;
             c.board.post("pickaxes", () -> {
                 List<Crew.Task> s = new ArrayList<Crew.Task>();
@@ -403,14 +405,15 @@ class Day1 {
 
     static class Mine extends Crew.Phase {
         int depth = 8;   // steps down (a second mine goes on deeper: the steps already dug give nothing)
-        Mine() { max = 20 * 200; }
-        Mine(int depth) { this(); this.depth = depth; max = 20 * (60 + 18 * depth); }   // the time it may take: by the steps to dig
+        Mine() { }
+        Mine(int depth) { this(); this.depth = depth; }
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
             c.planSite(w);
             int[] m = mine != null ? mine : mineSpot(c, w);
             if (m == null) { Events.log("crew: no place for a mine"); return; }
             mine = m;
             mineDepth = Math.max(mineDepth, depth);
+            budget(20 + depth * 2, depth * 6, depth, 0, 0, 0);   // two lanes of three a step, a floor block now and then
             Ground.markMineWay(c, w);   // the floor of the way there is kept from now on
             Events.log("crew: mine at " + m[0] + " " + m[1] + " " + m[2] + " going " + m[3] + " " + m[4]);
             for (int k = 0; k < 2; k++) {   // two lanes abreast, for whoever has a pickaxe
@@ -444,8 +447,9 @@ class Day1 {
     /** stone from rock open to the air: a card for every few blocks, for whoever has a pickaxe */
     static class Quarry extends Crew.Phase {
         final int n;
-        Quarry(int n) { this.n = n; max = 20 * 180; }
+        Quarry(int n) { this.n = n; }
         void start(final Crew c, WorldServer w, EntityPlayerMP p) {
+            budget(n * 3, n * 2, 0, 0, 0, 0);
             for (int left = n; left > 0; left -= 6) {
                 final int k = Math.min(6, left);
                 c.board.post("quarry", () -> new Crew.Task() {   // the blocks are picked when an agent takes it (near it, a way back left)
@@ -485,7 +489,7 @@ class Day1 {
             }
             Crew.face(a, c.chest[0] + 0.5, c.chest[1] + 0.5, c.chest[2] + 0.5);
             ticks++;
-            if (ticks == 3) w.addBlockEvent(c.chest[0], c.chest[1], c.chest[2], Blocks.chest, 1, 1);
+            if (ticks == 3) w.addBlockEvent(c.chest[0], c.chest[1], c.chest[2], w.getBlock(c.chest[0], c.chest[1], c.chest[2]), 1, 1);
             if (ticks == 9) {
                 IInventory inv = c.chestInv(w);
                 int may = Math.min(n, c.board.chestFree(w, item, a));   // not what another card counts on
@@ -498,7 +502,7 @@ class Day1 {
                 if (got > 0) Ledger.act(a, "take from chest");
                 a.swingItem();
             }
-            if (ticks == 16) w.addBlockEvent(c.chest[0], c.chest[1], c.chest[2], Blocks.chest, 1, 0);
+            if (ticks == 16) w.addBlockEvent(c.chest[0], c.chest[1], c.chest[2], w.getBlock(c.chest[0], c.chest[1], c.chest[2]), 1, 0);
             return ticks >= 18 ? (got > 0 ? Result.OK : Result.NO_ITEMS) : Result.RUNNING;
         }
         static int takeAny(IInventory inv, Agent a, Item item, int n) {
@@ -518,6 +522,11 @@ class Day1 {
 
     static int[] furnace;
 
+    /** a furnace stands there (burning or cold) */
+    static boolean isFurnace(WorldServer w, int[] f) {
+        return Roles.is(w, f, Roles.Role.FURNACE);
+    }
+
     /**
      * The smith: cobblestone from the chest, a furnace made at the table and put down, logs in it with planks for fuel,
      * charcoal out, torches of charcoal and sticks; a stone pickaxe for the player. The others: a stone pickaxe each.
@@ -525,7 +534,7 @@ class Day1 {
     static class Upgrade extends Crew.Phase {
         int torches = 16;
         boolean crewStone = true, giftPickaxe = true;
-        Upgrade() { max = 20 * 180; }
+        Upgrade() { }
         Upgrade(int torches, boolean crewStone, boolean giftPickaxe) { this(); this.torches = torches; this.crewStone = crewStone; this.giftPickaxe = giftPickaxe; }
         void start(final Crew c, final WorldServer w, EntityPlayerMP p) {
             c.planSite(w);
@@ -539,16 +548,17 @@ class Day1 {
             }
             final int[] f = furnace;
             // the smith's card: the furnace, charcoal, torches and the player's pickaxe
-            final boolean built = w.getBlock(furnace[0], furnace[1], furnace[2]) == Blocks.furnace;   // a furnace from before: no cobblestone for it
+            final boolean built = isFurnace(w, furnace);   // a furnace from before: no cobblestone for it
             final int smelt = (torches + 3) / 4, fuelPlanks = Math.max(4, (smelt * 2 + 2) / 3 + 3) / 4 * 4, cobble = (built ? 0 : 8) + (giftPickaxe ? 3 : 0),
                     sticks = smelt + (giftPickaxe ? 2 : 0), logs = smelt + fuelPlanks / 4;
             final int torchN = torches;
+            budget(60, 0, 1, 1 + fuelPlanks / 4 + (torches + 3) / 4 + c.agents.size(), smelt, 0);
             final boolean gp = giftPickaxe;
             TaskBoard.Card fc = c.board.post("furnace", () -> {
                 List<Crew.Task> s = new ArrayList<Crew.Task>();
                 s.add(new Take(c, COBBLE, cobble));
                 if (sticks > 0) s.add(new Take(c, Items.stick, sticks));
-                if (w.getBlock(f[0], f[1], f[2]) != Blocks.furnace) {
+                if (!isFurnace(w, f)) {
                     s.add(new Skills.Craft(FURNACE, -1, 1));
                     s.add(new Skills.PlaceFrom(f[0], f[1], f[2], FURNACE, -1));
                 }
@@ -579,6 +589,7 @@ class Day1 {
         void start(Crew c, final WorldServer w, final EntityPlayerMP p) {
             if (c.agents.isEmpty()) return;
             final double px = p.posX, py = p.posY, pz = p.posZ;
+            budget(80, 0, 0, 0, 0, 0);   // to the chest, to the player
             // whoever made the torches (and so the player's pickaxe) brings them; the others turn to look
             final List<ItemStack> give = items;
             final TaskBoard.Card gift = c.board.post("gift", () -> {
@@ -587,7 +598,7 @@ class Day1 {
                 return new TaskBoard.Seq(s);   // each Give fetches from the chest what the bag lacks; a shortfall fails the card with what was short
             }).prio(4);
             for (Agent g : c.agents)
-                c.board.post("watch", () -> new Crew.Look(px, py + 1.5, pz, 50)).need(a -> gift.state != TaskBoard.State.OPEN).pin(g).prio(1).lease(20 * 30);
+                c.board.post("watch", () -> new Crew.Look(px, py + 1.5, pz, 50)).need(a -> gift.state != TaskBoard.State.OPEN).pin(g).prio(1).work(0, 0, 0, 0, 0, 50);
         }
     }
 
@@ -620,7 +631,7 @@ class Day1 {
     static class Base extends Crew.House {
         int[] doorAt;
         int maxSize = 2;   // the biggest asked for (the wood may make it smaller)
-        Base() { max = 20 * 360; }
+        Base() { }
         Base(int maxSize) { this(); this.maxSize = maxSize; }
 
         static int woodNeeded() {
@@ -681,7 +692,7 @@ class Day1 {
         Map<String, Integer> toMake(Crew c, WorldServer w) {
             List<int[]> left = new ArrayList<int[]>();
             for (int[] b : plan) if (Crew.soft(w, b[0], b[1], b[2]) && !Ground.passages.contains(Crew.key(b[0], b[1], b[2]))) left.add(b);
-            boolean door = doorAt == null || w.getBlock(doorAt[0], doorAt[1], doorAt[2]) != Blocks.wooden_door;
+            boolean door = doorAt == null || !Roles.is(w, doorAt, Roles.Role.DOOR);
             Map<String, Integer> m = bill(left, door);
             less(m, "planks", have(c, w, PLANKS));
             less(m, "fence", have(c, w, FENCE));
@@ -737,7 +748,7 @@ class Day1 {
                 if (size == 0) lay(c, w, 0, stone);
             }
             this.size = size;
-            max = 20 * (90 + 2 * plan.size());   // the time it may take: by the work there is
+            budget(plan.size(), 0, plan.size(), plan.size() / 4, 0, 0);   // every block walked to and put, the planks and fences made
             Map<String, Integer> b = toMake(c, w);
             Events.log("crew: base of size " + size + ", " + plan.size() + " blocks, bill " + b + ", wood " + wood + " logs (needs " + logsFor(b) + "), torches " + torches);
             show(c, w);
@@ -748,7 +759,7 @@ class Day1 {
             // the materials made at the table, into the chest; then everyone builds; the door last
             TaskBoard.Card prep = c.board.post("prepare", () -> new Prepare(c, bill)).wants(LOG, Math.min(logs, wood)).prio(4).at(t[0], t[1], t[2]);
             List<TaskBoard.Card> builds = new ArrayList<TaskBoard.Card>();
-            for (int i = 0; i < c.agents.size(); i++) builds.add(c.board.post("build", () -> new Crew.Build(self)).after(prep).prio(3).at(Crew.site[0] + 2, Crew.site[1], Crew.site[2] + 2).lease(20 * 300));
+            for (int i = 0; i < c.agents.size(); i++) builds.add(c.board.post("build", () -> new Crew.Build(self)).after(prep).prio(3).at(Crew.site[0] + 2, Crew.site[1], Crew.site[2] + 2));
             c.board.post("door", () -> new TaskBoard.Seq(new Take(c, Items.wooden_door, 1), new Skills.PlaceFrom(dr[0], dr[1], dr[2], Items.wooden_door, -1))).after(builds).prio(3).at(dr[0], dr[1], dr[2]);
             Events.log("crew: " + (size == 2 ? "wood enough for a house with a fence" : size == 1 ? "a house, the fence later" : "little wood: a hut"));
         }
@@ -785,7 +796,7 @@ class Day1 {
 
     /** nightfall: the crew comes to the mouth of the mine and looks down into it; one puts a torch there */
     static class Gather extends Crew.Phase {
-        Gather() { max = 20 * 40; }   // set in start by the way the agents have to walk
+        Gather() { }
         void start(Crew c, WorldServer w, EntityPlayerMP p) {
             int[] m = mine;
             if (m == null) { new Crew.Cheer().start(c, w, p); return; }
@@ -810,7 +821,7 @@ class Day1 {
                 far = Math.max(far, Crew.dist(a, tx, ty, tz));
                 k++;
             }
-            max = 20 * (60 + (int) far);   // the walk there (a block a second at worst), the torch, the half minute of looking
+            budget(far, 0, 1, 0, 0, 20 * 30);   // the walk there, the torch, the half minute of looking
             if (torcher != null) say(torcher, "Посвечу у входа");
         }
     }

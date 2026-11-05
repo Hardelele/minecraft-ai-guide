@@ -39,7 +39,7 @@ class Ground {
         if (air != null && air.contains(Crew.key(x, y, z))) return true;
         Block b = w.getBlock(x, y, z);
         if (b.getMaterial() == Material.lava) return false;
-        return Crew.soft(w, x, y, z) || b.getMaterial() == Material.water || b == Blocks.wooden_door;   // a wooden door opens to a hand
+        return Crew.soft(w, x, y, z) || b.getMaterial() == Material.water || Roles.of(b) == Roles.Role.DOOR && b.getMaterial() == Material.wood;   // a wooden door opens to a hand
     }
 
     /** one can stand on this block: solid, not a fence or a wall (too high to step on), not leaves */

@@ -94,6 +94,12 @@ public class Crew {
         int ticks, max = 20 * 150;
         boolean timedOut;
         final java.util.Map<String, Integer> results = new java.util.TreeMap<String, Integer>();   // how its tasks ended
+
+        /** the phase's time limit from the one estimate (Budget), the work shared by the crew */
+        void budget(double walk, int dig, int place, int craft, int smelt, int waitTicks) {
+            int crew = Math.max(1, instance == null ? 1 : instance.agents.size());
+            max = Budget.phase(Budget.ticks(walk, dig, place, craft, smelt, 0), 0, crew) + waitTicks;
+        }
         void tally(Result r) { Ledger.add(results, r.name(), 1); }
         abstract void start(Crew c, WorldServer w, EntityPlayerMP p);
         /** done: no card of it left on the board, no agent on a job given outside the board's defaults */
@@ -473,7 +479,8 @@ public class Crew {
                 since = 0;
                 if (dig == null) { state = ROUTE; route = null; }   // through the gap: a route again (on a dig route: on along it)
             }
-            if (ticks > 20 * 90) return Result.TIMEOUT;
+            // out of time only by no progress (nearer, or a block dug on the way) for a minute; a long way that goes on is not a failure
+            if (since > 20 * 60 || ticks > 20 * 900) return Result.TIMEOUT;
             switch (state) {
                 case NAV:
                     if (ticks % 20 == 1 || a.getNavigator().noPath() && ticks - lastTry >= 10) {
@@ -493,11 +500,11 @@ public class Crew {
                     }
                     if (ri >= route.size()) { state = NAV; route = null; since = 0; return Result.RUNNING; }
                     int[] p = route.get(ri);
-                    if (w.getBlock(p[0], p[1], p[2]) == Blocks.wooden_door) {   // a closed door on the way: opened by hand, as a player does
+                    if (Roles.is(w, p[0], p[1], p[2], Roles.Role.DOOR) && w.getBlock(p[0], p[1], p[2]).getMaterial() == Material.wood) {   // a closed door on the way: opened by hand, as a player does
                         int lower = (w.getBlockMetadata(p[0], p[1], p[2]) & 8) != 0 ? p[1] - 1 : p[1];
                         if ((w.getBlockMetadata(p[0], lower, p[2]) & 4) == 0 && dist(a, p[0] + 0.5, p[1], p[2] + 0.5) < 2.5) {
                             face(a, p[0] + 0.5, p[1] + 1, p[2] + 0.5);
-                            Blocks.wooden_door.onBlockActivated(w, p[0], lower, p[2], Skills.hands(a, w), 0, 0.5F, 0.5F, 0.5F);
+                            w.getBlock(p[0], lower, p[2]).onBlockActivated(w, p[0], lower, p[2], Skills.hands(a, w), 0, 0.5F, 0.5F, 0.5F);
                             a.swingItem();
                         }
                     }
@@ -740,13 +747,13 @@ public class Crew {
         GoTo walk;
         Stash(Item keep, int keepN) { this.keep = keep; this.keepN = keepN; }
         public Result step(Agent a, WorldServer w) {
-            if (chest == null || w.getBlock(chest[0], chest[1], chest[2]) != Blocks.chest) return Result.GONE;
+            if (!Roles.is(w, chest, Roles.Role.CHEST)) return Result.GONE;
             if (state == 0) { walk = new GoTo(chest[0] + 0.5, chest[1], chest[2] + 0.5, 2.3); state = 1; }
             if (state == 1) { if (walk.step(a, w) == Result.RUNNING) return Result.RUNNING; state = 2; }
             face(a, chest[0] + 0.5, chest[1] + 0.5, chest[2] + 0.5);
             ticks++;
             IInventory inv = chestInv(w);
-            if (ticks == 4) { w.addBlockEvent(chest[0], chest[1], chest[2], Blocks.chest, 1, 1); w.playSoundEffect(chest[0] + 0.5, chest[1] + 0.5, chest[2] + 0.5, "random.chestopen", 0.5F, 1.0F); }
+            if (ticks == 4) { w.addBlockEvent(chest[0], chest[1], chest[2], w.getBlock(chest[0], chest[1], chest[2]), 1, 1); w.playSoundEffect(chest[0] + 0.5, chest[1] + 0.5, chest[2] + 0.5, "random.chestopen", 0.5F, 1.0F); }
             if (ticks == 12 && inv != null) {
                 a.swingItem();
                 int kept = 0;
@@ -779,7 +786,7 @@ public class Crew {
                 inv.markDirty();
                 if (a.getHeldItem() != null && !(a.getHeldItem().getItem() instanceof net.minecraft.item.ItemTool)) a.setCurrentItemOrArmor(0, null);
             }
-            if (ticks == 22) { w.addBlockEvent(chest[0], chest[1], chest[2], Blocks.chest, 1, 0); w.playSoundEffect(chest[0] + 0.5, chest[1] + 0.5, chest[2] + 0.5, "random.chestclosed", 0.5F, 1.0F); }
+            if (ticks == 22) { w.addBlockEvent(chest[0], chest[1], chest[2], w.getBlock(chest[0], chest[1], chest[2]), 1, 0); w.playSoundEffect(chest[0] + 0.5, chest[1] + 0.5, chest[2] + 0.5, "random.chestclosed", 0.5F, 1.0F); }
             return (ticks >= 26) ? Result.OK : Result.RUNNING;
         }
     }
@@ -987,52 +994,6 @@ public class Crew {
         return best;
     }
 
-    /** stone open to the air near the base: every helper digs a few with its pickaxe and brings them */
-    static class Stone extends Phase {
-        final int perAgent;
-        Stone(int perAgent) { this.perAgent = perAgent; max = 20 * 55; }
-        void start(Crew c, WorldServer w, EntityPlayerMP p) {
-            c.planSite(w);
-            int bx = c.base[0], by = c.base[1], bz = c.base[2];
-            List<int[]> stones = new ArrayList<int[]>();
-            for (int x = bx - 28; x <= bx + 28; x++)
-                for (int z = bz - 28; z <= bz + 28; z++)
-                    for (int y = by - 6; y <= by + 10; y++) {
-                        if (w.getBlock(x, y, z) != Blocks.stone) continue;
-                        if (!w.isAirBlock(x, y + 1, z)) continue;
-                        int[] spot = null;   // where one stands beside it: feet on its level or a block lower
-                        for (int[] d : new int[][] { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } })
-                            for (int dy = 0; dy >= -1 && spot == null; dy--)
-                                if (stand(w, x + d[0], y + dy, z + d[1])) spot = new int[] { x + d[0], y + dy, z + d[1] };
-                        if (spot == null) continue;
-                        stones.add(new int[] { x, y, z, spot[0], spot[1], spot[2] });
-                    }
-            Events.log("crew: " + stones.size() + " stone blocks open to the air near the base");
-            for (Agent a : c.agents) {
-                int[] seed = null;
-                double bd = 1e9;
-                for (int[] s : stones) {
-                    if (c.taken.contains(key(s[0], s[1], s[2]))) continue;
-                    double d = Math.hypot(s[0] - bx, s[2] - bz) + Math.hypot(s[0] - a.posX, s[2] - a.posZ) * 0.3;
-                    if (d < bd) { bd = d; seed = s; }
-                }
-                if (seed == null) break;
-                List<int[]> mine = new ArrayList<int[]>();
-                for (int[] s : stones)
-                    if (!c.taken.contains(key(s[0], s[1], s[2])) && Math.hypot(s[0] - seed[0], s[2] - seed[2]) < 3.5 && Math.abs(s[1] - seed[1]) <= 2) mine.add(s);
-                final int[] sd = seed;
-                Collections.sort(mine, new Comparator<int[]>() {
-                    @Override public int compare(int[] x, int[] y) { return Double.compare(Math.hypot(x[0] - sd[0], x[2] - sd[2]), Math.hypot(y[0] - sd[0], y[2] - sd[2])); }
-                });
-                while (mine.size() > perAgent) mine.remove(mine.size() - 1);
-                for (int[] s : mine) c.taken.add(key(s[0], s[1], s[2]));
-                Crew.job(a, new Mine(mine));
-                Crew.job(a, new Collect(seed[0] + 0.5, seed[1], seed[2] + 0.5, 5));
-                Crew.job(a, c.new Stash(null, 0));
-            }
-        }
-    }
-
     /** stone open to the air near the base, a few together near the agent, not reserved by another (reserved for it) */
     static List<int[]> openStone(Crew c, WorldServer w, Agent a, int n) {
         int bx = c.base[0], by = c.base[1], bz = c.base[2];
@@ -1108,10 +1069,15 @@ public class Crew {
     static class House extends Phase {
         final List<int[]> plan = new ArrayList<int[]>();   // x, y, z, kind (0 planks, 1 log, 2 cobblestone)
         final Set<Long> claimed = new HashSet<Long>();
-        final java.util.Map<Long, Integer> skipped = new java.util.HashMap<Long, Integer>();   // block -> phase tick it may be tried again
+        final Retry retry = new Retry();   // the crew's one retry policy, for the blocks of this plan
         boolean skipping(int x, int y, int z) {
-            Integer until = skipped.get(key(x, y, z));
-            return until != null && until > ticks;
+            return !retry.allowed(key(x, y, z), ticks);
+        }
+
+        /** a block that could not be put: the retry policy decides when again, and when it is given up (said once) */
+        void fail(int[] b, Agent a) {
+            if (retry.failed(key(b[0], b[1], b[2]), ticks))
+                Events.log("crew: the block at " + b[0] + " " + b[1] + " " + b[2] + " cannot be put (" + Retry.GIVE_UP + " tries): left for now");
         }
         final Set<Integer> missing = new HashSet<Integer>();   // kinds the chest ran out of
         int shownAt = -1;
@@ -1179,8 +1145,7 @@ public class Crew {
                 if (Ground.passages.contains(key(b[0], b[1], b[2]))) continue;   // a way opened through the wall stays open
                 if (b[1] > low + 1 || !soft(w, b[0], b[1], b[2]) || claimed.contains(key(b[0], b[1], b[2]))) continue;
                 if (missing.contains(b[3]) && Build.item(a, b[3]) == null || skipping(b[0], b[1], b[2])) continue;
-                boolean rests = !soft(w, b[0], b[1] - 1, b[2]) || !soft(w, b[0] + 1, b[1], b[2]) || !soft(w, b[0] - 1, b[1], b[2])
-                        || !soft(w, b[0], b[1], b[2] + 1) || !soft(w, b[0], b[1], b[2] - 1);
+                boolean rests = !Skills.supports(w, b[0], b[1], b[2], false).isEmpty();   // the placing's own rule
                 if (!rests) continue;
                 double dd = dist(a, b[0] + 0.5, b[1], b[2] + 0.5) * 1.5 + (b[1] - low) * 4;
                 if (dd < bd) { bd = dd; best = b; }
@@ -1270,9 +1235,9 @@ public class Crew {
             if (++ticks < 4) return Result.RUNNING;
             ItemStack in = item(a, cur[3]);   // what is put comes out of the bag (Skills: the right item, its own place sound)
             Result r = in == null ? Result.NO_ITEMS : Skills.placeFromBag(a, w, cur[0], cur[1], cur[2], in.getItem(), in.getMetadata());
-            if (r == Result.BUSY) h.skipped.put(key(cur[0], cur[1], cur[2]), h.ticks + 60);   // someone moves out of the cell: another block meanwhile
-            else if (r != Result.OK) Events.log("crew: " + a.getCustomNameTag() + " build " + Ledger.name(in) + " at " + cur[0] + " " + cur[1] + " " + cur[2] + " -> " + r);
-            if (r == Result.BLOCKED) h.skipped.put(key(cur[0], cur[1], cur[2]), h.ticks + 200);   // someone stands there, or nothing to put it against: in 10 s again
+            if (r == Result.BUSY) h.retry.postpone(key(cur[0], cur[1], cur[2]), h.ticks, 60);   // someone moves out of the cell: another block meanwhile
+            else if (r != Result.OK && r != Result.BLOCKED) Events.log("crew: " + a.getCustomNameTag() + " build " + Ledger.name(in) + " at " + cur[0] + " " + cur[1] + " " + cur[2] + " -> " + r);
+            if (r == Result.BLOCKED) h.fail(cur, a);   // nothing to put it against: later, later still, then not in this phase
             h.claimed.remove(key(cur[0], cur[1], cur[2]));
             cur = null;
             return Result.RUNNING;

@@ -224,7 +224,7 @@ public class Bench {
                 count[p[3]][0]++;
                 if (ok) { standing++; count[p[3]][1]++; }
             }
-            boolean door = b.doorAt != null && w.getBlock(b.doorAt[0], b.doorAt[1], b.doorAt[2]) == Blocks.wooden_door;
+            boolean door = b.doorAt != null && Roles.is(w, b.doorAt, Roles.Role.DOOR);
             if (door) standing++;
             String[] names = { "planks", "log", "cobblestone", "glass", "fence", "torch" };
             for (int k = 0; k < 6; k++) if (count[k][0] > 0) byKind.addProperty(names[k], count[k][1] + "/" + count[k][0]);
