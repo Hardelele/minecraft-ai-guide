@@ -79,7 +79,7 @@ class Orders {
         if (t == null) return;
         Origin was = Crew.originNow;
         Crew.originNow = Origin.PLAYER;
-        TaskBoard.Card k = c.board.post("order " + kind.name().toLowerCase(), () -> t).pin(a).prio(PRIO).lease(20 * 600);
+        TaskBoard.Card k = c.board.post("order " + kind.name().toLowerCase(), () -> t).pin(a).prio(PRIO).lease(kind == Kind.CRAFT ? 20 * 1800 : 20 * 600);   // a craft may go to the world for its raw things
         Crew.originNow = was;
         k.phase = null;   // the player's, not a phase's
         TaskBoard.Card before = last.get(a.skin());
@@ -191,15 +191,101 @@ class Orders {
         have.put(it, (bag - fromBag) * 1000 + chest - fromChest);
         if (fromChest > 0) s.add(new Day1.Take(c, it, fromChest));
         if (rest <= 0) return;
-        List<Skills.Laid> rs = depth > 3 ? new ArrayList<Skills.Laid>() : Skills.recipesFor(it, -1);
-        if (rs.isEmpty()) { s.add(new Day1.Take(c, it, rest)); return; }   // nothing makes it: the chest's (fails honestly when it is not there)
-        Skills.Laid l = rs.get(0);
-        for (Skills.Laid x : rs) if (Compiler.simple(x)) { l = x; break; }
-        int crafts = (rest + l.out.stackSize - 1) / l.out.stackSize;
-        Map<net.minecraft.item.Item, Integer> parts = new java.util.LinkedHashMap<net.minecraft.item.Item, Integer>();
-        for (List<net.minecraft.item.ItemStack> cell : l.cells) if (cell != null) Compiler.add(parts, cell.get(0).getItem(), crafts);
-        for (Map.Entry<net.minecraft.item.Item, Integer> e : parts.entrySet()) makePlan(c, w, a, e.getKey(), e.getValue(), depth + 1, s, have);
-        s.add(new Skills.Craft(it, -1, crafts * l.out.stackSize));
+        // 1. made at a table from its parts (a recipe that does not go round through the thing itself: no ingot from its block)
+        List<Skills.Laid> rs = depth > 5 ? new ArrayList<Skills.Laid>() : Skills.recipesFor(it, -1);
+        Skills.Laid l = null;
+        for (Skills.Laid x : rs) if (!circular(x, it) && (l == null || Compiler.simple(x) && !Compiler.simple(l))) l = x;
+        if (l != null) {
+            int crafts = (rest + l.out.stackSize - 1) / l.out.stackSize;
+            Map<net.minecraft.item.Item, Integer> parts = new java.util.LinkedHashMap<net.minecraft.item.Item, Integer>();
+            for (List<net.minecraft.item.ItemStack> cell : l.cells) if (cell != null) Compiler.add(parts, cell.get(0).getItem(), crafts);
+            for (Map.Entry<net.minecraft.item.Item, Integer> e : parts.entrySet()) makePlan(c, w, a, e.getKey(), e.getValue(), depth + 1, s, have);
+            s.add(new Skills.Craft(it, -1, crafts * l.out.stackSize));
+            return;
+        }
+        // 2. smelted in the crew's furnace from what the game smelts into it (ore into ingots...), with fuel the same way
+        ItemStack in = depth > 5 || Day1.furnace == null ? null : smeltedFrom(it);
+        if (in != null) {
+            makePlan(c, w, a, in.getItem(), rest, depth + 1, s, have);
+            net.minecraft.item.Item fuel = Day2.fuel(c, w, rest);
+            if (Skills.count(a.bag, net.minecraft.init.Items.coal, -1) > 0) fuel = net.minecraft.init.Items.coal;
+            makePlan(c, w, a, fuel, Day2.fuelFor(fuel, rest), depth + 1, s, have);
+            s.add(new Skills.Smelt(in.getItem(), in.getMetadata() == 32767 ? -1 : in.getMetadata(), rest, fuel));
+            return;
+        }
+        // 3. from the world: blocks that give it when broken (trees for logs, stone for cobblestone, ore for coal...)
+        s.add(new Gather(it, rest));
+    }
+
+    /** a recipe that needs, among its parts, something that is itself made from the thing (a block of ingots for ingots) */
+    static boolean circular(Skills.Laid l, net.minecraft.item.Item it) {
+        for (List<ItemStack> cell : l.cells) {
+            if (cell == null) continue;
+            net.minecraft.item.Item part = cell.get(0).getItem();
+            if (part == it) return true;
+            for (Skills.Laid r : Skills.recipesFor(part, -1)) for (List<ItemStack> c2 : r.cells) if (c2 != null && c2.get(0).getItem() == it) return true;
+        }
+        return false;
+    }
+
+    /** what the furnace turns into this item, or null */
+    @SuppressWarnings("unchecked")
+    static ItemStack smeltedFrom(net.minecraft.item.Item it) {
+        for (Map.Entry<ItemStack, ItemStack> e : ((Map<ItemStack, ItemStack>) net.minecraft.item.crafting.FurnaceRecipes.instance().getSmeltingList()).entrySet())
+            if (e.getValue().getItem() == it && e.getKey().getItem() != it) {
+                net.minecraft.item.Item src = e.getKey().getItem();
+                if (src == Day1.LOG || src == Day1.LOG2) continue;   // charcoal: the world's coal first (gathered); a log is not burnt for it here
+                return e.getKey();
+            }
+        return null;
+    }
+
+    /**
+     * n of an item from the world, into the bag: the nearest blocks that give it when broken (a whole tree for logs, the
+     * vein for ore), one after another, near the agent first; what cannot be found within 32 blocks fails honestly.
+     */
+    static class Gather implements Crew.Task {
+        final net.minecraft.item.Item it;
+        final int n;
+        Crew.Task cur;
+        int start = -1, tries;
+        Gather(net.minecraft.item.Item it, int n) { this.it = it; this.n = n; }
+        public Result step(Agent a, WorldServer w) {
+            int have = Skills.count(a.bag, it, -1) + (it == Day1.LOG ? Skills.count(a.bag, Day1.LOG2, -1) : 0);
+            if (start < 0) start = have;
+            if (have - start >= n) return Result.OK;
+            if (cur != null) { if (cur.step(a, w) == Result.RUNNING) return Result.RUNNING; cur = null; if (++tries > n + 6) return have > start ? Result.OK : Result.NO_ITEMS; }
+            int ax = (int) Math.floor(a.posX), ay = (int) Math.floor(a.posY), az = (int) Math.floor(a.posZ);
+            if (it == Day1.LOG || it == Day1.LOG2) {
+                int[] best = null;
+                double bd = 1e9;
+                for (int[] t : Crew.trunks(w, ax, ay, az, 32)) { double d = Math.hypot(t[0] - ax, t[2] - az); if (d < bd && !Fell.tree(w, t[0], t[1], t[2]).isEmpty()) { bd = d; best = t; } }
+                if (best == null) return have > start ? Result.OK : Result.NO_ITEMS;
+                cur = new TaskBoard.Seq(new Fell(Fell.tree(w, best[0], best[1], best[2])), new Crew.Collect(best[0] + 0.5, best[1], best[2] + 0.5, 6)).lenient();
+                Events.log("crew: " + a.getCustomNameTag() + " goes for logs (a tree at " + best[0] + " " + best[1] + " " + best[2] + ")");
+                return Result.RUNNING;
+            }
+            int[] best = null;
+            double bd = 1e9;
+            java.util.Random rnd = new java.util.Random(0);
+            for (int x = ax - 24; x <= ax + 24; x++)
+                for (int z = az - 24; z <= az + 24; z++)
+                    for (int y = Math.max(2, ay - 16); y <= ay + 8; y++) {
+                        Block b = w.getBlock(x, y, z);
+                        if (b.getMaterial() == Material.air || b.getMaterial().isLiquid()) continue;
+                        if (b.getItemDropped(w.getBlockMetadata(x, y, z), rnd, 0) != it || !Day2.open(w, x, y, z)) continue;
+                        if (Crew.instance != null && !Ground.mayDig(Crew.instance, x, y, z, "gather")) continue;
+                        double d = Math.abs(x - ax) + Math.abs(z - az) + Math.abs(y - ay) * 1.5;
+                        if (d < bd) { bd = d; best = new int[] { x, y, z }; }
+                    }
+            if (best == null) { Events.log("crew: " + a.getCustomNameTag() + " finds no " + Ledger.name(new ItemStack(it)) + " to dig near"); return have > start ? Result.OK : Result.NO_ITEMS; }
+            Block b = w.getBlock(best[0], best[1], best[2]);
+            List<int[]> blocks = String.valueOf(Block.blockRegistry.getNameForObject(b)).contains("_ore") ? Day2.cluster(w, best[0], best[1], best[2], b, new HashSet<Long>())
+                    : new ArrayList<int[]>(java.util.Arrays.asList(best));
+            cur = new TaskBoard.Seq(new Crew.Mine(blocks), new Crew.Collect(best[0] + 0.5, best[1], best[2] + 0.5, 5)).lenient();
+            Events.log("crew: " + a.getCustomNameTag() + " goes for " + Ledger.name(new ItemStack(it)) + " (" + blocks.size() + " at " + best[0] + " " + best[1] + " " + best[2] + ")");
+            return Result.RUNNING;
+        }
     }
 
     /**

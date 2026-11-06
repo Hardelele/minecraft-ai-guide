@@ -437,12 +437,21 @@ public class Crew {
 
     /** what the agent's eyes meet on the way to the block's middle: null when it is the block itself */
     static int[] blocker(Agent a, WorldServer w, int x, int y, int z) {
+        // as a player aims: at the middle of the block, else at the middle of any face of it open to the air; in the way only when none is clear
         Vec3 from = Vec3.createVectorHelper(a.posX, a.posY + a.getEyeHeight(), a.posZ);
-        Vec3 to = Vec3.createVectorHelper(x + 0.5, y + 0.5, z + 0.5);
-        MovingObjectPosition hit = w.rayTraceBlocks(from, to, false, true, false);
-        if (hit == null) return null;
-        if (hit.blockX == x && hit.blockY == y && hit.blockZ == z) return null;
-        return new int[] { hit.blockX, hit.blockY, hit.blockZ };
+        int[] first = null;
+        for (int k = -1; k < 6; k++) {
+            double tx = x + 0.5, ty = y + 0.5, tz = z + 0.5;
+            if (k >= 0) {
+                int[] d = Skills.SIDE[k];
+                if (!w.isAirBlock(x + d[0], y + d[1], z + d[2]) && w.getBlock(x + d[0], y + d[1], z + d[2]).getMaterial().isSolid()) continue;   // a face against a block: not aimed at
+                tx += d[0] * 0.49; ty += d[1] * 0.49; tz += d[2] * 0.49;
+            }
+            MovingObjectPosition hit = w.rayTraceBlocks(Vec3.createVectorHelper(from.xCoord, from.yCoord, from.zCoord), Vec3.createVectorHelper(tx, ty, tz), false, true, false);
+            if (hit == null || hit.blockX == x && hit.blockY == y && hit.blockZ == z) return null;
+            if (first == null) first = new int[] { hit.blockX, hit.blockY, hit.blockZ };
+        }
+        return first;
     }
 
     /** the kinds of a plan's blocks */
@@ -514,6 +523,7 @@ public class Crew {
         List<int[]> route;
         Break br;
         GoTo(double x, double y, double z, double within) { this.x = x; this.y = y; this.z = z; this.within = within; }
+        int stuckFor;    // ticks without getting nearer or digging anything (whatever the state)
         boolean noDig;   // a walk only (the player's "go there"): never dig a way, no way is NO_PATH
         GoTo walkOnly() { noDig = true; return this; }
 
@@ -521,7 +531,7 @@ public class Crew {
             ticks++;
             double d = dist(a, x, y, z);
             if (d <= within) { a.getNavigator().clearPathEntity(); return Result.OK; }
-            if (d < best - 0.4) { best = d; since = 0; } else since++;   // progress: nearer by a bit
+            if (d < best - 0.4) { best = d; since = 0; stuckFor = 0; } else { since++; stuckFor++; }   // progress: nearer by a bit
             if (br != null) {
                 Result r = br.step(a, w);
                 if (r == Result.RUNNING) return r;
@@ -530,10 +540,12 @@ public class Crew {
                 Day1.catchNear(a, w, 2.0);
                 Skills.lightUp(a, w);   // a way dug into the dark gets its torches
                 since = 0;
+                stuckFor = 0;   // a block dug on the way is progress
                 if (dig == null) { state = ROUTE; route = null; }   // through the gap: a route again (on a dig route: on along it)
             }
             // out of time only by no progress (nearer, or a block dug on the way) for a minute; a long way that goes on is not a failure
-            if (since > 20 * 60 || ticks > 20 * 900) return Result.TIMEOUT;
+            // (the states' own clock, since, starts again at each change of state; this one only at real progress: a walk round the states that gets nowhere ends)
+            if (since > 20 * 60 || stuckFor > 20 * 60 || ticks > 20 * 900) return Result.TIMEOUT;
             switch (state) {
                 case NAV:
                     if (ticks % 20 == 1 || a.getNavigator().noPath() && ticks - lastTry >= 10) {

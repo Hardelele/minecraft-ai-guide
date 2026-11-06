@@ -81,7 +81,15 @@ public class Bench {
                 }
             } else if (state == 2) {
                 Crew c = Crew.instance;
-                boolean idle = c != null && c.current == null && c.phases.isEmpty() && !Crew.phaseLog.isEmpty();
+                if (c != null && ticks % 600 == 0)   // every 30 s: where each agent is and what it is on (for a stuck job)
+                    for (Agent a : c.agents) {
+                        TaskBoard.Card k = c.board.leased.get(a);
+                        Events.log("bench: " + a.getCustomNameTag() + " at " + (int) Math.floor(a.posX) + " " + (int) Math.floor(a.posY) + " " + (int) Math.floor(a.posZ)
+                                + " " + a.activity() + (k != null ? " on " + k : "") + (a.jobs.isEmpty() ? "" : " job " + Bench.describe(a.jobs.peek())));
+                    }
+                boolean anyOpen = false;
+                if (c != null) for (TaskBoard.Card k : c.board.cards) if (k.open()) anyOpen = true;
+                boolean idle = c != null && c.current == null && c.phases.isEmpty() && (!Crew.phaseLog.isEmpty() || !anyOpen && ticks - askedAt > 100);   // (the player's orders: done when no card is open)
                 idleTicks = idle ? idleTicks + 1 : 0;
                 boolean done = idle && (Crew.finished.contains("gather") || idleTicks > 20 * 45);   // the plan is through (no word from the guide for a while)
                 if (done && next < asks.length && ticks <= limit) {   // the next request (the morning after the night...)
@@ -185,6 +193,16 @@ public class Bench {
             r = r.substring(colon + 1);
         }
         plansBefore = Compiler.plans;
+        if (r.startsWith("order:")) {   // order:craft ITEM N AGENT[,AGENT]: the player's order, as the commander gives it
+            String[] a = r.substring(6).trim().split("\\s+");
+            String[] who = a[3].split(",");
+            int[] ws = new int[who.length];
+            for (int i = 0; i < ws.length; i++) ws[i] = Integer.parseInt(who[i]);
+            Orders.give(ws, Orders.Kind.valueOf(a[0].toUpperCase()), 0, 0, 0, -1, false, a[1], Integer.parseInt(a[2]));
+            Compiler.plans++;   // (no plan from the guide to wait for)
+            Events.log("bench: order " + r.substring(6));
+            return;
+        }
         if (r.startsWith("goals:")) {
             final String goals = r.substring(6).replace("|", "\n");
             new Thread(new Runnable() { public void run() { Events.log("bench: " + Compiler.plan(name, goals, Origin.SCRIPT)); } }).start();
@@ -194,6 +212,46 @@ public class Bench {
             m.setAccessible(true);
             Events.log("bench: asked the guide (" + next + "/" + asks.length + "): " + ask + " -> " + m.invoke(null, name, ask));
         }
+    }
+
+    /** a task and what it is doing inside (its fields that are tasks too), as far as it goes */
+    static String describe(Object t) {
+        StringBuilder b = new StringBuilder();
+        for (int depth = 0; t != null && depth < 12; depth++) {
+            b.append(depth > 0 ? " > " : "").append(t.getClass().getSimpleName().isEmpty() ? t.getClass().getName().replaceAll(".*\\.", "") : t.getClass().getSimpleName());
+            Object next = null;
+            for (Class<?> cl = t.getClass(); cl != null && next == null; cl = cl.getSuperclass())
+                for (java.lang.reflect.Field f : cl.getDeclaredFields()) {
+                    if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                    try {
+                        f.setAccessible(true);
+                        Object v = f.get(t);
+                        if (v instanceof Crew.Task && v != t) { next = v; break; }
+                        if (v instanceof Crew.Task[]) { Object[] arr = (Object[]) v; java.lang.reflect.Field fi = cl.getDeclaredField("i"); fi.setAccessible(true); int i = fi.getInt(t); if (i < arr.length) { next = arr[i]; break; } }
+                        if (f.getType() == Crew.Break.class && v != null) { b.append(" (breaking)"); }
+                    } catch (Exception ex) {
+                        // not readable: as far as it goes
+                    }
+                }
+            if (next == null) {   // the innermost: its numbers (where it is in its work)
+                b.append(" {");
+                for (java.lang.reflect.Field f : t.getClass().getDeclaredFields()) {
+                    if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                    try {
+                        f.setAccessible(true);
+                        Object v = f.get(t);
+                        if (v instanceof Integer || v instanceof Double || v instanceof Boolean) b.append(f.getName()).append('=').append(v).append(' ');
+                        else if (v instanceof Crew.GoTo) { Crew.GoTo g = (Crew.GoTo) v; b.append(f.getName()).append("=GoTo(state ").append(g.state).append(" ticks ").append(g.ticks).append(" since ").append(g.since).append(") "); }
+                        else if (v instanceof Crew.Break) b.append(f.getName()).append("=Break ");
+                    } catch (Exception ex) {
+                        // as far as it goes
+                    }
+                }
+                b.append('}');
+            }
+            t = next;
+        }
+        return b.toString();
     }
 
     void report(WorldServer w, boolean done) {

@@ -288,7 +288,9 @@ public class Commander {
         for (Agent a : clientAgents()) {
             if (!selected.contains(a.skin())) continue;
             double x = a.lastTickPosX + (a.posX - a.lastTickPosX) * pt, y = a.lastTickPosY + (a.posY - a.lastTickPosY) * pt - a.yOffset + 0.05, z = a.lastTickPosZ + (a.posZ - a.lastTickPosZ) * pt;
-            ring(t, x, y, z, 0.7, 0.3f, 1f, 0.4f, 0.9f);
+            double pulse = 0.7 + 0.06 * Math.sin(System.currentTimeMillis() / 180.0);
+            ring(t, x, y, z, pulse, 0.35f, 1f, 0.5f, 0.95f);
+            ring(t, x, y, z, pulse + 0.12, 0.35f, 1f, 0.5f, 0.35f);
         }
         if (mark != null && System.currentTimeMillis() - markAt < 700) {
             float f = 1 - (System.currentTimeMillis() - markAt) / 700f;
@@ -782,6 +784,7 @@ public class Commander {
         final List<Object[]> hits = new ArrayList<Object[]>();
         Object[] dragFrom;        // an item picked up from an agent's inventory (to hand it to another)
         float anim;               // the panel's ease in
+        float shownH = 40;        // the panel's height as shown (eased toward the wanted one)
         final int[] chatAt = new int[3];
 
         /** the band the interface keeps to: x from, x to (gui units) */
@@ -1120,7 +1123,9 @@ public class Commander {
                 Ui.round(x - 14, y - 1, x + 14, y + 4, 2, 0xA0000000);
                 Gui.drawRect(x - 12, y + 1, x - 12 + (int) (24 * hp), y + 2, hp > 0.5 ? 0xFF50E070 : hp > 0.25 ? 0xFFE0C040 : 0xFFE04040);
                 String n = a.getCustomNameTag();
-                fontRendererObj.drawStringWithShadow(n, x - fontRendererObj.getStringWidth(n) / 2, y - 10, sel ? 0x90FF90 : 0xFFFFFF);
+                int nw = fontRendererObj.getStringWidth(n);
+                Ui.round(x - nw / 2 - 4, y - 12, x + nw / 2 + 4, y - 1, 4, sel ? 0xB0204828 : 0x90101418);   // a chip under the name
+                fontRendererObj.drawStringWithShadow(n, x - nw / 2, y - 10, sel ? 0x90FF90 : 0xFFFFFF);
             }
             if (dragging && selecting) {   // the box being dragged
                 int x0 = downX / scale, y0 = (mc.displayHeight - downY) / scale, x1 = curX() / scale, y1 = (mc.displayHeight - curY()) / scale;
@@ -1135,7 +1140,10 @@ public class Commander {
                 Ui.round(lx - 4, ly - 3, lx + lw + 4, ly + 10, 3, 0xC0101418);
                 fontRendererObj.drawStringWithShadow(label, lx, ly, 0xFFFFE8);
             }
+            GL11.glPushMatrix();
+            GL11.glTranslatef(0, (1 - anim) * 30, 0);   // the panel comes up when the commander opens
             panel(gmx, gmy);
+            GL11.glPopMatrix();
             if (dragFrom != null) {   // the item being carried with the mouse
                 Agent a = Cam.serverAgent((Integer) dragFrom[1]);
                 int slot = (Integer) dragFrom[2];
@@ -1183,8 +1191,10 @@ public class Commander {
         /** the bottom: the chat with the guide; the picked agents (one: its inventory to choose what it works with; several: each one's line, items carried between them) */
         void panel(int gmx, int gmy) {
             hits.clear();
-            int x0 = px0(), x1 = x0 + bandW(), h = panelH(), y0 = height - h - 4;
+            int x0 = px0(), x1 = x0 + bandW(), h = panelH();
             anim += (1 - anim) * 0.25f;
+            shownH += (h - shownH) * 0.3f;   // a height that changes is eased, not jumped
+            int y0 = height - (int) shownH - 4;
             Ui.round(x0 + 4, y0, x1 - 4, height - 4, 8, 0xD0101820);
             int y = y0 + 6;
             // the chat
