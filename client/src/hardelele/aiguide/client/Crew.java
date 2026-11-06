@@ -779,6 +779,7 @@ public class Crew {
         int ticks;
         GoTo walk;
         EntityItem target;
+        final java.util.Set<Integer> unreachable = new java.util.HashSet<Integer>();
         Collect(double x, double y, double z, double r) { this.x = x; this.y = y; this.z = z; this.r = r; }
         @SuppressWarnings("unchecked")
         public Result step(Agent a, WorldServer w) {
@@ -801,14 +802,15 @@ public class Crew {
                 double best = 1e9;
                 for (Object o : w.getEntitiesWithinAABB(EntityItem.class, AxisAlignedBB.getBoundingBox(x - r, y - 3, z - r, x + r, y + 8, z + r))) {
                     EntityItem it = (EntityItem) o;
-                    if (it.isDead || !it.onGround) continue;
+                    if (it.isDead || !it.onGround || unreachable.contains(it.getEntityId())) continue;   // (one it found no way to: not again)
                     double d = dist(a, it.posX, it.posY, it.posZ);
                     if (d < best) { best = d; target = it; }
                 }
                 if (target == null) return (ticks > 40) ? Result.OK : Result.RUNNING;
                 walk = new GoTo(target.posX, target.posY, target.posZ, 0.7);
             }
-            if (walk.step(a, w) != Result.RUNNING) target = null;
+            Result wr = walk.step(a, w);
+            if (wr != Result.RUNNING) { if (wr.failed() && target != null) unreachable.add(target.getEntityId()); target = null; }
             return (ticks > 20 * 30) ? Result.OK : Result.RUNNING;
         }
     }

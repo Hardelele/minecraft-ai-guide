@@ -879,6 +879,7 @@ public class Commander {
         }
 
         String doingRu(String kind) {
+            if (kind.startsWith("routine ")) return "рутина «" + kind.substring(8) + "»";
             String k = kind.replace("order ", "").replace("paint ", "");
             String[][] m = { { "move", "идёт" }, { "chop", "рубит" }, { "mine", "копает" }, { "attack", "атакует" }, { "deposit", "несёт в сундук" }, { "guard", "охраняет" },
                     { "craft", "крафтит" }, { "smelt", "плавит" }, { "place", "строит" }, { "ore", "добывает руду" }, { "make", "крафтит" }, { "inside", "в дом" },
@@ -1136,7 +1137,7 @@ public class Commander {
             int top = height - panelH() - 4;
             if (label != null && !label.isEmpty() && gmy < top && dragFrom == null) {
                 int lw = fontRendererObj.getStringWidth(label);
-                int lx = Math.max(bandX0() + 2, Math.min(bandX1() - lw - 6, gmx + 10)), ly = gmy + 12;
+                int lx = Math.max(bandX0() + 2, Math.min(bandX1() - lw - 6, gmx + 14)), ly = gmy + 14;   // clear of the arrow
                 Ui.round(lx - 4, ly - 3, lx + lw + 4, ly + 10, 3, 0xC0101418);
                 fontRendererObj.drawStringWithShadow(label, lx, ly, 0xFFFFE8);
             }

@@ -12,6 +12,8 @@ class Ui {
         float a = (argb >>> 24) / 255f, cr = (argb >> 16 & 255) / 255f, cg = (argb >> 8 & 255) / 255f, cb = (argb & 255) / 255f;
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glDisable(GL11.GL_CULL_FACE);   // (a fan wound either way)
+        GL11.glDisable(GL11.GL_ALPHA_TEST);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         Tessellator t = Tessellator.instance;
         t.startDrawing(GL11.GL_TRIANGLE_FAN);
@@ -26,6 +28,7 @@ class Ui {
             }
         t.addVertex(x1 - r + Math.cos(Math.toRadians(-90)) * r, y0 + r + Math.sin(Math.toRadians(-90)) * r, 0);
         t.draw();
+        GL11.glEnable(GL11.GL_ALPHA_TEST);
         GL11.glEnable(GL11.GL_TEXTURE_2D);
     }
 }
