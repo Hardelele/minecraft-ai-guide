@@ -107,7 +107,15 @@ public class Commander {
 
     /** the script's hand goes to a window point (pixels from the bottom left) over some ticks, eased */
     void vMove(double x, double y, int ticks) {
-        vFromX = vx; vFromY = vy; vToX = x; vToY = y; vT = 0; vLen = Math.max(1, ticks);
+        vFromX = vx; vFromY = vy; vToX = x; vToY = y; vT = 0; vLen = Math.max(1, ticks); vTrack = 0;
+    }
+
+    int vTrack;   // an agent the hand's aim follows (its number), 0 none
+
+    /** the hand goes to an agent and stays on it as it walks, until the next move */
+    void vMoveToAgent(int skin, int ticks) {
+        for (Agent g : clientAgents()) if (g.skin() == skin) { float[] s = toScreen(g.posX, g.boundingBox.minY + 1.0, g.posZ); if (s != null) vMove(s[0], s[1], ticks); }
+        vTrack = skin;
     }
 
     /** a button of the script's hand pressed or let go where the cursor is (through the screen's own handling) */
@@ -123,8 +131,12 @@ public class Commander {
 
     @SubscribeEvent
     public void hand(TickEvent.RenderTickEvent e) {   // the script's cursor moves a little every frame (by video frames while recording)
-        if (e.phase != TickEvent.Phase.START || !vOn || vT >= vLen) return;
-        vT = Math.min(vLen, vT + (Recorder.instance != null ? 1 : 1));
+        if (e.phase != TickEvent.Phase.START || !vOn || vT >= vLen && vTrack == 0) return;
+        vT = Math.min(vLen, vT + 1);
+        if (vTrack > 0) for (Agent g : clientAgents()) if (g.skin() == vTrack) {   // aiming at an agent that walks: the aim goes with it
+            float[] s = toScreen(g.lastTickPosX + (g.posX - g.lastTickPosX) * e.renderTickTime, g.boundingBox.minY + 1.0, g.lastTickPosZ + (g.posZ - g.lastTickPosZ) * e.renderTickTime);
+            if (s != null) { vToX = s[0]; vToY = s[1]; }
+        }
         double k = vT / (double) vLen, f = k * k * (3 - 2 * k);
         vx = vFromX + (vToX - vFromX) * f;
         vy = vFromY + (vToY - vFromY) * f;

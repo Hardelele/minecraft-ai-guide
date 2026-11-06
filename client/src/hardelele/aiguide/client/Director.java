@@ -253,7 +253,7 @@ public class Director {
             if (t == 0) {
                 Commander c = Commander.instance;
                 float[] s = null;
-                if (a[0].equals("agent")) { for (Agent g : c.clientAgents()) if (g.skin() == Integer.parseInt(a[1])) s = c.toScreen(g.posX, g.boundingBox.minY + 1.0, g.posZ); }
+                if (a[0].equals("agent")) { c.vMoveToAgent(Integer.parseInt(a[1]), ticks); event("vmoveto " + arg); return false; }   // (the aim follows the agent)
                 else if (a[0].equals("block")) s = c.toScreen(Integer.parseInt(a[1]) + 0.5, Integer.parseInt(a[2]) + 0.9, Integer.parseInt(a[3]) + 0.5);
                 else if (a[0].equals("ground")) {
                     int gx = MathHelper.floor_double(c.px) + Integer.parseInt(a[1]), gz = MathHelper.floor_double(c.pz) + Integer.parseInt(a[2]);
