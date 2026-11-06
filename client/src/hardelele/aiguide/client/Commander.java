@@ -851,7 +851,9 @@ public class Commander {
             StringBuilder who = new StringBuilder();
             for (int s : selected) who.append(who.length() > 0 ? "," : "").append(s);
             final String ask = (who.length() > 0 ? "[из режима командира; выбраны агенты " + who + " — приказы только им: crew_order с agents=" + who + " или цели crew_plan] "
-                    : "[из режима командира; вся команда] ") + text.trim();
+                    : "[из режима командира; вся команда] ")
+                    + "[ответ игроку — коротко и его словами: без названий инструментов, параметров и координат; остановить — кнопка «Стоп» на панели или клавиша H; вернуть под план — «По плану» или R] "
+                    + text.trim();
             sentAt = GuiGuide.history.size();
             localReply = null;
             sentText = text.trim();

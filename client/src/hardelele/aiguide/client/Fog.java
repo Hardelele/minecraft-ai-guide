@@ -74,12 +74,13 @@ public class Fog {
         if (stateAt(e.entity.posX, e.entity.posZ) != 2) e.setCanceled(true);
     }
 
-    static float shade(int s) { return s == 0 ? 0.94f : s == 1 ? 0.5f : 0f; }
+    static float shade(int s) { return s == 0 ? 0.88f : s == 1 ? 0.42f : 0f; }
 
     @SubscribeEvent
     public void render(RenderWorldLastEvent e) {
         if (!active() || mc.theWorld == null) return;
         Commander cm = Commander.instance;
+        if (System.currentTimeMillis() - heightsAt > 1000) { heights.clear(); heightsAt = System.currentTimeMillis(); }   // the ground changes: heights read again each second
         int pcx = FogMap.cell(cm.sx), pcz = FogMap.cell(cm.sz), R = Math.max(16, (int) (cm.sdist * 1.6 / FogMap.CELL) + 8);
         GL11.glPushMatrix();
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
@@ -100,18 +101,44 @@ public class Fog {
                 float a00 = corner(cx, cz), a10 = corner(cx + 1, cz), a11 = corner(cx + 1, cz + 1), a01 = corner(cx, cz + 1);
                 if (s == 2 && a00 + a10 + a11 + a01 == 0) continue;
                 int x0 = cx * FogMap.CELL, z0 = cz * FogMap.CELL;
-                double y = top(x0 + 2, z0 + 2) + 0.12;
-                float g = s == 0 ? 0.02f : 0.12f;
-                t.setColorRGBA_F(g, g, g + 0.02f, a00); t.addVertex(x0, y, z0);
-                t.setColorRGBA_F(g, g, g + 0.02f, a01); t.addVertex(x0, y, z0 + FogMap.CELL);
-                t.setColorRGBA_F(g, g, g + 0.02f, a11); t.addVertex(x0 + FogMap.CELL, y, z0 + FogMap.CELL);
-                t.setColorRGBA_F(g, g, g + 0.02f, a10); t.addVertex(x0 + FogMap.CELL, y, z0);
+                double y00 = cornerY(cx, cz), y10 = cornerY(cx + 1, cz), y11 = cornerY(cx + 1, cz + 1), y01 = cornerY(cx, cz + 1);
+                fogVertex(t, x0, y00, z0, a00);
+                fogVertex(t, x0, y01, z0 + FogMap.CELL, a01);
+                fogVertex(t, x0 + FogMap.CELL, y11, z0 + FogMap.CELL, a11);
+                fogVertex(t, x0 + FogMap.CELL, y10, z0, a10);
             }
         t.draw();
         GL11.glDepthMask(true);
         GL11.glEnable(GL11.GL_TEXTURE_2D);
         GL11.glPopAttrib();
         GL11.glPopMatrix();
+    }
+
+    /** a corner of the sheet: the shade's colour goes from a dim grey (explored) to a deep blue-grey haze (unexplored) */
+    static void fogVertex(Tessellator t, double x, double y, double z, float a) {
+        float k = Math.min(1, a / 0.9f);   // 0 seen .. 1 unexplored
+        t.setColorRGBA_F(0.16f - 0.08f * k, 0.18f - 0.08f * k, 0.22f - 0.06f * k, a);
+        t.addVertex(x, y, z);
+    }
+
+    final java.util.Map<Long, Integer> heights = new java.util.HashMap<Long, Integer>();
+    long heightsAt;
+
+    /** the height of a cell (its highest column of the four sampled, the crowns counted), kept a second */
+    int cellTop(int cx, int cz) {
+        long k = FogMap.key(cx, cz);
+        Integer h = heights.get(k);
+        if (h == null) {
+            int x0 = cx * FogMap.CELL, z0 = cz * FogMap.CELL, m = 0;
+            for (int dx = 0; dx < FogMap.CELL; dx += 2) for (int dz = 0; dz < FogMap.CELL; dz += 2) m = Math.max(m, top(x0 + dx + 1, z0 + dz + 1));
+            heights.put(k, h = m);
+        }
+        return h;
+    }
+
+    /** a corner's height: the highest of the four cells that meet there (the sheet is whole: no gaps between cells) */
+    double cornerY(int cx, int cz) {
+        return Math.max(Math.max(cellTop(cx - 1, cz - 1), cellTop(cx, cz - 1)), Math.max(cellTop(cx - 1, cz), cellTop(cx, cz))) + 0.25;
     }
 
     /** the shade at a cell corner: the four cells that meet there */

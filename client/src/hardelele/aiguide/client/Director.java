@@ -277,6 +277,11 @@ public class Director {
                             double d = Math.hypot(en.posX - c.px, en.posZ - c.pz);
                             if (d < bd) { bd = d; s = c.toScreen(en.posX, en.boundingBox.minY + en.height * 0.6, en.posZ); }
                         }
+                } else if (a[0].equals("pill") && mc.currentScreen instanceof Commander.Screen) {   // a pill of the panel by (a part of) its id: routine:Лесоруб, stop, ai, gather, inv
+                    int scale = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
+                    for (Object[] h : new ArrayList<Object[]>(((Commander.Screen) mc.currentScreen).hits))
+                        if ("pill".equals(h[0]) && String.valueOf(h[1]).contains(a[1]))
+                            s = new float[] { ((Integer) h[3] + (Integer) h[5]) / 2f * scale, mc.displayHeight - ((Integer) h[4] + (Integer) h[6]) / 2f * scale };
                 } else if (a[0].equals("button") && mc.currentScreen instanceof Commander.Screen) {
                     int scale = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
                     for (Object o : ((Commander.Screen) mc.currentScreen).buttons()) {
