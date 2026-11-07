@@ -10,5 +10,6 @@ class ClientSetup {
         Commander.start();
         Fog.start();
         Slice.start();
+        CaveView.start();
     }
 }

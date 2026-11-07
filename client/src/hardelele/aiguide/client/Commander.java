@@ -200,6 +200,7 @@ public class Commander {
         if (!on) return;
         on = false;
         Slice.exit();
+        CaveView.exit();
         viewedSkin = -1;
         mc.gameSettings.hideGUI = hideWas;
         if (mc.thePlayer != null) mc.renderViewEntity = mc.thePlayer;
@@ -219,7 +220,7 @@ public class Commander {
     @SubscribeEvent
     public void frame(TickEvent.RenderTickEvent e) {
         if (e.phase != TickEvent.Phase.START || !on || mc.theWorld == null || mc.thePlayer == null) return;
-        if (Cam.instance != null && Cam.instance.shot != null) { Slice.exit(); viewedSkin = -1; return; }   // film camera owns this frame
+        if (Cam.instance != null && Cam.instance.shot != null) { Slice.exit(); CaveView.exit(); viewedSkin = -1; return; }   // film camera owns this frame
 
         // One chosen hero is a camera target, including when rock hides it from the surface.
         Agent viewed = selected.size() == 1 ? renderedAgent(selected.iterator().next()) : null;
@@ -235,25 +236,26 @@ public class Commander {
                 yaw = syaw = viewed.rotationYaw;
                 boolean underground = Slice.belowSurface(viewed);
                 viewedUnderground = underground;
-                if (underground) {
+                if (underground && !CaveView.on) {
                     Slice.follow = true;
                     Slice.enter();
                     dist = sdist = 11;
                     pitch = 52;
-                } else {
+                } else if (!underground) {
                     Slice.exit();
+                    CaveView.exit();
                     dist = sdist = 22;
                     pitch = 56;
                 }
-            } else { Slice.exit(); viewedUnderground = false; }
+            } else { Slice.exit(); CaveView.exit(); viewedUnderground = false; }
         }
-        if (viewed == null && Slice.on) Slice.exit();
+        if (viewed == null) { if (Slice.on) Slice.exit(); if (CaveView.on) CaveView.exit(); }
         if (viewed != null) {
             boolean underground = Slice.belowSurface(viewed);
             if (underground != viewedUnderground) {
                 viewedUnderground = underground;
-                if (underground) { Slice.follow = true; Slice.enter(); dist = 11; pitch = 52; }
-                else { Slice.exit(); dist = 22; pitch = 56; }
+                if (underground) { if (!CaveView.on) { Slice.follow = true; Slice.enter(); dist = 11; pitch = 52; } }
+                else { Slice.exit(); CaveView.exit(); dist = 22; pitch = 56; }
             }
         }
         long now = System.nanoTime();
@@ -291,11 +293,11 @@ public class Commander {
         }
         px += mxp * speed;
         pz += mzp * speed;
-        if (viewed != null && Slice.active()) {
+        if (viewed != null && (Slice.active() || CaveView.active())) {
             // Follow both horizontal movement and the current stair level.
             px = viewed.posX;
             pz = viewed.posZ;
-            py = Slice.follow ? viewed.boundingBox.minY + 0.6 : Slice.level - 1;
+            py = CaveView.active() || Slice.follow ? viewed.boundingBox.minY + 0.6 : Slice.level - 1;
         } else {
             int gy = mc.theWorld.getHeightValue(MathHelper.floor_double(px), MathHelper.floor_double(pz));
             if (gy > 0) py = gy;
@@ -1000,7 +1002,11 @@ public class Commander {
                 return;
             }
             if (code == Keyboard.KEY_Y) Fog.on = !Fog.on;
-            if (code == Keyboard.KEY_U && viewedSkin > 0) { if (Slice.on) Slice.exit(); else { Slice.follow = true; Slice.enter(); } }
+            if (code == Keyboard.KEY_U && viewedSkin > 0) { if (CaveView.on) CaveView.exit(); if (Slice.on) Slice.exit(); else { Slice.follow = true; Slice.enter(); } }
+            if (code == Keyboard.KEY_C && viewedSkin > 0 && viewedUnderground) {
+                if (CaveView.on) { CaveView.exit(); if (viewedUnderground) { Slice.follow = true; Slice.enter(); dist = 11; pitch = 52; } }
+                else CaveView.enter();
+            }
             if (Slice.on && code == Keyboard.KEY_HOME) { Slice.follow = true; Slice.updateFollow(); }
             if (Slice.on && code == Keyboard.KEY_PRIOR) Slice.adjust(1);
             if (Slice.on && code == Keyboard.KEY_NEXT) Slice.adjust(-1);
@@ -1266,6 +1272,12 @@ public class Commander {
             int gx = mx / scale, gy = (mc.displayHeight - my) / scale;
             if (routinesOpen) { routineInput(b, state, gx, gy, wheel); return; }
             if (b >= 0 && downButton < 0 && gx >= px0() && gx < px0() + bandW() && (onPanel(my, scale) || gy < 65)) { panelInput(b, state, gx, gy); return; }
+            // The floating cave geometry is for observation. Vanilla block picking still sees
+            // the uncut world, so world clicks must not turn its apparent faces into orders.
+            if (CaveView.active() && b >= 0) {
+                if (!state) { downButton = -1; selecting = false; dragging = false; dragFrom = null; painting = false; eraseFrom = null; }
+                return;
+            }
             if (b >= 0 && !state && dragFrom != null) { panelInput(b, false, gx, gy); return; }   // an item let go over the world: nothing
             boolean shift = shiftDown();
             boolean ctrl = ctrlDown();
@@ -1454,14 +1466,23 @@ public class Commander {
                 fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(line, right - x - 8), x + 4, 10, current ? 0xB9FFCE : 0xFFFFFF);
                 hit("view", a.skin(), -1, x, 5, right, 24, null);
             }
-            if (Slice.active()) {
+            if (CaveView.active()) {
+                CaveGeometry.Result g = CaveView.volume;
+                String mode = g == null || CaveView.scanning() ? CaveView.followingOldAnchor() ? "Пещера: обновляю за агентом…" : "Пещера: строю объём…" : g.cells == 0 ? "Пещера: нет доступной полости"
+                        : g.limited() ? "ЧАСТЬ: Y" + g.minLevel + "–" + g.maxLevel + (g.exit ? " · открытый верх ↑" : " · верх не проверен")
+                        : "Полость Y" + g.minLevel + "–" + g.maxLevel + (g.exit ? " · открытый верх ↑" : " · верх не найден");
+                Ui.round(x0, 28, x0 + w, 60, 4, 0xD01A2630);
+                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(mode, w - 8), x0 + 4, 32, 0xB8E9FF);
+                String keys = "C: выкл · Q/E: поворот · колесо: масштаб · карта без кликов";
+                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(keys, w - 8), x0 + 4, 45, 0xC6DEE0);
+            } else if (Slice.active()) {
                 String mode = "Только один слой: Y=" + Slice.level + (Slice.follow ? " · за агентом" : " · вручную");
                 Ui.round(x0, 28, x0 + w, 60, 4, 0xD01A2630);
                 fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(mode, w - 8), x0 + 4, 32, 0xB8E9FF);
                 fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth("PgUp/PgDn: этаж · Home: следить · U: выкл", w - 8), x0 + 4, 45, 0xC6DEE0);
             } else {
                 Ui.round(x0, 28, x0 + w, 46, 4, 0xB01A2630);
-                String hint = selected.size() == 1 && viewedSkin < 0 ? "Агент вне прорисовки · подойди ближе" : "Выбери агента · U: срез уровня";
+                String hint = selected.size() == 1 && viewedSkin < 0 ? "Агент вне прорисовки · подойди ближе" : viewedUnderground ? "C: 3D пещера · U: слой" : "Выбери подземного агента · U: слой";
                 fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(hint, w - 8), x0 + 4, 33, 0xC6DEE0);
             }
         }
