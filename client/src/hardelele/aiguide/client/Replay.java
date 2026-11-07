@@ -64,7 +64,7 @@ public class Replay {
     Replay(String name) { this.name = name; }
 
     static File dirOf(String name) {
-        return new File(new File(Minecraft.getMinecraft().mcDataDir, "recordings"), name);
+        return new File(WorldRec.home(), name);
     }
 
     /** the session's log, read into memory */
@@ -154,7 +154,10 @@ public class Replay {
         long now = System.nanoTime();
         double dt = Recorder.instance != null ? 1.0 / 3 : lastNanos == 0 ? 0 : Math.min(0.25, (now - lastNanos) / 5e7);   // in ticks: a video frame is a third of a tick
         lastNanos = now;
-        if (playing) t = Math.min(ticks.size() - 1.001, t + dt * speed);
+        if (MultiCapture.active != null) {
+            dt = MultiCapture.active.stepTicks();
+            t = MultiCapture.active.worldTick();
+        } else if (playing) t = Math.min(ticks.size() - 1.001, t + dt * speed);
         int i = (int) Math.floor(t);
         double f = t - i;
         while (applied < i) world(ticks.get(++applied));
@@ -170,8 +173,9 @@ public class Replay {
             if (eb == null) eb = ea;
             Entity p = puppets.get(ea.id);
             if (p == null) { p = puppet(ea); if (p == null) continue; }
-            pose(p, ea, eb, f, dt * (playing ? speed : 0));
+            pose(p, ea, eb, f, dt * (MultiCapture.active != null ? 1 : playing ? speed : 0));
         }
+        if (MultiCapture.active != null) MultiCapture.active.selectCamera();
     }
 
     /** what changed in the world at this tick: blocks, cracks, sounds */

@@ -37,12 +37,17 @@ import net.minecraft.world.WorldType;
  */
 public class Director {
     static final String SCRIPT = System.getProperty("aiguide.video");
+    static final String STOPFILE = System.getProperty("aiguide.video.stopfile");
     static final Charset UTF8 = Charset.forName("UTF-8");
 
     final Minecraft mc = Minecraft.getMinecraft();
     final List<String> lines = new ArrayList<String>();
     final ConcurrentLinkedQueue<Runnable> serverQueue = new ConcurrentLinkedQueue<Runnable>();
     int pc, t, step, seen, logged, yesState, setupRadius = 96;
+    int stopCheckTicks;
+    boolean stopRequested, captureAudioConfigured, quitQueued;
+    volatile Thread quitServerThread;
+    volatile boolean quitPrepared;
     String typed;
     Writer log;
     // an eased look: from, to, over ticks
@@ -96,9 +101,35 @@ public class Director {
         }
     }
 
+    /** Only a scripted capture with its own launcher marker may stop cooperatively. */
+    void checkStopRequest() {
+        if (stopRequested || SCRIPT == null || SCRIPT.isEmpty() || STOPFILE == null || STOPFILE.isEmpty()) return;
+        if (stopCheckTicks++ % 20 != 0) return;
+        File marker = new File(STOPFILE);
+        if (!marker.exists()) return;
+        stopRequested = true;
+        String reason = "stop marker requested";
+        try (java.io.Reader reader = Files.newBufferedReader(marker.toPath(), UTF8)) {
+            char[] buffer = new char[512]; int n = reader.read(buffer);
+            if (n > 0) reason = new String(buffer, 0, n).replace('\n', ' ').replace('\r', ' ').trim();
+        } catch (Exception ex) { reason += " (reason unavailable: " + ex + ")"; }
+        event("cooperative stop: " + reason);
+        serverQueue.clear();
+        lines.clear();
+        lines.add("recstop"); lines.add("worldrec stop"); lines.add("worldrec waitstop"); lines.add("quit");
+        pc = t = step = yesState = 0;
+        typed = null; pchopBg = false; lookT = lookLen;
+    }
+
     @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent e) {
         if (e.phase != TickEvent.Phase.END) return;
+        if (!captureAudioConfigured) {
+            if (Boolean.parseBoolean(System.getProperty("aiguide.video.mute", "true")))
+                mc.gameSettings.setSoundLevel(net.minecraft.client.audio.SoundCategory.MASTER, 0);
+            captureAudioConfigured = true;
+        }
+        checkStopRequest();
         if (mc.currentScreen instanceof net.minecraft.client.gui.GuiIngameMenu) {   // the window lost focus (someone plays in front): the world must not pause
             mc.displayGuiScreen(null);
             mc.setIngameNotInFocus();
@@ -189,8 +220,21 @@ public class Director {
             return true;
         }
         // the world's recording and its playback, and the film's cameras
-        if (cmd.equals("worldrec")) {   // start <name> | stop
+        if (cmd.equals("worldrec")) {   // start <name> | stop | wait | waitstop
             final String[] a = arg.split(" ");
+            if (a[0].equals("wait") || a[0].equals("waitstop")) {
+                if (a[0].equals("wait") ? WorldRec.active != null : WorldRec.stopped()) {
+                    if (a[0].equals("waitstop") && WorldRec.closeError != null)
+                        event("WorldRec closed with error: " + WorldRec.closeError);
+                    return true;
+                }
+                if (t >= 20 * 60) {
+                    if (stopRequested && a[0].equals("waitstop")) event("cooperative stop: WorldRec stop unconfirmed; proceeding to normal client shutdown");
+                    else { event("script aborted: WorldRec transition timed out"); pc = lines.size(); }
+                    return true;
+                }
+                return false;
+            }
             serverQueue.add(new Runnable() { public void run() { if (a[0].equals("start")) WorldRec.start(a[1]); else WorldRec.stop(); } });
             return true;
         }
@@ -200,6 +244,40 @@ public class Director {
             return true;
         }
         if (cmd.equals("replayplay")) { if (Replay.active != null) { Replay.active.speed = arg.isEmpty() ? 1 : Double.parseDouble(arg); Replay.active.playing = true; } return true; }
+        if (cmd.equals("replaymulti")) { // comma-separated heroes, frames per track, UNC output directory
+            if (t == 0) {
+                String[] args = arg.split(" ", 3), ids = args[0].split(",");
+                int[] heroes = new int[ids.length];
+                for (int i = 0; i < ids.length; i++) heroes[i] = Integer.parseInt(ids[i]);
+                MultiCapture.start(heroes, Integer.parseInt(args[1]), new File(args[2]));
+                return false;
+            }
+            if (MultiCapture.active != null) return false;
+            if (MultiCapture.lastError != null) event("replaymulti failed: " + MultiCapture.lastError);
+            return true;
+        }
+        if (cmd.equals("replaytake")) { // agent, frame count, output path; one replay clock for every camera
+            String[] a = arg.split(" ", 3);
+            if (t == 0) {
+                if (Replay.active == null) throw new IllegalStateException("replaytake needs a replay");
+                int agent = Integer.parseInt(a[0]), count = Integer.parseInt(a[1]);
+                if (count < 1) throw new IllegalArgumentException("positive frame count required");
+                if (Replay.active.t + count / 3.0 >= Replay.active.ticks.size() - 1)
+                    throw new IllegalArgumentException("requested take exceeds recorded world timeline");
+                if (agent > 0) {
+                    Cam c = Cam.get(); c.autoOn = false;
+                    Cam.Shot shot = c.planFollow(agent, (count + 2) / 3 + 40);
+                    if (shot == null) throw new IllegalStateException("no clear camera for agent " + agent);
+                    c.start(shot);
+                }
+                Recorder.start(a[2]);
+                Recorder.instance.maxFrames = count;
+                Replay.active.speed = 1;
+                Replay.active.playing = true;
+                return false;
+            }
+            return Recorder.instance == null;
+        }
         if (cmd.equals("replaypause")) { if (Replay.active != null) Replay.active.playing = false; return true; }
         if (cmd.equals("replayseek")) {   // <seconds>: forward to it (blocks and all applied on the way)
             if (Replay.active != null) Replay.active.t = Math.max(Replay.active.t, Math.min(Replay.active.ticks.size() - 1.001, Double.parseDouble(arg) * 20));
@@ -712,14 +790,36 @@ public class Director {
                 if (t % 200 == 0) event("quit waits: someone is using the game (closes a minute after the last input)");
                 return false;
             }
-            Recorder.stop();
-            try {   // the crew's books, for the measure of what was real
-                net.minecraft.server.MinecraftServer s = net.minecraft.server.MinecraftServer.getServer();
-                if (s != null && s.worldServers != null) Ledger.save(s.worldServers[0].getSaveHandler().getWorldDirectory());
-                event(Ledger.report());
-            } catch (Exception e) {
-                event("ledger: " + e);
+            if (!quitQueued) {
+                Recorder.stop();
+                final MinecraftServer server = mc.getIntegratedServer();
+                quitQueued = true;
+                if (server == null) quitPrepared = true;
+                else {
+                    event("quit: waiting for recording close and integrated-server save/flush");
+                    serverQueue.add(new Runnable() { public void run() {
+                        quitServerThread = Thread.currentThread();
+                        try {
+                            String result = WorldRec.stop();
+                            event("quit: WorldRec close acknowledged: " + result);
+                            if (server.worldServers != null && server.worldServers.length > 0)
+                                Ledger.save(server.worldServers[0].getSaveHandler().getWorldDirectory());
+                            event(Ledger.report());
+                        } catch (Exception ex) {
+                            event("quit preparation failed: " + ex);
+                        } finally {
+                            server.initiateShutdown();
+                            quitPrepared = true;
+                        }
+                    } });
+                }
             }
+            // Wait for the server thread, including its region I/O, instead of relying on isServerRunning.
+            if (!quitPrepared || (quitServerThread != null && quitServerThread.isAlive())) {
+                if (t % 200 == 0) event("quit: still waiting for server termination; not forcing exit");
+                return false;
+            }
+            event("quit: integrated-server thread terminated");
             event("quit");
             mc.shutdown();
             return true;

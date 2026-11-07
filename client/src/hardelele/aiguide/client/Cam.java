@@ -488,7 +488,7 @@ public class Cam {
     void logActions(P lens, float yaw, float pitch) {
         try {
             if (actLog == null) actLog = new OutputStreamWriter(new FileOutputStream(new File(mc.mcDataDir, "act-log.txt"), true), "UTF-8");
-            double vf = Math.toRadians((70 + mc.gameSettings.fovSetting * 40) / 2), hf = Math.atan(Math.tan(vf) * mc.displayWidth / Math.max(1, mc.displayHeight));
+            double vf = Math.toRadians(mc.gameSettings.fovSetting / 2), hf = Math.atan(Math.tan(vf) * mc.displayWidth / Math.max(1, mc.displayHeight));
             double cyw = Math.cos(Math.toRadians(yaw)), syw = Math.sin(Math.toRadians(yaw)), cp = Math.cos(Math.toRadians(pitch)), sp = Math.sin(Math.toRadians(pitch));
             double fx = -syw * cp, fy = -sp, fz = cyw * cp, rx = -cyw, rz = -syw;           // forward, right
             double ux = 0 * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - 0 * fx;     // up = right x forward
@@ -558,6 +558,14 @@ public class Cam {
                 }
             }
         }
+        // A worker in a trench may have no clear low angle. Keep it observable from above.
+        for (double h = 5.8; h <= 14; h += 2.4)
+            for (double radius : new double[] { 2.4, 4.0, 7.0 })
+                for (int k = 0; k < 16; k++) {
+                    double angle = Math.toRadians(k * 22.5);
+                    P p = new P(e.x + Math.sin(angle) * radius, e.y + h, e.z + Math.cos(angle) * radius);
+                    if (ok(p, head) && !blockedView(p, head)) { f.pos = p; return f; }
+                }
         return null;
     }
     int frames;
@@ -573,14 +581,17 @@ public class Cam {
 
     // ---- every frame and every tick -------------------------------------------------------------------
 
-    @SubscribeEvent
+    @SubscribeEvent(priority = cpw.mods.fml.common.eventhandler.EventPriority.LOW)
     public void frame(TickEvent.RenderTickEvent e) {
         if (e.phase != TickEvent.Phase.START || shot == null || mc.thePlayer == null || w() == null) return;
         partial = e.renderTickTime;
         long now = System.nanoTime();
         double dt;
         double t;
-        if (Recorder.instance != null) {   // recording: the camera's time goes by video frames (a 60th of a second each), so it is even in the video
+        if (MultiCapture.active != null) {
+            dt = MultiCapture.active.cameraStepTicks();
+            t = MultiCapture.active.cameraTicks();
+        } else if (Recorder.instance != null) {   // recording: the camera's time goes by video frames (a 60th of a second each), so it is even in the video
             dt = lastNanos == 0 ? 0 : 20.0 / 60;
             frames++;
             t = Math.min(shot.len, frames * 20.0 / 60);
@@ -597,7 +608,7 @@ public class Cam {
             shot.yaw = (float) k[3];
             shot.pitch = (float) k[4];
             if (fovWas < 0) fovWas = mc.gameSettings.fovSetting;
-            mc.gameSettings.fovSetting = (float) ((k[5] - 70) / 40);
+            mc.gameSettings.fovSetting = (float) Math.max(30, Math.min(110, k[5]));
             shot.started = true;
             shot.pos = p;
             pose(p);
@@ -672,6 +683,7 @@ public class Cam {
 
     /** the shot's own time in ticks: by video frames while recording */
     double time() {
+        if (MultiCapture.active != null) return MultiCapture.active.cameraTicks();
         return Recorder.instance != null ? frames * 20.0 / 60 : ticks;
     }
 
