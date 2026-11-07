@@ -860,6 +860,11 @@ public class Commander {
         float anim;               // the panel's ease in
         float shownH = 40;        // the panel's height as shown (eased toward the wanted one)
         final int[] chatAt = new int[3];
+        boolean routinesOpen, routineEditing, routineDeleting, draftDeposit;
+        String routineSelected, routineOriginal, routineError;
+        int routineOffset;
+        final List<Object[]> routineHits = new ArrayList<Object[]>();
+        net.minecraft.client.gui.GuiTextField[] routineFields;
 
         /** the band the interface keeps to: x from, x to (gui units) */
         int bandX0() { return safeAspect <= 0 ? 0 : Math.max(0, (int) (width - height * safeAspect) / 2); }
@@ -868,16 +873,8 @@ public class Commander {
         int px0() { return (bandX0() + bandX1()) / 2 - bandW() / 2; }
 
         /** the panel's height for what is shown now */
-        List<String> routineCache = new ArrayList<String>();
-        long routineAt;
-
-        List<String> routineNames() {   // read from the world's file now and then, not every frame
-            if (System.currentTimeMillis() - routineAt > 2000) { routineAt = System.currentTimeMillis(); try { routineCache = Routines.names(); } catch (Exception e) { routineCache = new ArrayList<String>(); } }
-            return routineCache;
-        }
-
         int panelH() {
-            int h = 8 + 16 + (reply() != null ? 22 : 0) + 6 + (routineNames().isEmpty() ? 0 : 18);   // the chat, the guide's reply, the routines
+            int h = 8 + 16 + (reply() != null ? 22 : 0) + 6 + 18;   // chat, reply, scenario manager
             List<Agent> sel = selAgents();
             if (sel.size() == 1) h += 14 + (fullInv ? 4 * 20 : 2 * 20) + 18;
             else if (sel.size() > 1) h += sel.size() * 20 + 18;
@@ -936,7 +933,7 @@ public class Commander {
             new Thread(new Runnable() {
                 public void run() {
                     try {
-                        Routines.Routine known = Routines.match(text.trim(), 0.80);   // a routine the crew already knows: at once, without asking
+                        Routines.Routine known = RoutineIntent.management(text) ? null : Routines.match(text.trim(), 0.80);
                         if (known != null) {
                             int[] ws = who2;
                             if (ws.length == 0) { List<Integer> all = new ArrayList<Integer>(); for (Agent g : clientAgents()) all.add(g.skin()); ws = new int[all.size()]; for (int i = 0; i < ws.length; i++) ws[i] = all.get(i); }
@@ -976,6 +973,7 @@ public class Commander {
         @Override
         protected void keyTyped(char c, int code) {
             lastInput = vOn ? lastInput : System.currentTimeMillis();
+            if (routinesOpen) { routineKey(c, code); return; }
             if (chat.isFocused()) {   // writing to the guide: the keys are the text's
                 if (code == Keyboard.KEY_RETURN) { send(chat.getText()); chat.setText(""); chat.setFocused(false); }
                 else if (code == Keyboard.KEY_ESCAPE) chat.setFocused(false);
@@ -1062,12 +1060,11 @@ public class Commander {
         }
 
         void pill(String what) {
-            if (what.startsWith("routine:")) {   // a routine for the picked agents (none picked: the whole crew)
-                int[] ws = picked();
-                if (ws.length == 0) { List<Integer> all = new ArrayList<Integer>(); for (Agent g : clientAgents()) all.add(g.skin()); ws = new int[all.size()]; for (int i = 0; i < ws.length; i++) ws[i] = all.get(i); }
-                Routines.run(ws, what.substring(8));
-                localReply = "Рутина «" + what.substring(8) + "» запущена";
-                sentAt = GuiGuide.history.size();
+            if (what.equals("routines")) { openRoutines(); return; }
+            if (what.startsWith("routine:")) {
+                if (selected.isEmpty()) { localReply = "Сначала выбери агентов для сценария."; return; }
+                Routines.run(picked(), what.substring(8));
+                localReply = "Сценарий «" + what.substring(8) + "» запущен для выбранных агентов.";
                 return;
             }
             if (what.equals("inv")) fullInv = !fullInv;
@@ -1084,10 +1081,174 @@ public class Commander {
             }
         }
 
+        void openRoutines() {
+            routinesOpen = true; routineEditing = routineDeleting = false;
+            routineError = null; routineOffset = 0;
+            chat.setFocused(false);
+            routineError = Routines.error();
+            List<String> names = Routines.names();
+            if (routineSelected == null || !names.contains(routineSelected)) routineSelected = names.isEmpty() ? null : names.get(0);
+        }
+
+        int routineX() { return px0() + 4; }
+        int routineY() { return Math.max(8, (height - 278) / 2); }
+        int routineW() { return bandW() - 8; }
+
+        void beginRoutineEdit(boolean fresh) {
+            Routines.Routine r = fresh ? null : Routines.definition(routineSelected);
+            if (!fresh && r == null) { routineError = "Сценарий уже удалён."; return; }
+            routineOriginal = fresh ? null : r.name;
+            routineEditing = true; routineDeleting = false; routineError = null;
+            draftDeposit = r == null || r.deposit;
+            String[] values = r == null ? new String[] { "", "", "tree", "", "24" }
+                    : new String[] { r.name, r.description, r.target, r.untilItem == null ? "" : r.untilItem + " " + r.untilCount, String.valueOf(r.radius) };
+            routineFields = new net.minecraft.client.gui.GuiTextField[5];
+            for (int i = 0; i < routineFields.length; i++) {
+                routineFields[i] = new net.minecraft.client.gui.GuiTextField(fontRendererObj, routineX() + 112, routineY() + 36 + i * 30, routineW() - 124, 16);
+                routineFields[i].setMaxStringLength(i == 1 ? 200 : 80);
+                routineFields[i].setText(values[i] == null ? "" : values[i]);
+            }
+            routineFields[0].setFocused(true);
+        }
+
+        void routineKey(char c, int code) {
+            if (code == Keyboard.KEY_ESCAPE) {
+                if (routineEditing || routineDeleting) { routineEditing = routineDeleting = false; routineError = null; }
+                else routinesOpen = false;
+                return;
+            }
+            if (!routineEditing) return;
+            if (code == Keyboard.KEY_TAB) {
+                for (int i = 0; i < routineFields.length; i++) if (routineFields[i].isFocused()) {
+                    routineFields[i].setFocused(false);
+                    routineFields[(i + 1) % routineFields.length].setFocused(true);
+                    return;
+                }
+                routineFields[0].setFocused(true);
+                return;
+            }
+            for (net.minecraft.client.gui.GuiTextField field : routineFields) field.textboxKeyTyped(c, code);
+        }
+
+        void routineInput(int b, boolean state, int gx, int gy, int wheel) {
+            if (wheel != 0 && !routineEditing && !routineDeleting) {
+                int max = Math.max(0, Routines.names().size() - 6);
+                routineOffset = Math.max(0, Math.min(max, routineOffset + (wheel < 0 ? 1 : -1)));
+            }
+            if (b != 0 || !state) return;
+            if (routineEditing) for (net.minecraft.client.gui.GuiTextField field : routineFields) field.mouseClicked(gx, gy, b);
+            for (Object[] h : routineHits) if (gx >= (Integer) h[1] && gx < (Integer) h[3] && gy >= (Integer) h[2] && gy < (Integer) h[4]) {
+                routineAction((String) h[0]);
+                return;
+            }
+        }
+
+        void routineAction(String id) {
+            if (id.equals("close")) { routinesOpen = false; return; }
+            if (id.equals("cancel")) { routineEditing = routineDeleting = false; routineError = null; return; }
+            if (id.equals("new")) { beginRoutineEdit(true); return; }
+            if (id.equals("edit")) { beginRoutineEdit(false); return; }
+            if (id.equals("delete")) { if (routineSelected != null) { routineDeleting = true; routineError = null; } return; }
+            if (id.equals("backDelete")) { routineDeleting = false; return; }
+            if (id.equals("confirmDelete")) {
+                String error = Routines.forget(routineSelected);
+                if (error != null) { routineError = error; return; }
+                List<String> names = Routines.names();
+                routineSelected = names.isEmpty() ? null : names.get(0);
+                routineDeleting = false;
+                routineError = "Удалено. Уже запущенные задания продолжаются до «Стоп».";
+                return;
+            }
+            if (id.equals("deposit")) { draftDeposit = !draftDeposit; return; }
+            if (id.equals("save")) {
+                int radius;
+                try { radius = Integer.parseInt(routineFields[4].getText().trim()); }
+                catch (NumberFormatException ex) { routineError = "Радиус: число от 4 до 64."; return; }
+                String name = routineFields[0].getText().trim();
+                String error = Routines.put(routineOriginal, name, routineFields[1].getText(), routineFields[2].getText(), routineFields[3].getText(), radius, draftDeposit);
+                if (error != null) { routineError = error; return; }
+                routineSelected = name; routineEditing = false;
+                routineError = "Сохранено. Уже запущенные задания продолжают старую версию до «Стоп».";
+                return;
+            }
+            if (id.equals("run")) {
+                if (routineSelected == null) { routineError = "Сначала создай сценарий."; return; }
+                if (selected.isEmpty()) { routineError = "Сначала выбери агентов на карте."; return; }
+                Routines.run(picked(), routineSelected);
+                routineError = "Запущено для выбранных агентов: " + selected;
+                return;
+            }
+            if (id.startsWith("select:")) { routineSelected = id.substring(7); routineError = null; }
+        }
+
+        int routineButton(String title, String id, int x, int y, int mx, int my) {
+            int w = fontRendererObj.getStringWidth(title) + 12;
+            boolean over = mx >= x && mx < x + w && my >= y && my < y + 15;
+            Ui.round(x, y, x + w, y + 15, 5, over ? 0xFF4B6172 : 0xEE2B3B48);
+            fontRendererObj.drawStringWithShadow(title, x + 6, y + 3, 0xFFFFFF);
+            routineHits.add(new Object[] { id, x, y, x + w, y + 15 });
+            return x + w + 5;
+        }
+
+        void routineDialog(int mx, int my) {
+            Gui.drawRect(0, 0, width, height, 0xA0000000);
+            int x = routineX(), y = routineY(), w = routineW();
+            Ui.round(x, y, x + w, y + 278, 8, 0xF015222E);
+            routineHits.clear();
+            fontRendererObj.drawStringWithShadow(routineEditing ? (routineOriginal == null ? "Новый сценарий" : "Правка сценария") : "Сценарии мира", x + 12, y + 10, 0xFFFFFF);
+            routineButton("Закрыть", "close", x + w - 67, y + 7, mx, my);
+            if (routineEditing) {
+                String[] labels = { "Имя", "Описание", "Цель", "До запаса", "Радиус" };
+                for (int i = 0; i < labels.length; i++) {
+                    int yy = y + 36 + i * 30;
+                    fontRendererObj.drawString(labels[i], x + 12, yy + 4, 0xB8CBD8);
+                    routineFields[i].drawTextBox();
+                }
+                routineButton(draftDeposit ? "Сносить в сундук: да" : "Сносить в сундук: нет", "deposit", x + 12, y + 191, mx, my);
+                fontRendererObj.drawString("Цель: tree / ore iron_ore / block stone", x + 12, y + 213, 0x9EB0BD);
+                routineButton("Сохранить", "save", x + 12, y + 244, mx, my);
+                routineButton("Отмена", "cancel", x + 100, y + 244, mx, my);
+            } else {
+                List<String> names = Routines.names();
+                routineOffset = Math.min(routineOffset, Math.max(0, names.size() - 6));
+                for (int i = routineOffset; i < names.size() && i < routineOffset + 6; i++) {
+                    String n = names.get(i);
+                    int yy = y + 29 + (i - routineOffset) * 18;
+                    Ui.round(x + 10, yy, x + w - 10, yy + 17, 3, n.equals(routineSelected) ? 0xD0446270 : 0x8023323E);
+                    fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(n, w - 34), x + 16, yy + 4, 0xFFFFFF);
+                    routineHits.add(new Object[] { "select:" + n, x + 10, yy, x + w - 10, yy + 17 });
+                }
+                if (names.size() > 6) fontRendererObj.drawString("Колесо: список  " + (routineOffset + 1) + "–" + Math.min(names.size(), routineOffset + 6) + " / " + names.size(), x + 12, y + 140, 0xA4B8C8);
+                Routines.Routine r = Routines.definition(routineSelected);
+                if (r != null) {
+                    fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth("Цель: " + r.target + "   радиус: " + r.radius + "   сундук: " + (r.deposit ? "да" : "нет"), w - 24), x + 12, y + 160, 0xDFE8EF);
+                    fontRendererObj.drawStringWithShadow("До запаса: " + (r.untilItem == null ? "без условия" : r.untilItem + " " + r.untilCount), x + 12, y + 175, 0xB9CBD8);
+                    List<?> lines = fontRendererObj.listFormattedStringToWidth(r.description == null ? "" : r.description, w - 24);
+                    for (int i = 0; i < Math.min(2, lines.size()); i++) fontRendererObj.drawString((String) lines.get(i), x + 12, y + 190 + i * 10, 0xB9CBD8);
+                } else fontRendererObj.drawString("Пока нет сохранённых сценариев.", x + 12, y + 163, 0xB9CBD8);
+                if (routineDeleting) {
+                    fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth("Удалить «" + routineSelected + "»? Запущенные задания продолжатся.", w - 24), x + 12, y + 215, 0xFFE09A);
+                    routineButton("Удалить", "confirmDelete", x + 12, y + 244, mx, my);
+                    routineButton("Отмена", "backDelete", x + 94, y + 244, mx, my);
+                } else {
+                    fontRendererObj.drawString("Правка не меняет уже запущенные задания.", x + 12, y + 215, 0x93AAB9);
+                    int bx = x + 12;
+                    bx = routineButton("Новый", "new", bx, y + 244, mx, my);
+                    if (r != null) {
+                        bx = routineButton("Править", "edit", bx, y + 244, mx, my);
+                        bx = routineButton("Удалить", "delete", bx, y + 244, mx, my);
+                        routineButton("Запустить", "run", bx, y + 244, mx, my);
+                    }
+                }
+            }
+            if (routineError != null) fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(routineError, w - 24), x + 12, y + 228, 0xFFE0A0);
+        }
+
         /** one mouse event (b -1: a move or the wheel), the person's or the script's: the same handling */
         void input(int b, boolean state, int mx, int my, int wheel, int dx) {
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             int gx = mx / scale, gy = (mc.displayHeight - my) / scale;
+            if (routinesOpen) { routineInput(b, state, gx, gy, wheel); return; }
             if (b >= 0 && downButton < 0 && gx >= px0() && gx < px0() + bandW() && (onPanel(my, scale) || gy < 65)) { panelInput(b, state, gx, gy); return; }
             if (b >= 0 && !state && dragFrom != null) { panelInput(b, false, gx, gy); return; }   // an item let go over the world: nothing
             boolean shift = shiftDown();
@@ -1229,6 +1390,7 @@ public class Commander {
             panel(gmx, gmy);
             GL11.glPopMatrix();
             viewBar(gmx, gmy);
+            if (routinesOpen) routineDialog(gmx, gmy);
             if (dragFrom != null) {   // the item being carried with the mouse
                 Agent a = Cam.serverAgent((Integer) dragFrom[1]);
                 int slot = (Integer) dragFrom[2];
@@ -1334,12 +1496,8 @@ public class Commander {
                 y += 22;
             } else if (sentAt >= 0 && sentText.length() > 0) { fontRendererObj.drawStringWithShadow("…", x0 + 12, y, 0x708090); }
             y += 2;
-            List<String> rs = routineNames();
-            if (!rs.isEmpty()) {
-                int rx = x0 + 12;
-                for (String n : rs) { if (rx > x1 - 60) break; rx = pill("\u21bb " + n, "routine:" + n, rx, y, gmx, gmy); }
-                y += 18;
-            }
+            pill("Сценарии", "routines", x0 + 12, y, gmx, gmy);
+            y += 18;
             List<Agent> sel = selAgents();
             if (sel.isEmpty()) {
                 fontRendererObj.drawStringWithShadow("ЛКМ — копать, Ctrl — строить, клик по агенту — выбрать", x0 + 12, y, 0x9AA8B8);

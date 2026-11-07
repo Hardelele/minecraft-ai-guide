@@ -6,6 +6,9 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.block.Block;
@@ -18,7 +21,7 @@ import net.minecraft.world.WorldServer;
  * chest" into a routine) and run again by a click: a loop of find a target (a tree, a vein of an ore, a kind of block)
  * near the agent, do the skill for it, bring what it got to the chest, again, until the chest holds as much as was
  * asked or nothing is left near. Kept with the world (routines.json). A request in the chat that means a routine the
- * crew already knows runs it at once: the request and the routines' descriptions are compared by embeddings (an
+ * crew already knows runs it at once unless it asks to manage a definition: the request and the routines' descriptions are compared by embeddings (an
  * OpenAI model, through the proxy; the vectors of the descriptions kept with them).
  */
 public class Routines {
@@ -32,33 +35,63 @@ public class Routines {
 
     static final List<Routine> all = new ArrayList<Routine>();
     static boolean loaded;
+    static File loadedFile;
+    static String loadError;
 
     static File file() {
         MinecraftServer s = MinecraftServer.getServer();
-        return s == null ? null : new File(s.worldServers[0].getSaveHandler().getWorldDirectory(), "routines.json");
+        return s == null || s.worldServers == null || s.worldServers.length == 0 || s.worldServers[0] == null
+                ? null : new File(s.worldServers[0].getSaveHandler().getWorldDirectory(), "routines.json");
     }
 
     static synchronized void load() {
-        if (loaded) return;
+        File f = file();
+        if (f == null) { loaded = false; loadedFile = null; loadError = null; all.clear(); return; }
+        if (loaded && f.equals(loadedFile)) return;
         loaded = true;
+        loadedFile = f;
+        loadError = null;
         all.clear();
         try {
-            File f = file();
-            if (f == null || !f.isFile()) return;
-            JsonArray a = new JsonParser().parse(new String(java.nio.file.Files.readAllBytes(f.toPath()), "UTF-8")).getAsJsonArray();
-            for (JsonElement e : a) all.add(new Gson().fromJson(e, Routine.class));
+            all.addAll(read(f));
         } catch (Exception e) {
+            loadError = "Не удалось прочитать routines.json; файл не изменён.";
             Events.log("routines: not loaded: " + e);
         }
     }
 
-    static synchronized void save() {
+    static synchronized boolean save() {
         try {
             File f = file();
-            if (f != null) java.nio.file.Files.write(f.toPath(), new Gson().toJson(all).getBytes("UTF-8"));
+            if (f == null || !f.equals(loadedFile) || loadError != null) return false;
+            write(f, all);
+            return true;
         } catch (Exception e) {
             Events.log("routines: not saved: " + e);
+            return false;
         }
+    }
+
+    static List<Routine> read(File f) throws Exception {
+        List<Routine> out = new ArrayList<Routine>();
+        if (!f.isFile()) return out;
+        JsonArray a = new JsonParser().parse(new String(Files.readAllBytes(f.toPath()), "UTF-8")).getAsJsonArray();
+        for (JsonElement e : a) {
+            Routine r = new Gson().fromJson(e, Routine.class);
+            if (r == null || r.name == null || r.name.trim().isEmpty() || r.target == null)
+                throw new IllegalStateException("Invalid routine definition in " + f.getName());
+            out.add(r);
+        }
+        return out;
+    }
+
+    static void write(File f, List<Routine> definitions) throws Exception {
+        Path backup = new File(f.getParentFile(), "routines.json.bak").toPath();
+        if (f.isFile() && !Files.exists(backup)) Files.copy(f.toPath(), backup);
+        Path tmp = new File(f.getParentFile(), "routines.json.tmp").toPath();
+        Files.write(tmp, new Gson().toJson(definitions).getBytes("UTF-8"));
+        try { Files.move(tmp, f.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE); }
+        catch (java.nio.file.AtomicMoveNotSupportedException ex) { Files.move(tmp, f.toPath(), StandardCopyOption.REPLACE_EXISTING); }
     }
 
     static synchronized List<String> names() {
@@ -70,38 +103,90 @@ public class Routines {
 
     static synchronized Routine named(String n) {
         load();
+        if (n == null) return null;
         for (Routine r : all) if (r.name.equalsIgnoreCase(n.trim())) return r;
+        return null;
+    }
+
+    static Routine copy(Routine from) {
+        if (from == null) return null;
+        Routine r = new Routine();
+        r.name = from.name; r.description = from.description; r.target = from.target;
+        r.untilItem = from.untilItem; r.untilCount = from.untilCount;
+        r.radius = from.radius; r.deposit = from.deposit;
+        r.vec = from.vec == null ? null : from.vec.clone();
+        return r;
+    }
+
+    static synchronized Routine definition(String name) { return copy(named(name)); }
+    static synchronized String error() { load(); return loadError; }
+
+    /** A draft replaces a definition, never the object already held by a running Loop. */
+    static synchronized String put(String original, String name, String description, String target, String until, int radius, boolean deposit) {
+        load();
+        if (loadError != null) return loadError;
+        if (name == null || name.trim().isEmpty() || name.trim().length() > 48) return "Имя: от 1 до 48 символов.";
+        if (target == null) return "Цель: tree, ore NAME или block NAME.";
+        String t = target.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!(t.equals("tree") || t.startsWith("ore ") || t.startsWith("block "))) return "Цель: tree, ore NAME или block NAME.";
+        if (!t.equals("tree") && Block.getBlockFromName(t.substring(t.indexOf(' ') + 1)) == null) return "Нет такого блока: " + t;
+        if (radius < 4 || radius > 64) return "Радиус: от 4 до 64 блоков.";
+        Routine old = original == null ? null : named(original);
+        if (original != null && old == null) return "Сценарий уже удалён: " + original;
+        Routine collision = named(name);
+        if (collision != null && collision != old) return "Имя уже занято: " + name;
+        Routine r = new Routine();
+        r.name = name.trim(); r.description = description == null || description.trim().isEmpty() ? r.name : description.trim();
+        r.target = t; r.radius = radius; r.deposit = deposit;
+        if (until != null && !until.trim().isEmpty()) {
+            String[] parts = until.trim().split("\\s+");
+            if (parts.length != 2 || !parts[1].matches("\\d+") || Compiler.item(parts[0]) == null) return "Условие: ITEM COUNT, например log 64.";
+            try { r.untilCount = Integer.parseInt(parts[1]); }
+            catch (NumberFormatException ex) { return "Слишком большое количество."; }
+            if (r.untilCount < 1) return "Количество должно быть больше нуля.";
+            r.untilItem = parts[0];
+        }
+        int at = old == null ? -1 : all.indexOf(old);
+        if (at < 0) all.add(r); else all.set(at, r);
+        if (!save()) { if (at < 0) all.remove(r); else all.set(at, old); return "Не удалось сохранить routines.json."; }
+        Events.log("routines: saved " + r.name + ": " + r.target + (r.untilItem != null ? " until " + r.untilCount + " " + r.untilItem : ""));
+        final File worldFile = loadedFile;
+        new Thread(new Runnable() { public void run() {
+            double[] vec = Embed.vector(r.name + ". " + r.description);
+            synchronized (Routines.class) {
+                if (vec != null && worldFile.equals(loadedFile) && all.contains(r)) { r.vec = vec; save(); }
+            }
+        } }, "routine-embed").start();
+        return null;
+    }
+
+    static synchronized String forget(String name) {
+        load();
+        if (loadError != null) return loadError;
+        Routine r = named(name);
+        if (r == null) return "Нет сценария: " + name;
+        int at = all.indexOf(r);
+        all.remove(at);
+        if (!save()) { all.add(at, r); return "Не удалось сохранить routines.json."; }
+        Events.log("routines: forgotten " + name);
         return null;
     }
 
     /** the guide's crew_routine tool: save (a new one, or changed), run (for agents), list, forget */
     public static String fromGuide(String action, String name, String description, String target, String until, String agents) {
         load();
+        if (loadError != null) return loadError;
         String a = action == null ? "" : action.trim().toLowerCase();
         if (a.startsWith("list")) return all.isEmpty() ? "No routines yet." : "Routines: " + names();
-        if (a.startsWith("forget")) { Routine r = named(name); if (r == null) return "No routine " + name; synchronized (Routines.class) { all.remove(r); } save(); return "Forgotten: " + name; }
+        if (a.startsWith("forget")) { String error = forget(name); return error == null ? "Forgotten: " + name + ". Already running agents continue until stopped." : error; }
         if (a.startsWith("save")) {
-            if (name == null || name.trim().isEmpty() || target == null || target.trim().isEmpty()) return "A routine needs a name and a target (tree | ore NAME | block NAME).";
-            String t = target.trim().toLowerCase();
-            if (!(t.equals("tree") || t.startsWith("ore ") || t.startsWith("block "))) return "Target: tree, ore NAME (iron_ore...) or block NAME (stone, sand...).";
-            if (!t.equals("tree") && Block.getBlockFromName(t.substring(t.indexOf(' ') + 1)) == null) return "No such block: " + t;
+            Routine previous = named(name);
+            String error = put(previous == null ? null : name, name, description, target, until,
+                    previous == null ? 24 : previous.radius, previous == null || previous.deposit);
+            if (error != null) return error;
             Routine r = named(name);
-            if (r == null) { r = new Routine(); synchronized (Routines.class) { all.add(r); } }
-            r.name = name.trim();
-            r.description = description == null || description.trim().isEmpty() ? name.trim() : description.trim();
-            r.target = t;
-            r.untilItem = null; r.untilCount = 0;
-            if (until != null && until.trim().matches("\\S+\\s+\\d+")) {   // "log 64": until the chest has that many
-                String[] u = until.trim().split("\\s+");
-                if (Compiler.item(u[0]) != null) { r.untilItem = u[0]; r.untilCount = Integer.parseInt(u[1]); }
-            }
-            r.vec = null;
-            final Routine rr = r;
-            new Thread(new Runnable() { public void run() { rr.vec = Embed.vector(rr.name + ". " + rr.description); save(); } }, "routine-embed").start();
-            save();
-            Events.log("routines: saved " + r.name + ": " + r.target + (r.untilItem != null ? " until " + r.untilCount + " " + r.untilItem : ""));
             if (agents != null && !agents.trim().isEmpty()) return "Saved routine '" + r.name + "'. " + runFor(r, agents);
-            return "Saved routine '" + r.name + "' (it shows on the commander's routine bar).";
+            return "Saved routine '" + r.name + "' (open Scenarios in Commander to manage it). Already running agents keep the previous definition until stopped.";
         }
         if (a.startsWith("run")) {
             Routine r = named(name);
@@ -125,17 +210,18 @@ public class Routines {
     /** a routine for these agents: a card each (the player's, pinned), running until it is done or stopped */
     static void run(final int[] agents, final String name) {
         final Crew c = Crew.ensure();
+        final Routine scheduled = definition(name);
+        if (scheduled == null) return;
         c.queue.add(new Runnable() {
             public void run() {
-                final Routine r = named(name);
-                if (r == null) return;
+                final Routine r = scheduled;
                 WorldServer w = MinecraftServer.getServer().worldServers[0];
                 for (int n : agents)
                     for (Agent a : c.agents)
                         if (a.skin() == n && !a.isDead) {
                             Origin was = Crew.originNow;
                             Crew.originNow = Origin.PLAYER;
-                            TaskBoard.Card k = c.board.post("routine " + r.name, () -> new Loop(r)).pin(a).prio(Orders.PRIO).lease(20 * 3600);
+                            TaskBoard.Card k = c.board.post("routine " + r.name, () -> new Loop(copy(r))).pin(a).prio(Orders.PRIO).lease(20 * 3600);
                             Crew.originNow = was;
                             k.phase = null;
                             Orders.cancel(c, a);
