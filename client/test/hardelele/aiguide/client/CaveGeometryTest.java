@@ -31,6 +31,16 @@ public final class CaveGeometryTest {
         for (CaveGeometry.Face face : r.faces)
             check(!(face.x == 0 && face.y == 4 && face.z == 0), "unreached air rendered as solid");
 
+        // A nearby 34-cell pocket must not replace the already mapped route to the top
+        // merely because the tracked agent steps into it. The viewer keeps the first seed.
+        for (int x = -8; x <= -3; x++) for (int z = -8; z <= -3; z++)
+            if (!(x == -8 && z == -3) && !(x == -3 && z == -8)) f.open(x,3,z);
+        CaveGeometry.Result pocket = CaveGeometry.build(f,-8,3,-8,8,0,8,100,1000);
+        check(pocket.cells == 34 && !pocket.exit, "disjoint pocket fixture did not stay local");
+        CaveGeometry.Result mappedAgain = CaveGeometry.build(f,0,1,0,8,0,8,100,1000);
+        check(mappedAgain.cells == path.length && mappedAgain.exit,
+                "fixed seed lost the mapped exit after a disjoint pocket appeared");
+
         Fixture sealed = new Fixture();
         sealed.open(0,1,0); sealed.open(0,4,0); // same X/Z, no connected ascent
         CaveGeometry.Result s = CaveGeometry.build(sealed,0,1,0,4,0,8,100,1000);

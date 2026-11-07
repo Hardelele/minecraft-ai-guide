@@ -300,18 +300,17 @@ public class Commander {
         }
         px += mxp * speed;
         pz += mzp * speed;
-        if (viewed != null && (Slice.active() || CaveView.active())) {
-            // Hold the cave at its last underground anchor after the tracked agent exits.
-            // The actor is drawn only while it remains inside or immediately above the volume.
-            if (!CaveView.active() || viewedUnderground) {
-                px = viewed.posX;
-                pz = viewed.posZ;
-                if (CaveView.active()) {
-                    CaveGeometry.Result g = CaveView.volume;
-                    py = g != null && g.cells > 0 && !CaveView.scanning()
-                            ? (g.minLevel + g.maxLevel) * 0.5 : viewed.boundingBox.minY + 0.6;
-                } else py = Slice.follow ? viewed.boundingBox.minY + 0.6 : Slice.level - 1;
-            }
+        if (CaveView.active()) {
+            // The selected component is a persistent map. Agent movement cannot change
+            // its center or silently replace it with a disconnected air pocket.
+            px = CaveView.anchorX();
+            pz = CaveView.anchorZ();
+            CaveGeometry.Result g = CaveView.volume;
+            py = g != null && g.cells > 0 ? (g.minLevel + g.maxLevel) * 0.5 : viewed.boundingBox.minY + 0.6;
+        } else if (viewed != null && Slice.active()) {
+            px = viewed.posX;
+            pz = viewed.posZ;
+            py = Slice.follow ? viewed.boundingBox.minY + 0.6 : Slice.level - 1;
         } else {
             int gy = mc.theWorld.getHeightValue(MathHelper.floor_double(px), MathHelper.floor_double(pz));
             if (gy > 0) py = gy;
@@ -1520,14 +1519,15 @@ public class Commander {
             }
             if (CaveView.active()) {
                 CaveGeometry.Result g = CaveView.volume;
-                String mode = CaveView.holdingLast() ? "ЧАСТЬ: старый обзор; агент вне открытой ячейки"
-                        : g == null || CaveView.scanning() ? CaveView.followingOldAnchor() ? "Пещера: обновляю за агентом…" : "Пещера: строю объём…" : g.cells == 0 ? "Пещера: нет доступной полости"
+                String mode = CaveView.holdingLast() ? "ЧАСТЬ: прежняя карта; обновление ждёт"
+                        : g == null || CaveView.scanning() ? "Пещера: обновляю карту…" : g.cells == 0 ? "Пещера: нет доступной полости"
                         : g.limited() ? "ЧАСТЬ: Y" + g.minLevel + "–" + g.maxLevel + (g.exit ? " · открытый верх ↑" : " · верх не проверен")
                         : "Полость Y" + g.minLevel + "–" + g.maxLevel + (g.exit ? " · открытый верх ↑" : " · верх не найден");
                 Ui.round(x0, 28, x0 + w, 60, 4, 0xD01A2630);
                 fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(mode, w - 8), x0 + 4, 32, 0xB8E9FF);
-                String keys = viewedUnderground ? "C: выкл · Q/E: поворот · колесо: масштаб · карта без кликов"
-                        : "Агент вышел; C закрыть · Q/E: поворот · колесо: масштаб";
+                String keys = !viewedUnderground ? "Агент вышел; C закрыть · Q/E: поворот · колесо: масштаб"
+                        : CaveView.agentOutside() ? "Агент вне карты · C дважды: новая карта"
+                        : "C: выкл · Q/E: поворот · колесо: масштаб · карта без кликов";
                 fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(keys, w - 8), x0 + 4, 45, 0xC6DEE0);
             } else if (Slice.active()) {
                 String mode = "Только один слой: Y=" + Slice.level + (Slice.follow ? " · за агентом" : " · вручную");

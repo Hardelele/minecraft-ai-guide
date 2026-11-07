@@ -53,12 +53,21 @@ public final class CaveView {
     static boolean scanning() { return active() && scanner != null && !scanner.done; }
     static boolean holdingLast() { return active() && holdingLast; }
 
-    static boolean followingOldAnchor() {
-        if (!scanning() || Commander.instance == null) return false;
-        Agent a = Commander.instance.renderedAgent(Commander.instance.selected.iterator().next());
-        return a != null && (Math.abs(MathHelper.floor_double(a.posX) - sampledX) > 3
-                || Math.abs(MathHelper.floor_double(a.boundingBox.minY) - sampledY) > 1
-                || Math.abs(MathHelper.floor_double(a.posZ) - sampledZ) > 3);
+    static double anchorX() { return sampledX + 0.5; }
+    static double anchorZ() { return sampledZ + 0.5; }
+
+    static boolean agentOutside() {
+        if (!active() || volume == null || volume.cells == 0) return false;
+        Commander c = Commander.instance;
+        Agent a = c.renderedAgent(c.selected.iterator().next());
+        return a != null && !inside(a, volume, !Slice.belowSurface(a));
+    }
+
+    private static boolean inside(Agent a, CaveGeometry.Result g, boolean surfaced) {
+        int x = MathHelper.floor_double(a.posX), y = MathHelper.floor_double(a.boundingBox.minY + 0.2), z = MathHelper.floor_double(a.posZ);
+        return g != null && (g.contains(x, y, z) || g.contains(x, y + 1, z)
+                || surfaced && g.exit && Math.abs(x - g.exitX) <= 2 && Math.abs(z - g.exitZ) <= 2
+                && y >= g.exitY && y <= g.exitY + 4);
     }
 
     static void enter() {
@@ -69,6 +78,14 @@ public final class CaveView {
         volume = null;
         scanner = null;
         holdingLast = false; lastValidTick = -1; sampledSkin = -1;
+        Agent selected = c.renderedAgent(c.selected.iterator().next());
+        if (selected != null) {
+            sampledWorld = c.mc.theWorld;
+            sampledSkin = c.selected.iterator().next();
+            sampledX = MathHelper.floor_double(selected.posX);
+            sampledY = MathHelper.floor_double(selected.boundingBox.minY + 0.2);
+            sampledZ = MathHelper.floor_double(selected.posZ);
+        }
         clearFaces();
         c.painting = false; c.paintFrom = null; c.paintTo = null; c.eraseFrom = null; c.eraseTo = null;
         if (c.mc.currentScreen instanceof Commander.Screen) {
@@ -144,43 +161,35 @@ public final class CaveView {
             volume = scanner.out;
             clearFaces(); holdingLast = false;
         }
-        boolean moved = Math.abs(ax - sampledX) > 3 || Math.abs(ay - sampledY) > 1 || Math.abs(az - sampledZ) > 3;
         boolean changed = !surfaced && sampledWorld == mc.theWorld && checkedTick != tick && nearbyBlockChanged(mc.theWorld, ax, ay, az);
         checkedTick = tick;
-        // Once the tracked agent reaches daylight, retain the underground component rather
-        // than replacing it with a one-cell sky scan or silently switching off the overview.
-        if (scanner == null || sampledWorld != mc.theWorld || !surfaced && (changed || scanner.done && (moved || tick - completedTick >= 40))) {
-            CaveGeometry.Scanner next = scan(mc.theWorld, ax, ay, az);
-            boolean hold = next.done && next.out.cells == 0 && CaveRetention.hold(
-                    sampledWorld == mc.theWorld, sampledSkin == skin,
-                    volume == null ? 0 : volume.cells, lastValidTick, tick);
-            scanner = next;
-            holdingLast = hold;
-            if (!hold) {
-                volume = next.out;
-                clearFaces(); scanNanos = 0; steppedTick = -1;
+        // The selected air component is a map, not a camera probe at the agent's feet.
+        // Walking into a separate water-side pocket must not replace the route to the exit.
+        if (scanner == null || sampledWorld != mc.theWorld || sampledSkin != skin
+                || !surfaced && scanner.done && (changed || tick - completedTick >= 40)) {
+            boolean newMap = scanner == null || sampledWorld != mc.theWorld || sampledSkin != skin;
+            if (newMap) {
+                sampledX = ax; sampledY = ay; sampledZ = az;
+                volume = null; clearFaces(); lastValidTick = -1; holdingLast = false;
             }
+            Director.log("cave view: scan seed " + sampledX + " " + sampledY + " " + sampledZ
+                    + (newMap ? " new" : " refresh"));
+            scanner = scan(mc.theWorld, sampledX, sampledY, sampledZ);
+            scanNanos = 0; steppedTick = -1;
+            if (volume == null) { volume = scanner.out; clearFaces(); }
             sampledWorld = mc.theWorld;
             sampledSkin = skin;
-            sampledX = ax; sampledY = ay; sampledZ = az;
-            if (scanner.done) completedTick = tick;
+            if (scanner.done) finishScan(mc.theWorld, skin, tick);
         }
         if (!scanner.done && steppedTick != tick) {
             long start = System.nanoTime();
             scanner.step(CELLS_PER_TICK);
             scanNanos += System.nanoTime() - start;
             steppedTick = tick;
-            cacheIcons(mc.theWorld);
-            if (scanner.done) {
-                completedTick = tick;
-                if (volume.cells > 0) lastValidTick = tick;
-                Director.log("cave view: " + volume.cells + " cells, " + volume.faces.size() + " faces, "
-                        + (scanNanos / 1000000) + " ms scan" + (volume.limited() ? ", bounded" : ""));
-            }
+            if (scanner.done) finishScan(mc.theWorld, skin, tick);
         }
-        boolean selectedInside = volume != null && (volume.contains(ax, ay, az) || volume.contains(ax, ay + 1, az)
-                || surfaced && volume.exit && Math.abs(ax - volume.exitX) <= 2 && Math.abs(az - volume.exitZ) <= 2
-                && ay >= volume.exitY && ay <= volume.exitY + 4);
+        cacheIcons(mc.theWorld);
+        boolean selectedInside = inside(a, volume, surfaced);
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT | GL11.GL_LIGHTING_BIT | GL11.GL_TEXTURE_BIT | GL11.GL_FOG_BIT | GL11.GL_LINE_BIT);
         GL11.glPushMatrix();
         try {
@@ -219,6 +228,17 @@ public final class CaveView {
 
     private static void clearFaces() {
         icons.clear(); faceBlocks.clear(); faceMeta.clear(); faceOrder.clear(); ironFaces.clear(); orderDirty = true;
+    }
+
+    private static void finishScan(World w, int skin, long tick) {
+        completedTick = tick;
+        if (scanner.out.cells > 0) {
+            volume = scanner.out; clearFaces(); lastValidTick = tick; holdingLast = false;
+        } else if (CaveRetention.hold(sampledWorld == w, sampledSkin == skin,
+                volume == null ? 0 : volume.cells, lastValidTick, tick)) holdingLast = true;
+        else { volume = scanner.out; clearFaces(); holdingLast = false; }
+        Director.log("cave view: " + scanner.out.cells + " cells, " + scanner.out.faces.size() + " faces, "
+                + (scanNanos / 1000000) + " ms scan" + (scanner.out.limited() ? ", bounded" : ""));
     }
 
     private static boolean nearbyBlockChanged(World w, int ax, int ay, int az) {
