@@ -44,6 +44,7 @@ public class Director {
     final List<String> lines = new ArrayList<String>();
     final ConcurrentLinkedQueue<Runnable> serverQueue = new ConcurrentLinkedQueue<Runnable>();
     int pc, t, step, seen, logged, yesState, setupRadius = 96;
+    double takeSpeed = 1;
     int stopCheckTicks;
     boolean stopRequested, captureAudioConfigured, quitQueued;
     volatile Thread quitServerThread;
@@ -345,7 +346,7 @@ public class Director {
                 if (Replay.active == null) throw new IllegalStateException("replaytake needs a replay");
                 int agent = Integer.parseInt(a[0]), count = Integer.parseInt(a[1]);
                 if (count < 1) throw new IllegalArgumentException("positive frame count required");
-                if (Replay.active.t + count / 3.0 >= Replay.active.ticks.size() - 1)
+                if (Replay.active.t + count * takeSpeed / 3.0 >= Replay.active.ticks.size() - 1)
                     throw new IllegalArgumentException("requested take exceeds recorded world timeline");
                 if (agent > 0) {
                     Cam c = Cam.get(); c.autoOn = false;
@@ -355,12 +356,13 @@ public class Director {
                 }
                 Recorder.start(a[2]);
                 Recorder.instance.maxFrames = count;
-                Replay.active.speed = 1;
+                Replay.active.speed = takeSpeed;
                 Replay.active.playing = true;
                 return false;
             }
             return Recorder.instance == null;
         }
+        if (cmd.equals("replayspeed")) { takeSpeed = Double.parseDouble(arg); return true; }   // the next replaytake at this speed (a time-lapse of what was recorded)
         if (cmd.equals("replaypause")) { if (Replay.active != null) Replay.active.playing = false; return true; }
         if (cmd.equals("replayseek")) {   // <seconds>: forward to it (blocks and all applied on the way)
             if (Replay.active != null) Replay.active.t = Math.max(Replay.active.t, Math.min(Replay.active.ticks.size() - 1.001, Double.parseDouble(arg) * 20));
