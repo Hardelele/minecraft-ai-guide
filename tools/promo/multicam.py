@@ -14,7 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 from capture_impact import low_impact
-from capture_config import executable, existing_capture_artifacts, fresh_attempt_prefix, verified_runtime_jar
+from capture_config import executable, existing_capture_artifacts, fresh_attempt_prefix, verified_runtime_jars
 
 ROOT = Path(os.environ.get("AIGUIDE_CAPTURE_ROOT", os.environ.get("AIGUIDE_MEDIA_ROOT", r"C:\Users\harde\Videos\aiguide-promo")))
 MEDIA = Path(os.environ.get("AIGUIDE_MEDIA_ROOT", r"\\192.168.1.9\c\Videos\aiguide-promo"))
@@ -63,6 +63,7 @@ ap.add_argument("--resume", action="store_true", help="verify and reuse known tr
 ap.add_argument("--single-client", action="store_true", help="experimental coordinated cameras in one hidden replay client; requires matching runtime")
 ap.add_argument("--capture-source", help="exact source commit used to build the deployed multicapture runtime")
 ap.add_argument("--expected-jar-sha256", help="SHA256 of the approved client JAR installed in the selected game")
+ap.add_argument("--expected-server-jar-sha256", help="SHA256 of the approved server JAR installed in the selected game")
 ap.add_argument("--encoder", choices=("h264_nvenc", "libx264"), default="h264_nvenc", help="hero encoder; explicit choice, no automatic fallback")
 ap.add_argument("--ffmpeg", help="FFmpeg executable; otherwise AIGUIDE_FFMPEG, PATH, legacy fallback")
 ap.add_argument("--ffprobe", help="FFprobe executable; otherwise AIGUIDE_FFPROBE, FFmpeg sibling, PATH, legacy fallback")
@@ -71,6 +72,8 @@ if a.single_client and not a.capture_source:
     ap.error("--single-client requires --capture-source; verify the deployed runtime before use")
 if a.single_client and not a.expected_jar_sha256:
     ap.error("--single-client requires --expected-jar-sha256; verify the installed JAR before use")
+if a.single_client and not a.expected_server_jar_sha256:
+    ap.error("--single-client requires --expected-server-jar-sha256; verify the installed JAR before use")
 if a.single_client and not str(MEDIA).startswith("\\\\"):
     ap.error("single-client capture requires a UNC AIGUIDE_MEDIA_ROOT (the laptop's own share is allowed)")
 try:
@@ -84,10 +87,10 @@ if any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_
 if not math.isfinite(a.start) or not math.isfinite(a.seconds) or a.start < 0 or a.seconds <= 0 or round(a.seconds * 60) < 1:
     ap.error("invalid interval")
 frames = round(a.seconds * 60)
-runtime_jar = None
+runtime_jars = []
 if a.single_client:
     try:
-        runtime_jar = verified_runtime_jar(ROOT / a.game, a.expected_jar_sha256)
+        runtime_jars = verified_runtime_jars(ROOT / a.game, a.expected_jar_sha256, a.expected_server_jar_sha256)
     except (OSError, ValueError) as exc:
         ap.error(str(exc))
 if a.ui:
@@ -103,22 +106,25 @@ if a.ui:
     except (OSError, KeyError, ValueError, subprocess.CalledProcessError) as exc:
         ap.error("live Commander UI source is unusable: " + str(exc))
 dest = MEDIA / "captures" / a.name
-dest.mkdir(exist_ok=True, parents=True)
 manifest_path = dest / "manifest.json"
 manifest = {"recording": a.recording, "requested_start_tick": a.start * 20,
             "fps": 60, "frames": frames, "hidden": True, "tracks": [],
+            "capture_source": a.capture_source if a.single_client else None,
+            "client_sha256": a.expected_jar_sha256.lower() if a.single_client else None,
+            "server_sha256": a.expected_server_jar_sha256.lower() if a.single_client else None,
             "interface": "Use the live Commander video and its world_tick timeline; replay omits inventory and UI history."}
 if manifest_path.exists():
     if not a.resume:
         ap.error("manifest exists; use --resume to validate and reuse it, or choose a new --name")
     existing = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if any(existing.get(key) != manifest[key] for key in ("recording", "requested_start_tick", "fps", "frames", "hidden")):
-        ap.error("existing manifest recording, start tick, frame count or capture mode differs")
+    if any(existing.get(key) != manifest[key] for key in ("recording", "requested_start_tick", "fps", "frames", "hidden", "capture_source", "client_sha256", "server_sha256")):
+        ap.error("existing manifest recording, interval, capture mode or runtime identity differs")
     if not isinstance(existing.get("tracks"), list):
         ap.error("existing manifest has no track list")
     manifest = existing  # preserve other tracks and additional evidence fields
 elif a.resume:
     ap.error("--resume requires an existing manifest; untracked video cannot be assumed valid")
+dest.mkdir(exist_ok=True, parents=True)
 clock = None
 known = {}
 for track in manifest["tracks"]:
@@ -175,7 +181,8 @@ quit
 """, encoding="utf-8")
     attempt = {"mode": "single_client_round_robin", "heroes": missing,
                "source": a.capture_source, "expected_jar_sha256": a.expected_jar_sha256.lower(),
-               "runtime_jars": [runtime_jar], "script": str(script),
+               "expected_server_jar_sha256": a.expected_server_jar_sha256.lower(),
+               "runtime_jars": runtime_jars, "script": str(script),
                "encoder": a.encoder, "ffmpeg": capture_ffmpeg, "ffprobe": FP,
                "started_wall_ns": time.time_ns(), "validated_heroes": [], "failures": {}}
     manifest.setdefault("attempts", []).append(attempt)

@@ -9,7 +9,8 @@ Do not call this mode validated yet.
 
 The original per-hero path remains the default. Opt in with `multicam.py RECORDING
 --name NAME --start SECONDS --seconds DURATION --single-client --capture-source SHA
---expected-jar-sha256 SHA256 --recordings UNC_RECORDINGS --ui LIVE_UI_MP4`. All media and generated scripts stay
+--expected-jar-sha256 CLIENT_SHA256 --expected-server-jar-sha256 SERVER_SHA256
+--recordings UNC_RECORDINGS --ui LIVE_UI_MP4`. All media and generated scripts stay
 under the configured laptop UNC capture root. `--resume --heroes 4` revalidates all
 known tracks and renders only missing requested heroes; unknown files are refused.
 
@@ -36,7 +37,7 @@ Timelines are independently checked for exact frame indices, tick progression,
 frame count, rate and geometry. Runtime reports say `encoded_pending_external_validation`;
 only the Python checks add verified tracks to the persistent manifest. Failed or
 unverified media is retained for review, never automatically deleted or overwritten.
-Each attempt records requested source SHA and the verified installed AI Guide JAR hash,
+Each attempt records requested source SHA and both verified installed AI Guide JAR hashes,
 script identity, wall timestamps, runner exit and per-track validation failures.
 Selected encoder and resolved FFmpeg/FFprobe paths are recorded for each batch;
 the Java report also identifies the encoder actually requested by Recorder.
@@ -94,12 +95,20 @@ Use the logged-in user's Windows session: hidden-desktop OpenGL under SSH/sessio
 has not been established. Keep League preflight/cooperative stop enabled.
 
 Set `$repo`, `$game`, `$minecraft`, `$java8`, `$recordings` and `$sourceSha` to the
-actual approved laptop paths/revision; set `$expectedJarSha256` to the SHA256 of the
-approved client JAR and `$liveUi` to the genuine Commander MP4 whose `.timeline.tsv`
+actual approved laptop paths/revision; set `$expectedJarSha256` and
+`$expectedServerJarSha256` to the hashes of the approved client and server JARs,
+and `$liveUi` to the genuine Commander MP4 whose `.timeline.tsv`
 covers the requested interval. These are required inputs, not guessed paths.
-The single-client preflight rejects a missing, duplicate or mismatched AIGuide JAR
-before it creates the capture output directory. The operator still must establish
-that the approved JAR was built from `$sourceSha`; the flag alone is metadata.
+For reference only, the desktop integrated build at `d110b566b2688efe98d08d68eaae91187bfee5fa`
+had client SHA256 `0C480808516F48C4005BAA1CD22D7D3594B23000048BEEA3EE32C884A568BAC2`
+and server SHA256 `66A73D060158ABF87D7961EDC89A3454885ED89B67E7C879B45F0E0AE95906AF`.
+Verify the approved build and the bytes actually copied into the isolated game's
+`mods` folder; never assume these example hashes match a later build.
+The single-client preflight rejects a missing, duplicate or mismatched client or
+server JAR before it creates the capture output directory. A resume requires the
+same source and both hashes as the original manifest, so tracks from different
+runtimes cannot be mixed. The operator still must establish that the approved
+JARs were built from `$sourceSha`; the flag alone is metadata.
 The binaries are resolved without launching them: explicit flags, then environment,
 then PATH (FFprobe also checks FFmpeg's sibling), then the legacy PC path. An invalid
 explicit/env path is an error instead of silently falling back.
@@ -120,7 +129,7 @@ python "$repo\tools\promo\multicam.py" colony_v4_fixed --name rejected_codec --e
 python "$repo\tools\promo\multicam.py" colony_v4_fixed --name rejected_path --ffmpeg 'X:\missing\ffmpeg.exe'
 
 # Only after the authorized runtime window, using a NEW unused output name:
-python "$repo\tools\promo\multicam.py" colony_v4_fixed --name laptop_software_gate_1s --start 40 --seconds 1 --heroes 1 2 3 4 --single-client --encoder libx264 --capture-source $sourceSha --expected-jar-sha256 $expectedJarSha256 --game $game --recordings $recordings --ui $liveUi
+python "$repo\tools\promo\multicam.py" colony_v4_fixed --name laptop_software_gate_1s --start 40 --seconds 1 --heroes 1 2 3 4 --single-client --encoder libx264 --capture-source $sourceSha --expected-jar-sha256 $expectedJarSha256 --expected-server-jar-sha256 $expectedServerJarSha256 --game $game --recordings $recordings --ui $liveUi
 ```
 
 Expected: each track has60 frames at1920x1080/60fps; all timeline arrays are identical,

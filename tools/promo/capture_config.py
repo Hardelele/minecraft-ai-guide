@@ -11,21 +11,28 @@ LEGACY_BIN = Path(r"C:\Users\harde\AppData\Local\Microsoft\WinGet\Packages\Gyan.
 CAPTURE_SUFFIXES = ("", ".timeline.tsv", ".frames.txt", ".ffmpeg.txt")
 
 
-def verified_runtime_jar(game_dir, expected_sha256):
-    """Fail before capture unless exactly one installed AI Guide JAR has the approved bytes."""
+def _verified_jar(mods, pattern, expected_sha256, flag):
     if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256 or ""):
-        raise ValueError("--expected-jar-sha256 requires a 64-character SHA256 digest")
-    jars = sorted(jar for jar in (Path(game_dir) / "mods").glob("*AIGuide*.jar") if jar.is_file())
+        raise ValueError(f"{flag} requires a 64-character SHA256 digest")
+    jars = sorted(jar for jar in mods.glob(pattern) if jar.is_file())
     if len(jars) != 1:
-        raise ValueError(f"expected exactly one installed AIGuide JAR in {Path(game_dir) / 'mods'}; found {len(jars)}")
+        raise ValueError(f"expected exactly one installed {pattern} in {mods}; found {len(jars)}")
     digest = hashlib.sha256()
     with jars[0].open("rb") as data:
         for chunk in iter(lambda: data.read(1024 * 1024), b""):
             digest.update(chunk)
     actual = digest.hexdigest()
     if actual != expected_sha256.lower():
-        raise ValueError(f"installed AIGuide JAR SHA256 mismatch: {jars[0]}")
+        raise ValueError(f"installed {pattern} SHA256 mismatch: {jars[0]}")
     return {"path": str(jars[0]), "sha256": actual}
+
+
+def verified_runtime_jars(game_dir, expected_client_sha256, expected_server_sha256):
+    """Pin the separate client and server mods used by a coordinated take."""
+    mods = Path(game_dir) / "mods"
+    client = _verified_jar(mods, "AIGuideClient*.jar", expected_client_sha256, "--expected-jar-sha256")
+    server = _verified_jar(mods, "AIGuide-*.jar", expected_server_sha256, "--expected-server-jar-sha256")
+    return [client, server]
 
 
 def existing_capture_artifacts(video):
