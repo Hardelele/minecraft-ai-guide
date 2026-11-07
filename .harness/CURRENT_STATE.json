@@ -45,12 +45,12 @@
       "doesNotProve": "A fresh tracker search after this checkpoint or any readiness of deployed user JARs."
     },
     {
-      "claim": "The 0abc1e8 candidate's installed diagnostic client/server JAR hashes are F2AF35348769DE9BED98A057B7C2899D74B86E4AB9DB05925DA9832EA5743BE4 and 3AC7780F336037869CDE3D8A5ADD7B9BEB7BC81B3A7F657FE783077BD367260E; they are installed only in isolated game-0abc1e8-four/diag copies.",
+      "claim": "The 0abc1e8 candidate's diagnostic client/server JAR hashes are F2AF35348769DE9BED98A057B7C2899D74B86E4AB9DB05925DA9832EA5743BE4 and 3AC7780F336037869CDE3D8A5ADD7B9BEB7BC81B3A7F657FE783077BD367260E; installation was verified in isolated game-0abc1e8-four/diag copies.",
       "checkedAt": "2026-11-07T17:39:15+05:00",
       "sourceIdentity": "0abc1e84865f6200b28748fc9338f5b64cb8c334",
       "method": "Get-FileHash SHA256 on game-0abc1e8-four mods; compare capture manifests and runtime_jars",
       "evidence": "C:/Users/harde/Videos/aiguide-promo/game-0abc1e8-four/mods; //192.168.1.9/c/Videos/aiguide-promo/verification/captures/fb_0abc1e8_four_1s_20261107/manifest.json",
-      "doesNotProve": "That the user's active client or any future live Commander copy runs this exact pair."
+      "doesNotProve": "Absence of these JARs elsewhere, or that the user's active client or any future live Commander copy runs this exact pair."
     },
     {
       "claim": "A one-slot FOV-corrected hero 3 capture encoded 60 frames with a genuine aligned UI track. The earlier 790624 gate encoded gray frames; the fovSetting degree fix is in the later source. A d294470 diagnostic was guard-stopped and is partial_failed.",
@@ -77,20 +77,20 @@
       "doesNotProve": "That the Agent is currently mining, Commander renders ore/body/actions correctly, or who created user routines. Ledger iron break6 is PLAYER action, not Agent 1 proof."
     },
     {
-      "claim": "Laptop SSH alias is reachable with logged-in HONOR console session 1, Radeon 780M, Java 8u481, FFmpeg 7.1, and about 308.5 GiB free. Exact legacy 1.7.10 version/profile, 48 libraries, and assets index are absent at checked laptop paths; direct SSH game launch would run Session 0.",
-      "checkedAt": "2026-11-07 (earlier read-only preflight; exact clock not retained)",
-      "sourceIdentity": "SSH alias laptop / DESKTOP-JDT5CU0; read-only system inventory",
-      "method": "SSH whoami/query session/Java/FFmpeg/device and path existence/free-space checks",
-      "evidence": "//192.168.1.9/c/Videos/aiguide-promo (reachable); C:/Users/harde/Videos/aiguide-promo/game-codex-test",
-      "doesNotProve": "A runnable laptop game or working interactive OpenGL gate; staging and session-1 launch remain untested."
+      "claim": "A prior read-only tool report described reachable laptop SSH, HONOR console session 1, Radeon 780M, Java 8u481, FFmpeg 7.1, about 308.5 GiB free, and missing checked-path legacy 1.7.10 profile/libraries/assets. The command output was not persisted as a primary evidence artifact.",
+      "checkedAt": "2026-11-07 (prior preflight; exact clock not retained; report reviewed at 17:39:15+05:00)",
+      "sourceIdentity": "Prior control-session tool report for SSH alias laptop / DESKTOP-JDT5CU0",
+      "method": "Reported SSH whoami/query session/Java/FFmpeg/device, path existence and free-space checks; no saved command transcript",
+      "evidence": "Control-session preflight report only; //192.168.1.9/c/Videos/aiguide-promo reachability was separately checked at handoff",
+      "doesNotProve": "Independent reproducibility of the laptop inventory, a runnable game, or interactive OpenGL. Recheck exact dependencies before staging."
     },
     {
-      "claim": "At the last game preflight League of Legends.exe PID 18860 was active (started 17:30:38), and the user explicitly said they would finish and report. No live Commander copy-world client was launched after that message.",
-      "checkedAt": "2026-11-07 (earlier read-only preflight; exact clock not retained)",
-      "sourceIdentity": "desktop process snapshot and user/lead message",
-      "method": "Read-only process guard plus received user hold instruction",
-      "evidence": "Control-session messages for 2026-11-07 League hold; //192.168.1.9/c/Videos/aiguide-promo/verification/captures/fb_0abc1e8_four_1s_20261107/manifest.json",
-      "doesNotProve": "That League remains running now; do not poll or launch until the user's completion signal."
+      "claim": "A control-session preflight report recorded League of Legends.exe PID 18860 with start 17:30:38; the user then said 'Закончу и сообщу'. This agent did not initiate the requested live Commander copy-world gate before this handoff.",
+      "checkedAt": "2026-11-07 (prior preflight; exact clock not retained; report reviewed at 17:39:15+05:00)",
+      "sourceIdentity": "Control-session preflight report and user/lead hold messages, not a persisted process snapshot",
+      "method": "Read prior guard result and user instruction; scope non-launch statement to this agent's requested gate",
+      "evidence": "Control-session messages for 2026-11-07 League hold; prior process-guard output was not saved as an artifact",
+      "doesNotProve": "That PID 18860 remains active now, or that no other agent launched any process. Wait for the user's completion signal."
     },
     {
       "claim": "The source handoff identifies the 51-second v2 film as rejected and specifies a one-block-above-existing-door joke, actual Agent 3 meat acquisition, readable farm/crafting/handoff/mine action, and an ending; it reports no send to Renata. The old film metadata is historical and was not reverified in this checkpoint.",
@@ -104,7 +104,8 @@
   "inferences": [
     "cmdr-slice-ore2 is a plausible in-range mine-view fixture because Agent 1 and several exposed iron blocks are close; actual live camera/actions still require a bounded test.",
     "The gray 790624 frames are explained by setting GameSettings.fovSetting to zero after treating degree-valued runtime field as options-file slider; 0abc's successful same-pose probe supports the correction.",
-    "Laptop-only game testing is feasible after staging exact 1.7.10 dependencies and launching in the logged-in session, but is not ready or authorized under the current hold."
+    "Direct game launch through SSH would likely run in Session 0 rather than the logged-in desktop; this is an untested session-routing inference.",
+    "Laptop-only game testing may be feasible after rechecking and staging exact 1.7.10 dependencies and launching in the logged-in session, but is not ready or authorized under the current hold."
   ],
   "unknowns": [
     "Whether Commander in the current candidate displays selected miner, recognizable iron ore, strikes, drops and inventory change, layer switching and surface return at useful frame rate.",
@@ -127,8 +128,8 @@
     "codeSha": "0abc1e84865f6200b28748fc9338f5b64cb8c334",
     "clientJarSha256": "F2AF35348769DE9BED98A057B7C2899D74B86E4AB9DB05925DA9832EA5743BE4",
     "serverJarSha256": "3AC7780F336037869CDE3D8A5ADD7B9BEB7BC81B3A7F657FE783077BD367260E",
-    "installedOnlyInIsolatedCopies": ["game-0abc1e8-diag", "game-0abc1e8-four"],
-    "liveCommanderCopyWorldGate": "NOT_STARTED_USER_LEAGUE_HOLD",
+    "verifiedInIsolatedCopies": ["game-0abc1e8-diag", "game-0abc1e8-four"],
+    "liveCommanderCopyWorldGate": "THIS_AGENT_NOT_STARTED_USER_LEAGUE_HOLD",
     "fourCameraGate": "PASS_BOUNDED_1S_SURFACE_ONLY",
     "film": "REJECTED_DRAFT_NOT_SENT",
     "hold": "No game or heavy recording on desktop or laptop until user says League work is finished. Preserve user Java/TLauncher/OBS processes."
