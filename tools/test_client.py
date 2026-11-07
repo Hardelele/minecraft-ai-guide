@@ -12,8 +12,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "client", "src", "hardelele", "aiguide", "client")
 TEST = os.path.join(ROOT, "client", "test")
 OUT = os.path.join(ROOT, "build", "test-classes")
-PURE = ["Sight.java"]   # the classes with no game in them
-TESTS = ["hardelele.aiguide.client.SightTest"]
+PURE = ["Sight.java", "Result.java", "Retry.java", "Situation.java", "Reflex.java", "Reflexes.java", "Undo.java", "Moves.java"]   # the classes with no game in them
+TESTS = ["hardelele.aiguide.client.SightTest", "hardelele.aiguide.client.ReflexesTest"]
 
 
 def main():
