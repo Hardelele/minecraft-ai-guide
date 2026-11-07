@@ -80,7 +80,7 @@ final class Reflexes {
     };
     /** a shaft or a hole it cannot walk out of (walks to several goals failed from here): up and out */
     static final Rule ESCAPE = new Rule("escape", 55, true, 200) {
-        boolean test(Situation st) { return st.onGround && st.failsHere >= 3 && (st.pit || st.walking && st.stuck >= 40) && st.still >= 20 && (st.blocks > 0 || st.digTool); }
+        boolean test(Situation st) { return st.onGround && st.failsHere >= 3 && st.pit && st.still >= 20 && (st.blocks > 0 || st.digTool); }
     };
     /** the goal 2+ blocks up and near (a log over the head, a ledge), or up out of a pit: a pillar under itself or steps cut */
     static final Rule CLIMB = new Rule("climb", 50, true, 100) {
@@ -93,9 +93,13 @@ final class Reflexes {
     static final Rule DESCEND = new Rule("descend", 50, true, 100) {
         boolean test(Situation st) { return st.walking && st.onGround && st.goalDy <= -2 && st.goalFlat <= 6 && st.stuck >= 40 && st.still >= 20 && !st.walkingDigging() && !st.inWater && st.digTool; }
     };
-    /** walking and getting nowhere on the level for 3 s: a jump, a step aside, a step back, a soft block out of the way */
-    static final Rule STUCK = new Rule("stuck", 45, true, 100) {
-        boolean test(Situation st) { return st.walking && st.onGround && st.stuck >= 60 && st.still >= 40 && Math.abs(st.goalDy) <= 1 && !st.inWater && !st.walkingDigging(); }
+    /**
+     * walking and getting nowhere on the level for 3 s, past the path finder (on its own route or digging way): a jump,
+     * a step aside, a step back, a soft block out of the way. Not about the way: when it does not help, the walk's own
+     * machine goes on (a route, a way dug) and ends the walk itself; the walks' memory keeps it from coming back to it.
+     */
+    static final Rule STUCK = new Rule("stuck", 45, false, 100) {
+        boolean test(Situation st) { return st.walking && st.walkState >= 1 && st.onGround && st.stuck >= 60 && st.still >= 40 && Math.abs(st.goalDy) <= 1 && !st.inWater && !st.walkingDigging(); }
     };
 
     /** every reflex, the highest priority first */

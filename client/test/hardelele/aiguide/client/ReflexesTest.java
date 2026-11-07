@@ -123,7 +123,9 @@ public class ReflexesTest {
         check("goal 4 down without a tool: nothing", pick(s).equals("-"));
 
         s = calm(); s.walking = true; s.goalDy = 0; s.goalFlat = 6; s.stuck = 70; s.still = 50;
-        check("goal on the level, stuck 3.5 s, not moving: stuck", pick(s).equals("stuck"));
+        check("goal on the level, stuck 3.5 s, still on the path finder: its own business", pick(s).equals("-"));
+        s.walkState = 1;
+        check("goal on the level, stuck 3.5 s on its own route, not moving: stuck", pick(s).equals("stuck"));
         s.still = 0;
         check("stuck on the goal but moving about (a way round): nothing", pick(s).equals("-"));
 
@@ -146,7 +148,7 @@ public class ReflexesTest {
         s.inLava = true;
         check("lava on a pillar: lava still", pick(s).equals("lava"));
 
-        s = calm(); s.walking = true; s.goalDy = 0; s.goalFlat = 6; s.stuck = 70; s.still = 50; s.taskGuard = 45;
+        s = calm(); s.walking = true; s.walkState = 1; s.goalDy = 0; s.goalFlat = 6; s.stuck = 70; s.still = 50; s.taskGuard = 45;
         check("a player's card (guard 45): stuck (45) does not interrupt it", pick(s).equals("-"));
 
         // the order of the list
@@ -188,10 +190,10 @@ public class ReflexesTest {
         Host h2 = new Host() {
             public int[] react(Reflex r) { names.add(r.name()); return new int[] { 2, 0, 1 }; }   // fails after 2 ticks
         };
-        Situation w = calm(); w.walking = true; w.goalDy = 0; w.goalFlat = 6; w.stuck = 70; w.still = 50;
+        Situation w = calm(); w.walking = true; w.goalDy = 3; w.goalFlat = 1; w.stuck = 70; w.still = 50; w.blocks = 3;
         tick(s2, w, h2);
         tick(s2, w, h2);
-        check("a stuck reaction that failed: the walk is told NO_PATH", h2.lastFailed == Result.NO_PATH && s2.wayFailed(w.now) == Result.NO_PATH);
+        check("a climb that failed: the walk is told NO_PATH", h2.lastFailed == Result.NO_PATH && s2.wayFailed(w.now) == Result.NO_PATH);
         check("taken once", s2.wayFailed(w.now) == null);
         int reacted = h2.names.size();
         for (int i = 0; i < 20; i++) tick(s2, w, h2);
@@ -199,6 +201,11 @@ public class ReflexesTest {
         w.now += 200;
         tick(s2, w, h2);
         check("and may fire again after its rest", h2.names.size() == reacted + 1);
+        Reflexes.Slot<int[]> s5 = new Reflexes.Slot<int[]>();
+        Situation u = calm(); u.walking = true; u.walkState = 1; u.goalDy = 0; u.goalFlat = 6; u.stuck = 70; u.still = 50;
+        tick(s5, u, h2);
+        tick(s5, u, h2);
+        check("a stuck reaction that failed: the walk is not ended by it (its own machine goes on)", s5.wayFailed(u.now) == null);
 
         // asked for by a task
         Reflexes.Slot<int[]> s3 = new Reflexes.Slot<int[]>();
