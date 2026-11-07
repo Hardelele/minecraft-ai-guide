@@ -5,7 +5,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /** Exercises the observation seam with a sealed ore and an explicitly exposed face. */
 public final class ObservedOreMemoryTest {
@@ -55,6 +57,19 @@ public final class ObservedOreMemoryTest {
         Exploration.read(reloaded, new DataInputStream(new ByteArrayInputStream(bytes.toByteArray())));
         if (!knowsOre(reloaded) || knowsOre(new Exploration.Memory()))
             throw new AssertionError("observation memory did not persist or isolate");
+        Exploration.Memory frontiers = new Exploration.Memory();
+        Exploration.Pos start = new Exploration.Pos(5, 64, 5);
+        for (int x = 0; x <= 10; x++) for (int z = 0; z <= 10; z++) frontiers.ground.add(new Exploration.Pos(x, 64, z));
+        frontiers.trail.add(start);
+        Set<Exploration.Pos> reached = new HashSet<Exploration.Pos>();
+        for (int salt = 0; salt < 64; salt++) reached.add(Exploration.choose(frontiers, start, salt));
+        if (reached.size() <= 24) throw new AssertionError("frontier enumeration stranded candidate 25");
+        java.util.List<int[]> sources = java.util.Arrays.asList(new int[] {1, 64, 0}, new int[] {2, 64, 0});
+        HashSet<Long> tried = new HashSet<Long>();
+        int[] first = Orders.Gather.nearestKnown(sources, tried, 0, 64, 0, 24, 16, 8, false);
+        tried.add(Crew.key(first[0], first[1], first[2]));
+        int[] second = Orders.Gather.nearestKnown(sources, tried, 0, 64, 0, 24, 16, 8, false);
+        if (second == null || second[0] != 2) throw new AssertionError("failed resource blocks next observed source");
         System.out.println("sealed ore absent; exposed ore observed; memory persisted and isolated");
     }
 }

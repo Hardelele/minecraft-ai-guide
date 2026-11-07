@@ -278,8 +278,8 @@ public final class Exploration {
             if (a.y != b.y) return Integer.compare(a.y, b.y);
             return Integer.compare(a.z, b.z);
         } });
-        // Retry salts enumerate distinct candidates rather than repeatedly choosing an unreachable winner.
-        return candidates.isEmpty() ? null : candidates.get(Math.floorMod(salt, Math.min(24, candidates.size())));
+        // Retry salts must reach every candidate; a fixed top-K can strand the first reachable one.
+        return candidates.isEmpty() ? null : candidates.get(Math.floorMod(salt, candidates.size()));
     }
     static long trailKey(int x, int z) { return ((long) x << 32) ^ (z & 0xffffffffL); }
     static double trailDistance(Map<Long, List<Pos>> trail, Pos p) {

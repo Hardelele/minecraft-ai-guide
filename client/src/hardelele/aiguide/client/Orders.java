@@ -248,8 +248,24 @@ class Orders {
         final net.minecraft.item.Item it;
         final int n;
         Crew.Task cur;
+        final HashSet<Long> tried = new HashSet<Long>();
+        int[] target;
         int start = -1, tries;
         Gather(net.minecraft.item.Item it, int n) { this.it = it; this.n = n; }
+
+        static int[] nearestKnown(List<int[]> points, HashSet<Long> tried, int ax, int ay, int az,
+                                  int radius, int below, int above, boolean planar) {
+            int[] best = null;
+            double distance = Double.MAX_VALUE;
+            for (int[] p : points) {
+                if (tried.contains(Crew.key(p[0], p[1], p[2]))) continue;
+                if (Math.abs(p[0] - ax) > radius || Math.abs(p[2] - az) > radius || p[1] < ay - below || p[1] > ay + above) continue;
+                double d = planar ? Math.hypot(p[0] - ax, p[2] - az) : Math.abs(p[0] - ax) + Math.abs(p[2] - az) + Math.abs(p[1] - ay) * 1.5;
+                if (d < distance) { best = p; distance = d; }
+            }
+            return best;
+        }
+
         public Result step(Agent a, WorldServer w) {
             Exploration.observe(Crew.instance, a, w);
             int have = Skills.count(a.bag, it, -1) + (it == Day1.LOG ? Skills.count(a.bag, Day1.LOG2, -1) : 0);
@@ -261,31 +277,53 @@ class Orders {
                 boolean expedition = cur instanceof Prospecting;
                 cur = null;
                 if (expedition) return result;
+                if (target != null) { tried.add(Crew.key(target[0], target[1], target[2])); target = null; }
+                have = Skills.count(a.bag, it, -1) + (it == Day1.LOG ? Skills.count(a.bag, Day1.LOG2, -1) : 0);
+                if (have - start >= n) return Result.OK;
                 if (++tries > n + 6) return have > start ? Result.OK : Result.NO_ITEMS;
             }
             int ax = (int) Math.floor(a.posX), ay = (int) Math.floor(a.posY), az = (int) Math.floor(a.posZ);
             if (it == Day1.LOG || it == Day1.LOG2) {
-                int[] best = null;
-                double bd = 1e9;
-                for (int[] t : Crew.trunks(w, ax, ay, az, 32)) { double d = Math.hypot(t[0] - ax, t[2] - az); if (d < bd && !Fell.tree(w, t[0], t[1], t[2]).isEmpty()) { bd = d; best = t; } }
+                List<int[]> known = new ArrayList<int[]>(Exploration.knownResources(w, it));
+                if (it == Day1.LOG) known.addAll(Exploration.knownResources(w, Day1.LOG2));
+                int[] best = nearestKnown(known, tried, ax, ay, az, 32, 8, 8, true);
                 if (best == null) return have > start ? Result.OK : Result.NO_ITEMS;
-                cur = new TaskBoard.Seq(new Fell(Fell.tree(w, best[0], best[1], best[2])), new Crew.Collect(best[0] + 0.5, best[1], best[2] + 0.5, 6)).lenient();
-                Events.log("crew: " + a.getCustomNameTag() + " goes for logs (a tree at " + best[0] + " " + best[1] + " " + best[2] + ")");
+                target = best.clone();
+                final int[] found = target.clone();
+                Crew.Task fell = new Crew.Task() {
+                    Crew.Task task;
+                    public Result step(Agent who, WorldServer world) {
+                        if (task == null) {
+                            if (!Exploration.visible(who, world, found[0], found[1], found[2])) return Result.NO_PATH;
+                            if (!isLog(world.getBlock(found[0], found[1], found[2]))) {
+                                Exploration.invalidate(world, found[0], found[1], found[2]); return Result.GONE;
+                            }
+                            List<int[]> logs = Fell.tree(world, found[0], found[1], found[2]);
+                            if (logs.isEmpty()) return Result.NO_ITEMS;
+                            task = new Fell(logs);
+                        }
+                        Result result = task.step(who, world);
+                        if (world.isAirBlock(found[0], found[1], found[2])) Exploration.invalidate(world, found[0], found[1], found[2]);
+                        return result;
+                    }
+                };
+                cur = new TaskBoard.Seq(new Crew.GoTo(found[0] + 0.5, found[1], found[2] + 0.5, 3), fell,
+                        new Crew.Collect(found[0] + 0.5, found[1], found[2] + 0.5, 6)).lenient();
+                Events.log("crew: " + a.getCustomNameTag() + " approaches observed logs at " + found[0] + " " + found[1] + " " + found[2]);
                 return Result.RUNNING;
             }
             if (it == Day2.IRON_ORE || it == net.minecraft.init.Items.coal) {
                 cur = new Prospecting(Crew.instance, it, n - (have - start));
                 return Result.RUNNING;
             }
-            int[] best = null;
-            double bd = 1e9;
+            List<int[]> candidates = new ArrayList<int[]>();
             for (int[] point : Exploration.knownResources(w, it)) {
-                if (Crew.instance != null && !Ground.mayDig(Crew.instance, point[0], point[1], point[2], "gather")) continue;
-                double d = Math.abs(point[0] - ax) + Math.abs(point[2] - az) + Math.abs(point[1] - ay) * 1.5;
-                if (d < bd) { bd = d; best = point; }
+                if (Crew.instance == null || Ground.mayDig(Crew.instance, point[0], point[1], point[2], "gather")) candidates.add(point);
             }
+            int[] best = nearestKnown(candidates, tried, ax, ay, az, 24, 16, 8, false);
             if (best == null) { Events.log("crew: " + a.getCustomNameTag() + " finds no " + Ledger.name(new ItemStack(it)) + " to dig near"); return have > start ? Result.OK : Result.NO_ITEMS; }
             final int[] found = best.clone();
+            target = found.clone();
             Crew.Task harvest = new Crew.Task() {
                 Crew.Task mine;
                 public Result step(Agent who, WorldServer world) {
