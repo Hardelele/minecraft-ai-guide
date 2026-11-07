@@ -1,157 +1,141 @@
 {
   "schema": 1,
-  "updatedAt": "2026-11-07T17:39:15+05:00",
-  "objective": "Finish the rejected Minecraft AI Guide promo with a real Commander mine view, visible Agent 3 meat gathering, readable planting/crafting/tool handoff, UI routine management, a complete ending, and full audiovisual review before delivery to Renata.",
-  "userPriority": "After the user's League completion signal, run one isolated visible Commander gate on a copy of cmdr-slice-ore2; prove mine and routine UI behavior before further film capture.",
+  "updatedAt": "2026-11-07T23:02:23+05:00",
+  "objective": "Complete Minecraft AI Guide 3D cave feature, all-four night/door/run cinematic hook, coherent promo with limited user-voice narration, exact captions, full AV review, and reversible game-profile integration.",
+  "userPriority": "Full takeover by a NEW visible elevated Claude Code terminal. Claude owns all remaining implementation, filming, editing and verification; Codex agents are stopped. Read .harness/CLAUDE_TAKEOVER_20261107.md first.",
   "canonicalRemote": "git@github.com:Hardelele/minecraft-ai-guide.git",
   "mainSha": "bae2af05ed55eae535cc8be14a8c668650353fcb",
   "activeBranches": [
     {
       "worktree": "C:/develop/games/minecraft/aiguide-mine-view",
       "branch": "codex/mine-view-20261107",
-      "implementationShaBeforeThisStateCommit": "0abc1e84865f6200b28748fc9338f5b64cb8c334",
-      "role": "isolated integration and runtime candidate; state-only commit follows"
+      "shaCheckedAtHandoff": "7f8ee2b6dacd28a7910a2a041293ccb01ec7dda0",
+      "role": "clean integration candidate before docs-only handoff commit; includes cave and door code"
+    },
+    {
+      "worktree": "C:/develop/games/minecraft/aiguide-door-entry",
+      "branch": "codex/door-entry-20261107",
+      "shaCheckedAtHandoff": "c81474d9053fcb694bd8118d30b3e9054e876425",
+      "role": "clean historical door candidate already cherry-picked into integration"
     },
     {
       "worktree": "C:/develop/games/minecraft/aiguide",
       "branch": "main",
       "shaCheckedAtHandoff": "bae2af05ed55eae535cc8be14a8c668650353fcb",
-      "role": "do not mutate or merge without a separate gate"
+      "role": "clean main; not yet integrated"
     },
     {
       "worktree": "C:/develop/games/minecraft/aiguide-codex",
       "branch": "codex/commander-finish",
       "shaCheckedAtHandoff": "66c4d402057490326bfb17a329251784ef740cd2",
-      "role": "historical dirty handoff; preserve its NEXT_SESSION_TZ.md and CURRENT_STATE.json"
+      "role": "historical original TZ; preserve"
     }
   ],
   "authorizations": [
-    "User authorized one isolated test client and the earlier bounded diagnostic captures using copied world/config; no main merge or current draft delivery authorization is implied.",
-    "Previous user authorization to send a corrected, fully checked film to Renata remains contingent on completion, recipient verification, and actual message confirmation.",
-    "User said 'Закончу и сообщу' while League was active: hold all game launches and heavy recording on desktop and laptop until their completion signal. Read-only/lightweight work may continue."
+    "User expressly requested all remaining work be handed to a new visible Claude Code elevated terminal, not an internal Codex agent.",
+    "User authorized creation of real gameplay/cinematic video and short partial narration in their confirmed ElevenLabs voice lapshin-z23. No normal-profile install yet.",
+    "Earlier Telegram send attempt was stopped by Escape before Send; no video delivered. Obtain fresh explicit instruction before any future Telegram send."
   ],
   "rejectedDecisions": [
-    "aiguide_agents_final_v2.mp4 is a rejected 51-second draft; its filename is not an acceptance result. Do not send it.",
-    "Gray 790624 capture and guard-stopped d294470 capture are failed/partial evidence, not usable acceptance media.",
-    "A one-layer Slice is not a simultaneous view of all cave floors; do not claim that capability."
+    "51s v2 is rejected and never sent; filenames containing final are not acceptance.",
+    "V9b is a rejected caption experiment; do not use its QA frames to diagnose delivered V9.",
+    "Do not claim a one-layer Slice or bounded PART CaveView reveals every world cave.",
+    "Do not use the failed all-four door gate as evidence of entry/closure/night or manually edit/teleport world to fake it."
   ],
   "provenFacts": [
     {
-      "claim": "Current isolated implementation tree is 0abc1e8 and clean before this state file; main remains bae2af0. The prior tracker search returned zero matches for Minecraft, AI Guide, and aiguide, so no task claim exists.",
-      "checkedAt": "2026-11-07T17:39:15+05:00",
-      "sourceIdentity": "git local worktrees; OpenProject handoff search from codex 66c4d40",
-      "method": "git rev-parse/status/remote; read HANDOFF_TRACKER_SEARCH.json",
-      "evidence": "C:/develop/games/minecraft/aiguide-codex/.harness/HANDOFF_TRACKER_SEARCH.json",
-      "doesNotProve": "A fresh tracker search after this checkpoint or any readiness of deployed user JARs."
+      "claim": "Integration worktree was clean at 7f8ee2b before this handoff; main remains bae2af0. Fresh tracker searches for Minecraft, AI Guide and aiguide found no matching task.",
+      "checkedAt": "2026-11-07T23:02:23+05:00",
+      "sourceIdentity": "local Git worktrees/OpenProject authenticated read-only search",
+      "method": "git rev-parse/status; agent tracker query",
+      "evidence": "C:/develop/games/minecraft/aiguide-mine-view; C:/develop/games/minecraft/aiguide-codex/.harness/HANDOFF_TRACKER_SEARCH.json",
+      "doesNotProve": "Current normal user game uses integration code or a future matching task will not appear."
     },
     {
-      "claim": "The 0abc1e8 candidate's diagnostic client/server JAR hashes are F2AF35348769DE9BED98A057B7C2899D74B86E4AB9DB05925DA9832EA5743BE4 and 3AC7780F336037869CDE3D8A5ADD7B9BEB7BC81B3A7F657FE783077BD367260E; installation was verified in isolated game-0abc1e8-four/diag copies.",
-      "checkedAt": "2026-11-07T17:39:15+05:00",
-      "sourceIdentity": "0abc1e84865f6200b28748fc9338f5b64cb8c334",
-      "method": "Get-FileHash SHA256 on game-0abc1e8-four mods; compare capture manifests and runtime_jars",
-      "evidence": "C:/Users/harde/Videos/aiguide-promo/game-0abc1e8-four/mods; //192.168.1.9/c/Videos/aiguide-promo/verification/captures/fb_0abc1e8_four_1s_20261107/manifest.json",
-      "doesNotProve": "Absence of these JARs elsewhere, or that the user's active client or any future live Commander copy runs this exact pair."
+      "claim": "Bounded CaveView core visually passed independent 960px review in 9f7 gameplay: real connected upper/lower passages, surface mouth, orbit/zoom, agent focus, normal return; map says PART.",
+      "checkedAt": "2026-11-07 (latest visual review)",
+      "sourceIdentity": "cave source 9f7afd228cf6679e3a768d4c4f429a711e6d6469",
+      "method": "sampled 960px frames/WorldRec/JAR identity",
+      "evidence": "//192.168.1.9/c/Videos/aiguide-promo/verification/cave_9f7afd2/cave_bridge_live_attempt2.mp4",
+      "doesNotProve": "All unseen caves, full aesthetic parity with reference PNGs, or iron mining in the cave overview clip."
     },
     {
-      "claim": "A one-slot FOV-corrected hero 3 capture encoded 60 frames with a genuine aligned UI track. The earlier 790624 gate encoded gray frames; the fovSetting degree fix is in the later source. A d294470 diagnostic was guard-stopped and is partial_failed.",
-      "checkedAt": "2026-11-07T17:39:15+05:00",
-      "sourceIdentity": "0abc1e8 one-slot; prior 790624a and d294470 gates",
-      "method": "Read capture manifests and prior first/mid/last frame and RenderGlobal/FBO diagnostics; compare local 1.7.10 GameSettings/EntityRenderer bytecode",
-      "evidence": "//192.168.1.9/c/Videos/aiguide-promo/verification/captures/fb_0abc1e8_diag_h3_1s_20261107; //192.168.1.9/c/Videos/aiguide-promo/verification/captures/fb790624_diag_h3_1s_20261107; //192.168.1.9/c/Videos/aiguide-promo/verification/captures/fb_d294470_diag_h3_1s_20261107; C:/develop/games/minecraft/aiguide-mine-view/tools/promo/FOV_RUNTIME_EVIDENCE.md",
-      "doesNotProve": "Four-camera capture, mine action, reliable longer recordings, or final movie acceptance."
+      "claim": "Integrated 7f8ee2b client/server JARs built and source tests passed in isolated laptop build, while normal user TLauncher mods remain old.",
+      "checkedAt": "2026-11-07 (latest build)",
+      "sourceIdentity": "7f8ee2b6dacd28a7910a2a041293ccb01ec7dda0; client SHA C1A9F1799B0DA82A99B65F9ED7019A8A96B406B0C61434D93E5036A056756DA2; server SHA 771D31020E43B956718DFD3EF34189044BD6BE7F6CDCB1C3729394EACFD21D03",
+      "method": "full javac/JAR build, Java8 unit tests, source mutant tests, mod hashes",
+      "evidence": "//192.168.1.9/c/Videos/aiguide-promo/verification; C:/Users/harde/AppData/Roaming/.minecraft/mods",
+      "doesNotProve": "Door runtime success or normal profile deployment."
     },
     {
-      "claim": "The bounded four-hero 0abc1e8 gate completed: hero 1/2/3/4 and genuine UI each have 60 frames at 1920x1080 60 fps, world ticks 800.333333..820.0; runtime JAR identities matched; visual sampled first/mid/last terrain and distinct actors. UI source frames 2271..2322 repeat 23 frames. Capture ran about 22 seconds inside a 71-second startup/attempt; normal quit and 771 compressed region roots were read back.",
-      "checkedAt": "2026-11-07T17:39:15+05:00",
-      "sourceIdentity": "0abc1e84865f6200b28748fc9338f5b64cb8c334; isolated game-0abc1e8-four; capture PID 12772 exited before League start",
-      "method": "Read manifest, per-track timelines/encoder logs, prior frame probes and shutdown/region verification",
-      "evidence": "//192.168.1.9/c/Videos/aiguide-promo/verification/captures/fb_0abc1e8_four_1s_20261107",
-      "doesNotProve": "Mine/iron/meat/routine behavior, continuous audiovisual quality, or a complete film."
+      "claim": "All-four guard=false shelter gate failed because Agent1 began underground and had NO_PATH; neither four-person entry nor door closure/night was proven.",
+      "checkedAt": "2026-11-07 (latest runtime)",
+      "sourceIdentity": "integrated 7f8ee2b isolated door game; WorldRec 1302 ticks",
+      "method": "runtime log/WorldRec trajectories/door block state",
+      "evidence": "//192.168.1.9/c/Videos/aiguide-promo/verification/door_7f8ee2b_retry/door_live_ui_attempt1.mp4; //192.168.1.9/c/Videos/aiguide-promo/recordings/door_entry_7f8ee2b_attempt1/session.bin.gz",
+      "doesNotProve": "Door route code itself fails when all agents start at surface."
     },
     {
-      "claim": "The known cmdr-slice-ore2 source world has Agent 1 at about (-127.7,56.79,168.5) with stone pickaxe item 274; player at about (-130.3,69,171.3), about 12.7 blocks away; 96 iron ore blocks within 18 blocks, five air-exposed. Agents 2/3/4 are at surface y69. No routines.json was present in this world. level.dat SHA256 is 9920C5551899D1C6C60D025CCBF12D6B625595E99B29DD6E8745D7B131ED9469.",
-      "checkedAt": "2026-11-07 (earlier read-only preflight; exact clock not retained)",
-      "sourceIdentity": "C:/Users/harde/Videos/aiguide-promo/game-codex-test/saves/cmdr-slice-ore2",
-      "method": "Read-only crew.json/region NBT and file inventory; Get-FileHash level.dat",
-      "evidence": "C:/Users/harde/Videos/aiguide-promo/game-codex-test/saves/cmdr-slice-ore2/crew.json; C:/Users/harde/Videos/aiguide-promo/game-codex-test/saves/cmdr-slice-ore2/region; C:/Users/harde/Videos/aiguide-promo/game-codex-test/saves/cmdr-slice-ore2/level.dat",
-      "doesNotProve": "That the Agent is currently mining, Commander renders ore/body/actions correctly, or who created user routines. Ledger iron break6 is PLAYER action, not Agent 1 proof."
+      "claim": "Latest user-viewed promo is V9 55.7667s with real cave overview; user reports poor first-two-second context, caption/action mismatch from ~30s and wants cinematic gameplay dominant. User wants all four inside/night and running toward camera at opening.",
+      "checkedAt": "2026-11-07T23:02:23+05:00",
+      "sourceIdentity": "V9 SHA256 070ECE79143FE7D691302D7E51611BFAC7BD18B1F45222A5B32073071C67EA1A; user feedback",
+      "method": "final MP4 hash/frame metadata; user visual evaluation; exact-frame QA",
+      "evidence": "//192.168.1.9/c/Videos/aiguide-promo/out/story_v9_rough_cave_audiofix.mp4; //192.168.1.9/c/Videos/aiguide-promo/edit/story_v5_20261107/qa_v9_exact_cuts/index.json",
+      "doesNotProve": "V9 is accepted or that night/door/run shots exist."
     },
     {
-      "claim": "A prior read-only tool report described reachable laptop SSH, HONOR console session 1, Radeon 780M, Java 8u481, FFmpeg 7.1, about 308.5 GiB free, and missing checked-path legacy 1.7.10 profile/libraries/assets. The command output was not persisted as a primary evidence artifact.",
-      "checkedAt": "2026-11-07 (prior preflight; exact clock not retained; report reviewed at 17:39:15+05:00)",
-      "sourceIdentity": "Prior control-session tool report for SSH alias laptop / DESKTOP-JDT5CU0",
-      "method": "Reported SSH whoami/query session/Java/FFmpeg/device, path existence and free-space checks; no saved command transcript",
-      "evidence": "Control-session preflight report only; //192.168.1.9/c/Videos/aiguide-promo reachability was separately checked at handoff",
-      "doesNotProve": "Independent reproducibility of the laptop inventory, a runnable game, or interactive OpenGL. Recheck exact dependencies before staging."
-    },
-    {
-      "claim": "A control-session preflight report recorded League of Legends.exe PID 18860 with start 17:30:38; the user then said 'Закончу и сообщу'. This agent did not initiate the requested live Commander copy-world gate before this handoff.",
-      "checkedAt": "2026-11-07 (prior preflight; exact clock not retained; report reviewed at 17:39:15+05:00)",
-      "sourceIdentity": "Control-session preflight report and user/lead hold messages, not a persisted process snapshot",
-      "method": "Read prior guard result and user instruction; scope non-launch statement to this agent's requested gate",
-      "evidence": "Control-session messages for 2026-11-07 League hold; prior process-guard output was not saved as an artifact",
-      "doesNotProve": "That PID 18860 remains active now, or that no other agent launched any process. Wait for the user's completion signal."
-    },
-    {
-      "claim": "The source handoff identifies the 51-second v2 film as rejected and specifies a one-block-above-existing-door joke, actual Agent 3 meat acquisition, readable farm/crafting/handoff/mine action, and an ending; it reports no send to Renata. The old film metadata is historical and was not reverified in this checkpoint.",
-      "checkedAt": "2026-11-07T17:39:15+05:00",
-      "sourceIdentity": "codex/commander-finish 66c4d402057490326bfb17a329251784ef740cd2 handoff",
-      "method": "Read NEXT_SESSION_TZ.md and prior CURRENT_STATE.json; checked source take paths exist",
-      "evidence": "C:/develop/games/minecraft/aiguide-codex/.harness/NEXT_SESSION_TZ.md; //192.168.1.9/c/Videos/aiguide-promo/takes/ep2_takeB.mp4; //192.168.1.9/c/Videos/aiguide-promo/captures/colony_v4_payoff3",
-      "doesNotProve": "Current full-media readability, story completion, sound quality, or current Telegram delivery state."
+      "claim": "User confirmed ElevenLabs personal RU clone lapshin-z23 for partial voiceover. No VO was synthesized in this project before handoff.",
+      "checkedAt": "2026-11-07T23:02:23+05:00",
+      "sourceIdentity": "user reply; ElevenLabs personal voice list via authorized SOPS media-apis",
+      "method": "explicit user selection; agent read-only voice inventory",
+      "evidence": "current conversation; //192.168.1.9/c/Videos/aiguide-promo/edit/story_v5_20261107",
+      "doesNotProve": "Cloned voice quality, script acceptance, or final audio mix."
     }
   ],
   "inferences": [
-    "cmdr-slice-ore2 is a plausible in-range mine-view fixture because Agent 1 and several exposed iron blocks are close; actual live camera/actions still require a bounded test.",
-    "The gray 790624 frames are explained by setting GameSettings.fovSetting to zero after treating degree-valued runtime field as options-file slider; 0abc's successful same-pose probe supports the correction.",
-    "Direct game launch through SSH would likely run in Session 0 rather than the logged-in desktop; this is an untested session-routing inference.",
-    "Laptop-only game testing may be feasible after rechecking and staging exact 1.7.10 dependencies and launching in the logged-in session, but is not ready or authorized under the current hold."
+    "A normal save after outcome take13 with all four surface agents is a better isolated door fixture than the failed underground-Agent1 snapshot; it has not been run for entry/closure.",
+    "V9 caption trouble is chiefly semantic/causal rather than a global timestamp shift; exact delivered f900 labels 'scenario created' while form is still open."
   ],
   "unknowns": [
-    "Whether Commander in the current candidate displays selected miner, recognizable iron ore, strikes, drops and inventory change, layer switching and surface return at useful frame rate.",
-    "Whether routine create/edit/rename/delete/run-selected works in a real UI on a copied world, persists across reload, and avoids accidental run; the original user's scenario provenance is also unknown.",
-    "Which existing footage makes meat hunting, exact door block, crop planting, crafting and tool handoff readable at normal speed; final full-motion/sound and Telegram-size review have not passed.",
-    "Current League/process state after the last checked PID 18860; wait for the user's explicit completion signal."
+    "Whether all four agents can cross the furnace-blocked doorway in the new all-surface fixture and close the original wooden door; whether they actually stay inside until dawn and can run together toward camera.",
+    "Who initially placed the furnace block; Day1.Upgrade planned its position but actor/tick not proven.",
+    "Exact partial VO duration/word alignment/voice quality and final music/voice mix.",
+    "Final V10/V11 caption/story legibility, cinematic/UI ratio, human full 1x AV review and normal-profile install."
   ],
   "acceptedDebt": [
-    "Remote miner beyond loaded radius shows an unavailable label; no remote chunk subscription in this slice.",
-    "Autonomous Day 1 tree survey and tree-felling expansion can discover hidden logs; do not claim system-wide observed-only resources. Manual Gather and ore paths are constrained to observed blocks with action-time guard.",
-    "Imported routine JSON with unknown block/item IDs has limited validation.",
-    "Slice is a single layer with manual level stepping, not all-floor cave transparency."
+    "CaveView shows only a bounded connected loaded map, marked PART; not all world passages.",
+    "Remote miner outside loaded radius, autonomous tree hidden-log discovery, and imported routine unknown IDs remain limitations.",
+    "Routine Run-selected/persistence/world isolation are less verified than create/edit/delete."
   ],
   "openRisks": [
-    "No live Commander/routine UI acceptance and no actual miner iron break/drop proof at 0abc1e8.",
-    "Previous user-visible lag during an earlier recorder gate; bounded one-slot and four-slot diagnostics passed but do not prove long-session performance.",
-    "Historical handoff paths and the rejected draft's metadata have not all been freshly rechecked; never infer delivery/readiness from old filenames."
+    "User specifically rejected V9 first-two-second context and captions after ~30s; do not recycle old copy.",
+    "All-four night/door/run hook has no accepted footage yet.",
+    "No tool provided continuous audible playback from laptop to Codex; user/human full AV watch required.",
+    "Normal Minecraft profile still contains older mod JARs, isolated test is not deployment."
   ],
   "runtimeState": {
-    "codeSha": "0abc1e84865f6200b28748fc9338f5b64cb8c334",
-    "clientJarSha256": "F2AF35348769DE9BED98A057B7C2899D74B86E4AB9DB05925DA9832EA5743BE4",
-    "serverJarSha256": "3AC7780F336037869CDE3D8A5ADD7B9BEB7BC81B3A7F657FE783077BD367260E",
-    "verifiedInIsolatedCopies": ["game-0abc1e8-diag", "game-0abc1e8-four"],
-    "liveCommanderCopyWorldGate": "THIS_AGENT_NOT_STARTED_USER_LEAGUE_HOLD",
-    "fourCameraGate": "PASS_BOUNDED_1S_SURFACE_ONLY",
-    "film": "REJECTED_DRAFT_NOT_SENT",
-    "hold": "No game or heavy recording on desktop or laptop until user says League work is finished. Preserve user Java/TLauncher/OBS processes."
+    "codeSha": "7f8ee2b6dacd28a7910a2a041293ccb01ec7dda0",
+    "clientJarSha256": "C1A9F1799B0DA82A99B65F9ED7019A8A96B406B0C61434D93E5036A056756DA2",
+    "serverJarSha256": "771D31020E43B956718DFD3EF34189044BD6BE7F6CDCB1C3729394EACFD21D03",
+    "isolatedDoorGate": "FAIL_FIXTURE_AGENT1_UNDERGROUND",
+    "caveGate": "ACCEPT_BOUNDED_CORE_PRODUCT",
+    "film": "V9_PREVIEW_USER_REJECTED_EDITORIAL",
+    "laptopProcesses": "Agents reported java/javaw/ffmpeg absent at stop; recheck before launch.",
+    "normalProfile": "UNCHANGED_OLD_JARS",
+    "telegram": "NOT_SENT_ESCAPE_INTERRUPTED"
   },
   "evidence": [
+    "C:/develop/games/minecraft/aiguide-mine-view/.harness/CLAUDE_TAKEOVER_20261107.md",
     "C:/develop/games/minecraft/aiguide-codex/.harness/NEXT_SESSION_TZ.md",
-    "C:/develop/games/minecraft/aiguide-codex/.harness/CURRENT_STATE.json (historical, do not overwrite)",
-    "C:/develop/games/minecraft/aiguide-codex/.harness/HANDOFF_TRACKER_SEARCH.json",
-    "//192.168.1.9/c/Videos/aiguide-promo/verification/captures/fb_0abc1e8_diag_h3_1s_20261107",
-    "//192.168.1.9/c/Videos/aiguide-promo/verification/captures/fb_0abc1e8_four_1s_20261107",
-    "//192.168.1.9/c/Videos/aiguide-promo/verification/captures/fb790624_diag_h3_1s_20261107",
-    "//192.168.1.9/c/Videos/aiguide-promo/verification/captures/fb_d294470_diag_h3_1s_20261107",
-    "C:/Users/harde/Videos/aiguide-promo/game-codex-test/saves/cmdr-slice-ore2",
-    "//192.168.1.9/c/Videos/aiguide-promo/takes/ep2_takeB.mp4",
-    "//192.168.1.9/c/Videos/aiguide-promo/captures/colony_v4_payoff3",
-    "//192.168.1.9/c/Videos/aiguide-promo/edit/commander_v4_finish/final-render.json"
+    "//192.168.1.9/c/Videos/aiguide-promo/out/story_v9_rough_cave_audiofix.mp4",
+    "//192.168.1.9/c/Videos/aiguide-promo/verification/cave_9f7afd2/cave_bridge_live_attempt2.mp4",
+    "//192.168.1.9/c/Videos/aiguide-promo/verification/door_7f8ee2b_retry/door_live_ui_attempt1.mp4",
+    "//192.168.1.9/c/Videos/aiguide-promo/edit/story_v5_20261107/qa_v9_exact_cuts/index.json"
   ],
   "nextActions": [
-    "Wait for user's completion signal; then recheck League/user processes and exact isolated runtime/JAR/world identity before any launch.",
-    "Run one visible, lightweight Commander gate on a new copy of cmdr-slice-ore2 with no Recorder first; document miner/iron/levels/surface/out-of-range and normal save/region readback. Do not fake an action if the source world lacks it.",
-    "In the same copy-world client, test routine New/View/Edit/Cancel/Rename/Delete/Run selected, no accidental run, chat negation/question, persistence/reload and world isolation; preserve events, screenshots and routines.json. Source tests alone are insufficient.",
-    "Collect actual readable meat/door/farm/crafting/handoff/iron footage and finish a coherent ending; use genuine UI aligned to world ticks. Review the complete output with sound at normal speed and Telegram size before any delivery.",
-    "At the next implementation unit repeat tracker search and claim if a matching task appears; keep main and codex worktrees untouched until separately authorized integration."
+    "Claude reads takeover MD/TZ and verifies Git/JAR/process identities; owns all further work, no internal Codex executor continues.",
+    "Offline Ground/TaskBoard preflight on all-surface outcome-mineE-copy13 save, then one isolated guard=false all-four door/close gate with WorldRec; preserve valid night→dawn and synchronized four-agent run toward camera if successful.",
+    "Build a new-viewer cinematic-majority V10 storyboard with evidenced furnace cause and causal captions; short lapshin-z23 voice render with exact alignment, mix audible music to last frame.",
+    "Assemble on one integer-frame grid, inspect action/caption cuts and motion, human full 1x AV review; then reversible normal-profile deployment gate. No Telegram send without fresh instruction."
   ]
 }
