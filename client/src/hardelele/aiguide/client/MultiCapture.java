@@ -73,7 +73,9 @@ public final class MultiCapture {
     public void render(TickEvent.RenderTickEvent event) {
         if (event.phase != TickEvent.Phase.END || active != this) return;
         Recorder sink = sinks[clock.slot];
+        long renderStart = System.nanoTime();
         sink.render(event); // this slot's PBO contains only this hero's prior logical frame
+        CaptureRenderProbe.sample(this, sink, System.nanoTime() - renderStart);
         if (sink.failure != null) { abort("hero " + heroes[clock.slot] + ": " + sink.failure); return; }
         if (clock.advance()) {
             for (Recorder r : sinks) if (!r.finished || r.frames != clock.count || r.sent != clock.count) {
