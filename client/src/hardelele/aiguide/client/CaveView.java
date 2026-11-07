@@ -24,12 +24,14 @@ import org.lwjgl.opengl.GL11;
 /** A viewer-only volume of the connected, loaded air around one selected underground agent. */
 public final class CaveView {
     static final CaveView INSTANCE = new CaveView();
-    private static final int RADIUS = 40, MAX_CELLS = 12000, MAX_FACES = 8000, CELLS_PER_TICK = 400;
+    private static final int RADIUS = 28, MAX_CELLS = 12000, MAX_FACES = 8000, CELLS_PER_TICK = 400;
     static boolean on;
     static CaveGeometry.Result volume;
     private static World sampledWorld;
-    private static int sampledX, sampledY, sampledZ;
+    private static int sampledX, sampledY, sampledZ, sampledSkin = -1;
     private static long steppedTick = -1, checkedTick = -1, completedTick = -1;
+    private static long lastValidTick = -1;
+    private static boolean holdingLast;
     private static CaveGeometry.Scanner scanner;
     private static final List<IIcon> icons = new ArrayList<IIcon>();
     private static final List<Block> faceBlocks = new ArrayList<Block>();
@@ -49,6 +51,7 @@ public final class CaveView {
     }
 
     static boolean scanning() { return active() && scanner != null && !scanner.done; }
+    static boolean holdingLast() { return active() && holdingLast; }
 
     static boolean followingOldAnchor() {
         if (!scanning() || Commander.instance == null) return false;
@@ -65,14 +68,15 @@ public final class CaveView {
         on = true;
         volume = null;
         scanner = null;
+        holdingLast = false; lastValidTick = -1; sampledSkin = -1;
         clearFaces();
         c.painting = false; c.paintFrom = null; c.paintTo = null; c.eraseFrom = null; c.eraseTo = null;
         if (c.mc.currentScreen instanceof Commander.Screen) {
             Commander.Screen s = (Commander.Screen) c.mc.currentScreen;
             s.downButton = -1; s.dragging = false; s.selecting = false; s.dragFrom = null;
         }
-        c.dist = 34;
-        c.pitch = 46;
+        c.dist = 45;
+        c.pitch = 42;
         // The volume is drawn outside OptiFine's shader programs, as with the one-level slice.
         try {
             Class<?> shaders = Class.forName("shadersmod.client.Shaders");
@@ -92,6 +96,7 @@ public final class CaveView {
         on = false;
         volume = null;
         scanner = null;
+        holdingLast = false; lastValidTick = -1; sampledSkin = -1;
         clearFaces();
         sampledWorld = null;
         if (savedShaderPack != null) {
@@ -128,20 +133,35 @@ public final class CaveView {
         Agent a = c.renderedAgent(c.selected.iterator().next());
         Minecraft mc = Minecraft.getMinecraft();
         if (a == null || a.isDead || mc.renderViewEntity == null) { exit(); return; }
+        int skin = c.selected.iterator().next();
         int ax = MathHelper.floor_double(a.posX), ay = MathHelper.floor_double(a.boundingBox.minY + 0.2), az = MathHelper.floor_double(a.posZ);
         long tick = mc.theWorld.getTotalWorldTime();
         boolean surfaced = !Slice.belowSurface(a);
         if (surfaced && (scanner == null || sampledWorld != mc.theWorld || volume == null)) { exit(); return; }
+        // Expire a held shell on the exact world tick, even between 40-tick rescan attempts.
+        if (holdingLast && !CaveRetention.hold(sampledWorld == mc.theWorld, sampledSkin == skin,
+                volume == null ? 0 : volume.cells, lastValidTick, tick)) {
+            volume = scanner.out;
+            clearFaces(); holdingLast = false;
+        }
         boolean moved = Math.abs(ax - sampledX) > 3 || Math.abs(ay - sampledY) > 1 || Math.abs(az - sampledZ) > 3;
         boolean changed = !surfaced && sampledWorld == mc.theWorld && checkedTick != tick && nearbyBlockChanged(mc.theWorld, ax, ay, az);
         checkedTick = tick;
         // Once the tracked agent reaches daylight, retain the underground component rather
         // than replacing it with a one-cell sky scan or silently switching off the overview.
         if (scanner == null || sampledWorld != mc.theWorld || !surfaced && (changed || scanner.done && (moved || tick - completedTick >= 40))) {
-            scanner = scan(mc.theWorld, ax, ay, az);
-            volume = scanner.out;
-            clearFaces(); scanNanos = 0; steppedTick = -1;
+            CaveGeometry.Scanner next = scan(mc.theWorld, ax, ay, az);
+            boolean hold = next.done && next.out.cells == 0 && CaveRetention.hold(
+                    sampledWorld == mc.theWorld, sampledSkin == skin,
+                    volume == null ? 0 : volume.cells, lastValidTick, tick);
+            scanner = next;
+            holdingLast = hold;
+            if (!hold) {
+                volume = next.out;
+                clearFaces(); scanNanos = 0; steppedTick = -1;
+            }
             sampledWorld = mc.theWorld;
+            sampledSkin = skin;
             sampledX = ax; sampledY = ay; sampledZ = az;
             if (scanner.done) completedTick = tick;
         }
@@ -153,6 +173,7 @@ public final class CaveView {
             cacheIcons(mc.theWorld);
             if (scanner.done) {
                 completedTick = tick;
+                if (volume.cells > 0) lastValidTick = tick;
                 Director.log("cave view: " + volume.cells + " cells, " + volume.faces.size() + " faces, "
                         + (scanNanos / 1000000) + " ms scan" + (volume.limited() ? ", bounded" : ""));
             }
@@ -163,7 +184,7 @@ public final class CaveView {
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT | GL11.GL_LIGHTING_BIT | GL11.GL_TEXTURE_BIT | GL11.GL_FOG_BIT | GL11.GL_LINE_BIT);
         GL11.glPushMatrix();
         try {
-            GL11.glClearColor(0.055f, 0.075f, 0.095f, 1f);
+            GL11.glClearColor(0.075f, 0.09f, 0.11f, 1f);
             GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
             GL11.glDisable(GL11.GL_FOG);
             GL11.glDisable(GL11.GL_LIGHTING);
@@ -253,9 +274,23 @@ public final class CaveView {
             CaveGeometry.Face f = volume.faces.get(n);
             IIcon icon = icons.get(n);
             if (icon == null) continue;
-            float shade = f.side == 1 ? 0.90f : f.side == 0 ? 0.90f : 0.83f;
-            float alpha = ironFaces.get(n) ? 0.95f : f.side == 1 ? 0.50f : f.side == 0 ? 0.14f : 0.72f;
-            t.setColorRGBA_F(shade, shade, shade, alpha);
+            float level = volume.maxLevel <= volume.minLevel ? 0.5f
+                    : Math.max(0f, Math.min(1f, (float) (f.y - volume.minLevel) / (volume.maxLevel - volume.minLevel)));
+            float r, g, b, alpha;
+            if (ironFaces.get(n)) { r = g = b = alpha = 1f; } // actual exposed iron texture, never sealed ore
+            else if (f.side == 1) { // floor: warm and fairly solid, so stairs read as separate levels
+                r = 0.78f + 0.16f * level; g = 0.64f + 0.16f * level; b = 0.45f + 0.15f * level; alpha = 0.72f;
+            } else if (f.side == 0) { // ceiling: cool, faint enough to see the lower passage
+                r = 0.42f + 0.13f * level; g = 0.52f + 0.13f * level; b = 0.61f + 0.11f * level; alpha = 0.24f;
+            } else { // walls: directional light, with a nearer shell peeled back
+                float side = f.side == 2 || f.side == 4 ? 0.88f : 1f;
+                r = (0.66f + 0.19f * level) * side;
+                g = (0.72f + 0.17f * level) * side;
+                b = (0.77f + 0.15f * level) * side;
+                double near = square(f.x + 0.5 - sortX) + square(f.y + 0.5 - sortY) + square(f.z + 0.5 - sortZ);
+                alpha = near < 18 * 18 ? 0.46f : 0.78f;
+            }
+            t.setColorRGBA_F(r, g, b, alpha);
             face(t, f, icon);
         }
         t.draw();

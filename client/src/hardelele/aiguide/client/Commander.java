@@ -306,7 +306,11 @@ public class Commander {
             if (!CaveView.active() || viewedUnderground) {
                 px = viewed.posX;
                 pz = viewed.posZ;
-                py = CaveView.active() || Slice.follow ? viewed.boundingBox.minY + 0.6 : Slice.level - 1;
+                if (CaveView.active()) {
+                    CaveGeometry.Result g = CaveView.volume;
+                    py = g != null && g.cells > 0 && !CaveView.scanning()
+                            ? (g.minLevel + g.maxLevel) * 0.5 : viewed.boundingBox.minY + 0.6;
+                } else py = Slice.follow ? viewed.boundingBox.minY + 0.6 : Slice.level - 1;
             }
         } else {
             int gy = mc.theWorld.getHeightValue(MathHelper.floor_double(px), MathHelper.floor_double(pz));
@@ -1412,7 +1416,7 @@ public class Commander {
         @Override
         public void drawScreen(int gmx, int gmy, float pt) {
             drawn++;
-            hoverNow();
+            if (CaveView.active()) hoverLabel = null; else hoverNow();
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             if (vOn) { gmx = curX() / scale; gmy = (mc.displayHeight - curY()) / scale; }
             for (Agent a : clientAgents()) {   // names and health over every agent
@@ -1433,7 +1437,7 @@ public class Commander {
                 int x0 = downX / scale, y0 = (mc.displayHeight - downY) / scale, x1 = curX() / scale, y1 = (mc.displayHeight - curY()) / scale;
                 Ui.round(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1), 2, 0x3050FF70);
             }
-            String label = painting ? (paintBuild ? "Строить: " + shownName(buildMaterial()) : "Копать") + " ×" + strokeCells(paintFrom, paintTo, paintBuild).size() + (depth > 1 ? "  глубина " + depth : "")
+            String label = CaveView.active() ? null : painting ? (paintBuild ? "Строить: " + shownName(buildMaterial()) : "Копать") + " ×" + strokeCells(paintFrom, paintTo, paintBuild).size() + (depth > 1 ? "  глубина " + depth : "")
                     : armed != Armed.NONE ? "ЛКМ: " + (armed == Armed.MOVE ? "идти сюда" : armed == Armed.CHOP ? "рубить" : armed == Armed.ATTACK ? "атаковать" : "охранять") : hoverLabel;
             int top = height - panelH() - 4;
             if (label != null && !label.isEmpty() && gmy < top && dragFrom == null) {
@@ -1442,10 +1446,13 @@ public class Commander {
                 Ui.round(lx - 4, ly - 3, lx + lw + 4, ly + 10, 3, 0xC0101418);
                 fontRendererObj.drawStringWithShadow(label, lx, ly, 0xFFFFE8);
             }
-            GL11.glPushMatrix();
-            GL11.glTranslatef(0, (1 - anim) * 30, 0);   // the panel comes up when the commander opens
-            panel(gmx, gmy);
-            GL11.glPopMatrix();
+            if (CaveView.active() && !routinesOpen) cavePanel();
+            else {
+                GL11.glPushMatrix();
+                GL11.glTranslatef(0, (1 - anim) * 30, 0);   // the panel comes up when the commander opens
+                panel(gmx, gmy);
+                GL11.glPopMatrix();
+            }
             viewBar(gmx, gmy);
             if (routinesOpen) routineDialog(gmx, gmy);
             if (dragFrom != null) {   // the item being carried with the mouse
@@ -1454,6 +1461,22 @@ public class Commander {
                 if (a != null && slot < a.bag.size()) icon(a.bag.get(slot), gmx - 8, gmy - 8);
             }
             if (vOn || Recorder.instance != null) cursor(gmx, gmy, scale);
+        }
+
+        /** Read-only cave overview: leave the lower passages visible without hiding the Commander identity. */
+        void cavePanel() {
+            hits.clear();
+            int x0 = px0() + 4, x1 = x0 + bandW() - 8, y = height - 31;
+            Ui.round(x0, y, x1, height - 4, 7, 0xD0101820);
+            Agent a = selected.size() == 1 ? renderedAgent(selected.iterator().next()) : null;
+            ItemStack hand = a == null ? null : a.getHeldItem();
+            int textW = x1 - x0 - (hand == null ? 12 : 35);
+            String title = a == null ? "Пещера · агент не загружен"
+                    : a.getCustomNameTag() + " Y" + MathHelper.floor_double(a.boundingBox.minY) + " · " + doing(a);
+            fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(title, textW), x0 + 6, y + 4, 0xD8F3E2);
+            String detail = "C/U: закрыть · " + (hand == null ? "рука пуста" : "в руке: " + hand.getDisplayName());
+            fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(detail, textW), x0 + 6, y + 15, 0xA9CADB);
+            if (hand != null) icon(hand, x1 - 22, y + 5);
         }
 
         String shownName(String item) {
@@ -1497,7 +1520,8 @@ public class Commander {
             }
             if (CaveView.active()) {
                 CaveGeometry.Result g = CaveView.volume;
-                String mode = g == null || CaveView.scanning() ? CaveView.followingOldAnchor() ? "Пещера: обновляю за агентом…" : "Пещера: строю объём…" : g.cells == 0 ? "Пещера: нет доступной полости"
+                String mode = CaveView.holdingLast() ? "ЧАСТЬ: старый обзор; агент вне открытой ячейки"
+                        : g == null || CaveView.scanning() ? CaveView.followingOldAnchor() ? "Пещера: обновляю за агентом…" : "Пещера: строю объём…" : g.cells == 0 ? "Пещера: нет доступной полости"
                         : g.limited() ? "ЧАСТЬ: Y" + g.minLevel + "–" + g.maxLevel + (g.exit ? " · открытый верх ↑" : " · верх не проверен")
                         : "Полость Y" + g.minLevel + "–" + g.maxLevel + (g.exit ? " · открытый верх ↑" : " · верх не найден");
                 Ui.round(x0, 28, x0 + w, 60, 4, 0xD01A2630);
