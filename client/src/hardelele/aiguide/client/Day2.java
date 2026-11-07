@@ -171,28 +171,182 @@ class Day2 {
             Day1.Base b = Day1.lastBase;
             int[] s = Crew.site;
             if (b == null || s == null) { Events.log("crew: no house to shelter in"); return; }
+            // The guard stays outside by design. Do not also give it an unfinishable inside card.
+            Agent outsideGuard = guard ? Guard.pick(c, null) : null;
             int half = b.size == 0 ? 2 : 3, x0 = s[0] + 2 - half, z0 = s[2] + 2 - half, y0 = s[1];
             List<int[]> spots = new ArrayList<int[]>();
             for (int x = x0 + 1; x <= x0 + 2 * half - 1; x++)
                 for (int z = z0 + 1; z <= z0 + 2 * half - 1; z++)
                     if (Ground.stand(w, x, y0, z, null)) spots.add(new int[] { x, y0, z });
             Events.log("crew: " + spots.size() + " free spots inside the house");
-            budget(60, 4, 0, 0, 0, wait);   // the way in (a wall opened at worst), the wait
             final double[] look = b.doorAt == null ? new double[] { s[0] + 2.5, y0 + 1.5, s[2] + 2.5 } : new double[] { b.doorAt[0] + 0.5, b.doorAt[1] + 1.5, b.doorAt[2] + 0.5 };
+            final List<Agent> entering = new ArrayList<Agent>();
+            for (Agent a : c.agents) if (a != outsideGuard && !a.isDead) entering.add(a);
+            final boolean realDoor = b.doorAt != null && w.blockExists(b.doorAt[0], b.doorAt[1], b.doorAt[2])
+                    && Roles.is(w, b.doorAt, Roles.Role.DOOR);
+            final int[] door = realDoor ? b.doorAt.clone() : null;
+            final int[] site = s.clone();
+            final int[] direction = c.doorDir();
+            final int[] gate = realDoor ? ShelterRoute.gate(site, b.size, direction) : null;
+            final int[] insideDoor = realDoor ? new int[] { door[0] - direction[0], door[1], door[2] - direction[1] } : null;
+            final ShelterDoorState doorState = new ShelterDoorState();
+            if (realDoor) max = Budget.ticks(60, 1, 0, 0, 0, 0) * Math.max(1, entering.size()) + wait + 20 * 20;
+            else budget(60, 4, 0, 0, 0, wait);
             int k = 0;
-            for (Agent a : c.agents) {
+            TaskBoard.Card previousEntry = null;
+            for (Agent a : entering) {
                 if (spots.isEmpty()) break;
                 final int[] sp = spots.get((k * 3) % spots.size());
                 k++;
-                c.board.post("inside", () -> new TaskBoard.Seq(new Crew.GoTo(sp[0] + 0.5, sp[1], sp[2] + 0.5, 0.7), new Crew.Look(look[0], look[1], look[2], wait)))
-                        .pin(a).prio(3).at(sp[0], sp[1], sp[2]).work(40, 0, 0, 0, 0, wait);
+                if (!realDoor) {
+                    c.board.post("inside", () -> new TaskBoard.Seq(new Crew.GoTo(sp[0] + 0.5, sp[1], sp[2] + 0.5, 0.7), new Crew.Look(look[0], look[1], look[2], wait)))
+                            .pin(a).prio(3).at(sp[0], sp[1], sp[2]).work(40, 0, 0, 0, 0, wait);
+                    continue;
+                }
+                final boolean last = k == entering.size();
+                TaskBoard.Card entry = c.board.post("inside entry", () -> new ShelterEntry(sp, site, b.size, gate, door, insideDoor, entering, doorState, last))
+                        .pin(a).prio(3).at(sp[0], sp[1], sp[2]).work(60, 1, 0, 0, 0, 0);
+                if (previousEntry != null) entry.after(previousEntry); // one body at a time through the one-block door
+                previousEntry = entry;
+                c.board.post("inside at night", () -> new ShelterWait(site, b.size, door, doorState, look, wait))
+                        .pin(a).after(entry).prio(2).at(sp[0], sp[1], sp[2]).lease(max);
             }
-            if (guard) {   // the planned guard: the best-armed one stays out by the door until the others are in (the same skill as any fight)
-                Agent g = Guard.pick(c, null);
+            if (outsideGuard != null) {   // the planned guard remains outside while the others shelter
                 final double[] post = b.doorAt == null ? new double[] { s[0] + 2.5, y0, s[2] - 1.5 }
                         : new double[] { b.doorAt[0] + 0.5 + (b.doorAt[0] - (s[0] + 2)) * 0.6, y0, b.doorAt[2] + 0.5 + (b.doorAt[2] - (s[2] + 2)) * 0.6 };
-                if (g != null) c.board.post("guard", () -> new Guard.Fight(post)).pin(g).prio(4).work(20, 0, 0, 0, 0, 20 * 90);
+                c.board.post("guard", () -> new Guard.Fight(post)).pin(outsideGuard).prio(4).work(20, 0, 0, 0, 0, 20 * 90);
             }
+        }
+    }
+
+    static class ShelterDoorState {
+        boolean closedAfterEntry;
+        final Set<Agent> entered = new HashSet<Agent>(); // a retry must not march an already sheltered body back out
+    }
+
+    /** A shelter-only route: use the built fence gap, then descend through the door without widening the house. */
+    static class ShelterEntry implements Crew.Task {
+        final int[] spot, site, gate, door, insideDoor;
+        final int size;
+        final List<Agent> entering;
+        final ShelterDoorState doorState;
+        final boolean last;
+        Crew.GoTo toGate, toDoor, toSpot;
+        ShelterClose close;
+        int stage;
+        ShelterEntry(int[] spot, int[] site, int size, int[] gate, int[] door, int[] insideDoor,
+                     List<Agent> entering, ShelterDoorState doorState, boolean last) {
+            this.spot = spot; this.site = site; this.size = size; this.gate = gate; this.door = door;
+            this.insideDoor = insideDoor;
+            this.entering = entering; this.doorState = doorState; this.last = last;
+        }
+        public Result step(Agent a, WorldServer w) {
+            if (stage == 0 && ShelterRoute.inside(a.posX, a.boundingBox.minY, a.posZ, site, size)) {
+                if (doorState.entered.add(a)) Events.log("crew: " + a.getCustomNameTag() + " was already inside the house");
+                stage = 4;
+            }
+            if (stage == 0) {
+                if (gate != null && ShelterRoute.outsideFence(a.posX, a.posZ, site, size)) {
+                    int gy = Crew.ground(w, gate[0], gate[1], gate[2]);
+                    if (gy < 0 || !Ground.stand(w, gate[0], gy, gate[2], null)) return Result.NO_PATH;
+                    toGate = new Crew.GoTo(gate[0] + 0.5, gy, gate[2] + 0.5, 0.7).walkOnly();
+                    Events.log("crew: " + a.getCustomNameTag() + " takes the existing fence gap to shelter");
+                    stage = 1;
+                } else stage = 2;
+            }
+            if (stage == 1) {
+                Result r = toGate.step(a, w);
+                if (r == Result.RUNNING) return r;
+                if (r.failed()) return r;
+                stage = 2;
+            }
+            if (stage == 2) {
+                if (toDoor == null) toDoor = new Crew.GoTo(door[0] + 0.5, door[1], door[2] + 0.5, 0.45).shelterEntry(door);
+                Result r = toDoor.step(a, w);
+                if (r == Result.RUNNING) return r;
+                if (r.failed()) return r;
+                if (!ShelterRoute.atDoor(a.posX, a.boundingBox.minY, a.posZ, door)) return Result.BLOCKED;
+                stage = 3;
+            }
+            if (stage == 3) {
+                if (toSpot == null) toSpot = new Crew.GoTo(spot[0] + 0.5, spot[1], spot[2] + 0.5, 0.7).walkOnly();
+                Result r = toSpot.step(a, w);
+                if (r == Result.RUNNING) return r;
+                if (r.failed()) return r;
+                if (!ShelterRoute.inside(a.posX, a.boundingBox.minY, a.posZ, site, size)) return Result.BLOCKED;
+                doorState.entered.add(a);
+                Events.log("crew: " + a.getCustomNameTag() + " reached the house interior after crossing the door");
+                stage = 4;
+            }
+            if (!last) return Result.OK;
+            if (close == null) close = new ShelterClose(site, size, door, insideDoor, entering, doorState);
+            return close.step(a, w);
+        }
+    }
+
+    /** The last entrant uses its own hands on the existing wooden door only after every sheltered body is inside. */
+    static class ShelterClose implements Crew.Task {
+        final int[] site, door, insideDoor;
+        final int size;
+        final List<Agent> entering;
+        final ShelterDoorState doorState;
+        int waiting;
+        boolean attempted;
+        Crew.GoTo approach;
+        ShelterClose(int[] site, int size, int[] door, int[] insideDoor, List<Agent> entering, ShelterDoorState doorState) {
+            this.site = site; this.size = size; this.door = door; this.insideDoor = insideDoor;
+            this.entering = entering; this.doorState = doorState;
+        }
+        public Result step(Agent a, WorldServer w) {
+            for (Agent member : entering)
+                if (member.isDead || member.worldObj != w || !doorState.entered.contains(member)
+                        || !ShelterRoute.inside(member.posX, member.boundingBox.minY, member.posZ, site, size))
+                    return ++waiting > 20 * 30 ? Result.BLOCKED : Result.RUNNING;
+            int x = door[0], y = door[1], z = door[2];
+            if (!w.blockExists(x, y, z) || !w.blockExists(x, y + 1, z)
+                    || !Roles.is(w, x, y, z, Roles.Role.DOOR) || !Roles.is(w, x, y + 1, z, Roles.Role.DOOR)
+                    || w.getBlock(x, y, z).getMaterial() != net.minecraft.block.material.Material.wood) return Result.GONE;
+            if ((w.getBlockMetadata(x, y, z) & 4) == 0) {
+                doorState.closedAfterEntry = true;
+                if (attempted) Events.log("crew: " + a.getCustomNameTag() + " closed the house door after the crew entered");
+                return Result.OK;
+            }
+            if (attempted) return Result.BLOCKED; // do not toggle the door back open on a delayed update
+            if (Crew.dist(a, x + 0.5, y, z + 0.5) > 2.7) {
+                if (!ShelterRoute.inside(insideDoor[0] + 0.5, insideDoor[1], insideDoor[2] + 0.5, site, size)
+                        || !Ground.stand(w, insideDoor[0], insideDoor[1], insideDoor[2], null)) return Result.BLOCKED;
+                if (approach == null) approach = new Crew.GoTo(insideDoor[0] + 0.5, insideDoor[1], insideDoor[2] + 0.5, 0.6).walkOnly();
+                Result r = approach.step(a, w);
+                if (r == Result.RUNNING) return r;
+                if (r.failed() || Crew.dist(a, x + 0.5, y, z + 0.5) > 2.7) return Result.BLOCKED;
+            }
+            Crew.face(a, x + 0.5, y + 1.0, z + 0.5);
+            w.getBlock(x, y, z).onBlockActivated(w, x, y, z, Skills.hands(a, w), 0, 0.5F, 0.5F, 0.5F);
+            a.swingItem();
+            attempted = true;
+            return Result.RUNNING; // read the actual closed metadata on the next server tick
+        }
+    }
+
+    /** The early arrivals stay inside while the others pass the door; the night's wait starts after it closes. */
+    static class ShelterWait implements Crew.Task {
+        final int[] site, door;
+        final int size;
+        final ShelterDoorState doorState;
+        final Crew.Look look;
+        int waiting;
+        ShelterWait(int[] site, int size, int[] door, ShelterDoorState doorState, double[] at, int wait) {
+            this.site = site; this.size = size; this.door = door; this.doorState = doorState;
+            look = new Crew.Look(at[0], at[1], at[2], wait);
+        }
+        public Result step(Agent a, WorldServer w) {
+            if (!ShelterRoute.inside(a.posX, a.boundingBox.minY, a.posZ, site, size)) return Result.BLOCKED;
+            if (!w.blockExists(door[0], door[1], door[2]) || !Roles.is(w, door, Roles.Role.DOOR)) return Result.GONE;
+            if (!doorState.closedAfterEntry || (w.getBlockMetadata(door[0], door[1], door[2]) & 4) != 0) {
+                Crew.face(a, door[0] + 0.5, door[1] + 1.0, door[2] + 0.5);
+                return ++waiting > 20 * 300 ? Result.TIMEOUT : Result.RUNNING;
+            }
+            return look.step(a, w);
         }
     }
 

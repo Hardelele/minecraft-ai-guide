@@ -528,7 +528,10 @@ public class Crew {
         GoTo(double x, double y, double z, double within) { this.x = x; this.y = y; this.z = z; this.within = within; }
         int stuckFor;    // ticks without getting nearer or digging anything (whatever the state)
         boolean noDig;   // a walk only (the player's "go there"): never dig a way, no way is NO_PATH
+        boolean shelterEntry;   // the night's one-block door step from an obstacle outside the house
+        int[] shelterDoor;
         GoTo walkOnly() { noDig = true; return this; }
+        GoTo shelterEntry(int[] door) { shelterEntry = true; shelterDoor = door; return this; }
 
         public Result step(Agent a, WorldServer w) {
             if (noDig && (state == DIG || br != null || dig != null)) return Result.NO_PATH;
@@ -569,7 +572,8 @@ public class Crew {
                     }
                     if (ri >= route.size()) { state = NAV; route = null; since = 0; return Result.RUNNING; }
                     int[] p = route.get(ri);
-                    if (Roles.is(w, p[0], p[1], p[2], Roles.Role.DOOR) && w.getBlock(p[0], p[1], p[2]).getMaterial() == Material.wood) {   // a closed door on the way: opened by hand, as a player does
+                    boolean woodenDoor = Roles.is(w, p[0], p[1], p[2], Roles.Role.DOOR) && w.getBlock(p[0], p[1], p[2]).getMaterial() == Material.wood;
+                    if (woodenDoor) {   // a closed door on the way: opened by hand, as a player does
                         int lower = (w.getBlockMetadata(p[0], p[1], p[2]) & 8) != 0 ? p[1] - 1 : p[1];
                         if ((w.getBlockMetadata(p[0], lower, p[2]) & 4) == 0 && dist(a, p[0] + 0.5, p[1], p[2] + 0.5) < 2.5) {
                             face(a, p[0] + 0.5, p[1] + 1, p[2] + 0.5);
@@ -579,7 +583,8 @@ public class Crew {
                     }
                     if (Math.abs(a.posX - (p[0] + 0.5)) < 0.45 && Math.abs(a.posZ - (p[2] + 0.5)) < 0.45 && Math.abs(a.posY - p[1]) < 1.1) { ri++; return Result.RUNNING; }
                     a.getMoveHelper().setMoveTo(p[0] + 0.5, p[1], p[2] + 0.5, 1.0D);   // the waypoint next to it: straight there
-                    if (p[1] > a.posY + 0.5 || a.isCollidedHorizontally || a.isInWater()) a.getJumpHelper().setJumping();
+                    boolean doorDrop = ShelterRoute.descendThroughDoor(shelterEntry, woodenDoor, p[1], a.posY);
+                    if (p[1] > a.posY + 0.5 || a.isCollidedHorizontally && !doorDrop || a.isInWater()) a.getJumpHelper().setJumping();
                     if (since > 20 * 5) { route = null; since = 0; }   // no progress on it: a new route (or digging)
                     return Result.RUNNING;
                 default:   // DIG: the cheapest way through what may be dug (an opening of its own house only when nothing else goes)
@@ -588,6 +593,12 @@ public class Crew {
                         final WorldServer ww = w;
                         dig = Ground.digRoute(w, Ground.feet(w, a.posX, a.posY, a.posZ), MathHelper.floor_double(x), MathHelper.floor_double(y), MathHelper.floor_double(z),
                                 Math.max(1.5, within + 0.5), (bx, by, bz) -> {
+                                    if (shelterEntry) {
+                                        if (ShelterRoute.oneOpening(bx, by, bz, shelterDoor) && instance != null
+                                                && Ground.mayDig(instance, bx, by, bz, "exit") && Ground.ownWall(instance, bx, by, bz)
+                                                && Skills.breakTicks(ag, ww, bx, by, bz) >= 0) return 30;
+                                        return -1; // no second roof/wall break to make a shelter shot look successful
+                                    }
                                     if (Ground.passages.contains(key(bx, by, bz))) return 1;   // a passage opened (or being opened) by the crew: everyone's way
                                     if (mayDigThrough(ag, ww, bx, by, bz)) return 4;
                                     if (instance != null && Ground.mayDig(instance, bx, by, bz, "exit") && Ground.ownWall(instance, bx, by, bz)
@@ -616,6 +627,7 @@ public class Crew {
                             : new int[][] { { n[0], n[1] + 1, n[2] }, { n[0], n[1], n[2] } };
                     for (int[] c : need) {
                         if (Ground.passable(w, c[0], c[1], c[2], null)) continue;
+                        if (shelterEntry && !ShelterRoute.oneOpening(c[0], c[1], c[2], shelterDoor)) return Result.NO_PATH;
                         if (!mayDigThrough(a, w, c[0], c[1], c[2])) {   // not natural: a passage of the crew's in its own wall (planned with the route)
                             if (!Ground.passages.contains(key(c[0], c[1], c[2])) || instance == null || !Ground.ownWall(instance, c[0], c[1], c[2])) { dig = null; state = ROUTE; route = null; return Result.RUNNING; }
                             Events.log("crew: " + a.getCustomNameTag() + " opens a passage in the house wall at " + c[0] + " " + c[1] + " " + c[2]);
@@ -626,7 +638,9 @@ public class Crew {
                     }
                     if (Math.abs(a.posX - (n[0] + 0.5)) < 0.45 && Math.abs(a.posZ - (n[2] + 0.5)) < 0.45 && Math.abs(a.posY - n[1]) < 1.1) { di++; return Result.RUNNING; }
                     a.getMoveHelper().setMoveTo(n[0] + 0.5, n[1], n[2] + 0.5, 1.0D);
-                    if (up > 0 || a.isCollidedHorizontally || a.isInWater()) a.getJumpHelper().setJumping();
+                    boolean doorDrop = ShelterRoute.descendThroughDoor(shelterEntry,
+                            Roles.is(w, n[0], n[1], n[2], Roles.Role.DOOR), n[1], a.posY);
+                    if (up > 0 || a.isCollidedHorizontally && !doorDrop || a.isInWater()) a.getJumpHelper().setJumping();
                     if (since > 20 * 6) { dig = null; since = 0; }   // stuck on the way: the route again
                     return Result.RUNNING;
             }
