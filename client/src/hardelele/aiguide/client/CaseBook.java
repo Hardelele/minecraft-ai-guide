@@ -53,6 +53,9 @@ final class CaseBook {
             o.addProperty("priority", priority);
             o.add("situation", CaseVec.toJson(sit));
             o.addProperty("text", CaseVec.text(sit));
+            JsonArray v = new JsonArray();   // for the offline tool (read back, the vector is made again from the situation)
+            for (double x : vec()) v.add(new com.google.gson.JsonPrimitive(Math.round(x * 1000) / 1000.0));
+            o.add("vec", v);
             o.addProperty("reaction", reaction);
             JsonArray a = new JsonArray();
             for (String s : actions) a.add(new com.google.gson.JsonPrimitive(s));
