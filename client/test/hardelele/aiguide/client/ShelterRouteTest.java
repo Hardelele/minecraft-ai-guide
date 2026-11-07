@@ -26,6 +26,11 @@ public final class ShelterRouteTest {
         check(!ShelterRoute.descendThroughDoor(false, true, 69, 70.0), "ordinary orders keep old jumping");
         check(!ShelterRoute.descendThroughDoor(true, false, 69, 70.0), "ordinary obstacle keeps jumping");
         check(!ShelterRoute.descendThroughDoor(true, true, 70, 70.0), "level door step keeps normal movement");
+        check(ShelterRoute.holdTicks(11000, true, 1200) == 12500, "dusk entry stays until morning");
+        check(ShelterRoute.holdTicks(13000 + 24000 * 5L, true, 1200) == 10500, "a later day counts by the time of day");
+        check(ShelterRoute.holdTicks(1000, true, 1200) == 1200, "daytime entry keeps the short wait");
+        check(ShelterRoute.holdTicks(23600, true, 1200) == 1200, "after the morning there is no night to wait for");
+        check(ShelterRoute.holdTicks(13000, false, 1200) == 1200, "a frozen clock must not hold forever");
         System.out.println("ShelterRouteTest PASS: gate, interior, single opening, door descent negatives");
     }
 }

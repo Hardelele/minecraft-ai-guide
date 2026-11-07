@@ -202,7 +202,8 @@ class Day2 {
             final int[] gate = realDoor ? ShelterRoute.gate(site, b.size, direction) : null;
             final int[] insideDoor = realDoor ? new int[] { door[0] - direction[0], door[1], door[2] - direction[1] } : null;
             final ShelterDoorState doorState = new ShelterDoorState();
-            if (realDoor) max = Budget.ticks(60, 1, 0, 0, 0, 0) * Math.max(1, entering.size()) + wait + 20 * 20;
+            final boolean dayCycle = w.getGameRules().getGameRuleBooleanValue("doDaylightCycle");
+            if (realDoor) max = Budget.ticks(60, 1, 0, 0, 0, 0) * Math.max(1, entering.size()) + ShelterRoute.holdTicks(w.getWorldTime(), dayCycle, wait) + 20 * 20;
             else budget(60, 4, 0, 0, 0, wait);
             int k = 0;
             TaskBoard.Card previousEntry = null;
@@ -220,7 +221,7 @@ class Day2 {
                         .pin(a).prio(3).work(60, 1, 0, 0, 0, 0);
                 if (previousEntry != null) entry.after(previousEntry); // one body at a time through the one-block door
                 previousEntry = entry;
-                c.board.post("inside at night", () -> new ShelterWait(site, b.size, door, doorState, look, wait))
+                c.board.post("inside at night", () -> new ShelterWait(site, b.size, door, doorState, look, wait, dayCycle))
                         .pin(a).after(entry).prio(2).lease(max);
             }
             if (outsideGuard != null && !existingGuard) {   // an existing guard card already keeps its agent outside
@@ -340,16 +341,19 @@ class Day2 {
         }
     }
 
-    /** The early arrivals stay inside while the others pass the door; the night's wait starts after it closes. */
+    /** The early arrivals stay inside while the others pass the door; the wait starts after it closes and lasts until the morning. */
     static class ShelterWait implements Crew.Task {
         final int[] site, door;
-        final int size;
+        final int size, wait;
+        final boolean dayCycle;
         final ShelterDoorState doorState;
         final Crew.Look look;
         int waiting;
-        ShelterWait(int[] site, int size, int[] door, ShelterDoorState doorState, double[] at, int wait) {
+        long wakeAt = -1;
+        ShelterWait(int[] site, int size, int[] door, ShelterDoorState doorState, double[] at, int wait, boolean dayCycle) {
             this.site = site; this.size = size; this.door = door; this.doorState = doorState;
-            look = new Crew.Look(at[0], at[1], at[2], wait);
+            this.wait = wait; this.dayCycle = dayCycle;
+            look = new Crew.Look(at[0], at[1], at[2], Integer.MAX_VALUE);
         }
         public Result step(Agent a, WorldServer w) {
             if (!ShelterRoute.inside(a.posX, a.boundingBox.minY, a.posZ, site, size)) return Result.BLOCKED;
@@ -358,6 +362,8 @@ class Day2 {
                 Crew.face(a, door[0] + 0.5, door[1] + 1.0, door[2] + 0.5);
                 return ++waiting > 20 * 300 ? Result.TIMEOUT : Result.RUNNING;
             }
+            if (wakeAt < 0) wakeAt = w.getTotalWorldTime() + ShelterRoute.holdTicks(w.getWorldTime(), dayCycle, wait);
+            if (w.getTotalWorldTime() >= wakeAt) return Result.OK;
             return look.step(a, w);
         }
     }

@@ -198,6 +198,7 @@ public class Director {
             return t >= num(arg, 0);
         }
         if (cmd.equals("wait")) return t >= num(arg, 0);
+        if (cmd.equals("waitday")) return mc.theWorld != null && mc.theWorld.getWorldTime() % 24000L >= num(arg, 0);   // until the world's time of day reaches it
         // the commander, as a player would use it (the same calls as its clicks)
         if (cmd.equals("commander")) { if (arg.equals("off")) mc.displayGuiScreen(null); else Commander.instance.open(); return true; }
         if (cmd.equals("cmdlook")) { String[] a = arg.split(" "); Commander.instance.look(Double.parseDouble(a[0]), Double.parseDouble(a[1]), Double.parseDouble(a[2]), Double.parseDouble(a[3])); return true; }

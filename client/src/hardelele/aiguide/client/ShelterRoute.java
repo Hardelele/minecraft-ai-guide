@@ -40,6 +40,18 @@ final class ShelterRoute {
         return shelterEntry && door && waypointY < feetY - 0.2;
     }
 
+    /** The sun is up again at this time of day: the night's shelter is over. */
+    static final int MORNING = 23500;
+    /** Dusk is near from here on: going in now means staying in until the morning. */
+    static final int EVENING = 9000;
+
+    /** How long to stay in from this moment: until morning at dusk or at night, the short wait by day or with no day cycle. */
+    static int holdTicks(long worldTime, boolean dayCycle, int shortWait) {
+        int day = (int) (worldTime % 24000L);
+        if (!dayCycle || day < EVENING || day >= MORNING) return shortWait;
+        return MORNING - day;
+    }
+
     /** The staged doorway may lose only its single headroom plank, never the door, roof or another wall. */
     static boolean oneOpening(int x, int y, int z, int[] door) {
         return door != null && x == door[0] && y == door[1] + 2 && z == door[2];
