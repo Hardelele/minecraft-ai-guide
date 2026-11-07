@@ -26,6 +26,8 @@ public final class CaveView {
     static final CaveView INSTANCE = new CaveView();
     private static final int RADIUS = 28, MAX_CELLS = 12000, MAX_FACES = 8000, CELLS_PER_TICK = 400;
     static boolean on;
+    private static boolean focusOn;
+    private static int focusIron = -1;
     static CaveGeometry.Result volume;
     private static World sampledWorld;
     private static int sampledX, sampledY, sampledZ, sampledSkin = -1;
@@ -38,6 +40,7 @@ public final class CaveView {
     private static final List<Integer> faceMeta = new ArrayList<Integer>();
     private static final List<Integer> faceOrder = new ArrayList<Integer>();
     private static final BitSet ironFaces = new BitSet();
+    private static final BitSet liveIronFaces = new BitSet();
     private static long scanNanos;
     private static double sortX, sortY, sortZ;
     private static boolean orderDirty;
@@ -52,6 +55,50 @@ public final class CaveView {
 
     static boolean scanning() { return active() && scanner != null && !scanner.done; }
     static boolean holdingLast() { return active() && holdingLast; }
+    static boolean focused() { return active() && focusOn; }
+    static boolean focusHasIron() { return focused() && focusIron >= 0; }
+
+    /** A cached opening is not advertised after it is sealed or its chunk unloads. */
+    static boolean liveExit() {
+        if (!active() || volume == null || !volume.exit) return false;
+        World w = Minecraft.getMinecraft().theWorld;
+        int x = volume.exitX, y = volume.exitY, z = volume.exitZ;
+        return w != null && w.blockExists(x, y, z) && isOpen(w, x, y, z) && y >= w.getHeightValue(x, z);
+    }
+
+    static boolean toggleFocus() {
+        if (!active()) return false;
+        if (focusOn) { focusOn = false; focusIron = -1; return true; }
+        if (volume == null || volume.cells == 0 || agentOutside()) return false;
+        focusOn = true;
+        return true;
+    }
+
+    static void resetFocus() { focusOn = false; focusIron = -1; }
+
+    /** Only cached exposed faces of this mapped component may influence the camera. */
+    static double[] focusPoint(Agent a) {
+        if (!focused() || a == null || !inside(a, volume, !Slice.belowSurface(a))) return null;
+        double ax = a.posX, ay = a.boundingBox.minY + 1.0, az = a.posZ;
+        World w = Minecraft.getMinecraft().theWorld;
+        liveIronFaces.clear();
+        for (int i = ironFaces.nextSetBit(0); i >= 0 && i < volume.faces.size(); i = ironFaces.nextSetBit(i + 1))
+            if (currentIronFace(w, volume.faces.get(i))) liveIronFaces.set(i);
+        focusIron = CaveGeometry.nearestFace(volume.faces, liveIronFaces, ax, ay, az, 3.0);
+        if (focusIron < 0) return new double[] { ax, ay, az };
+        CaveGeometry.Face ore = volume.faces.get(focusIron);
+        return new double[] { (ax + ore.x + 0.5) * 0.5, (ay + ore.y + 0.5) * 0.5,
+                (az + ore.z + 0.5) * 0.5 };
+    }
+
+    private static boolean currentIronFace(World w, CaveGeometry.Face f) {
+        if (w == null || !w.blockExists(f.x, f.y, f.z) || w.getBlock(f.x, f.y, f.z) != Blocks.iron_ore) return false;
+        int nx = f.x, ny = f.y, nz = f.z;
+        if (f.side == 0) ny--; else if (f.side == 1) ny++;
+        else if (f.side == 2) nz--; else if (f.side == 3) nz++;
+        else if (f.side == 4) nx--; else if (f.side == 5) nx++;
+        return w.blockExists(nx, ny, nz) && volume.contains(nx, ny, nz) && isOpen(w, nx, ny, nz);
+    }
 
     static double anchorX() { return sampledX + 0.5; }
     static double anchorZ() { return sampledZ + 0.5; }
@@ -70,11 +117,19 @@ public final class CaveView {
                 && y >= g.exitY && y <= g.exitY + 4);
     }
 
+    static boolean containsEntity(Entity e) {
+        if (!active() || volume == null || e == null) return false;
+        if (e instanceof Agent) return inside((Agent) e, volume, !Slice.belowSurface((Agent) e));
+        int x = MathHelper.floor_double(e.posX), y = MathHelper.floor_double(e.boundingBox.minY), z = MathHelper.floor_double(e.posZ);
+        return volume.contains(x, y, z) || volume.contains(x, y + 1, z);
+    }
+
     static void enter() {
         Commander c = Commander.instance;
         if (c == null || c.selected.size() != 1) return;
         Slice.exit();
         on = true;
+        resetFocus();
         volume = null;
         scanner = null;
         holdingLast = false; lastValidTick = -1; sampledSkin = -1;
@@ -111,6 +166,7 @@ public final class CaveView {
     static void exit() {
         if (on) Director.log("cave view: off");
         on = false;
+        resetFocus();
         volume = null;
         scanner = null;
         holdingLast = false; lastValidTick = -1; sampledSkin = -1;
@@ -190,6 +246,7 @@ public final class CaveView {
         }
         cacheIcons(mc.theWorld);
         boolean selectedInside = inside(a, volume, surfaced);
+        if (focusOn && !selectedInside) resetFocus();
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT | GL11.GL_LIGHTING_BIT | GL11.GL_TEXTURE_BIT | GL11.GL_FOG_BIT | GL11.GL_LINE_BIT);
         GL11.glPushMatrix();
         try {
@@ -199,12 +256,17 @@ public final class CaveView {
             GL11.glDisable(GL11.GL_LIGHTING);
             GL11.glDisable(GL11.GL_CULL_FACE);
             GL11.glEnable(GL11.GL_DEPTH_TEST);
-            GL11.glEnable(GL11.GL_BLEND);
-            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-            GL11.glDepthMask(false); // each level remains visible through the nearer shell
             GL11.glEnable(GL11.GL_TEXTURE_2D);
             GL11.glTranslated(-RenderManager.renderPosX, -RenderManager.renderPosY, -RenderManager.renderPosZ);
             mc.getTextureManager().bindTexture(TextureMap.locationBlocksTexture);
+            // The actual surface rim is opaque and writes depth. It cannot blend
+            // across a nearer wall just because its quads were submitted later.
+            GL11.glDisable(GL11.GL_BLEND);
+            GL11.glDepthMask(true);
+            if (!focusOn) drawMouth(mc.theWorld);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GL11.glDepthMask(false); // each subterranean level remains visible through the nearer shell
             sortFaces(mc.renderViewEntity.posX, mc.renderViewEntity.posY + 1.62, mc.renderViewEntity.posZ);
             drawFaces(); // far to near; faint ceilings and translucent floors keep lower levels visible
             GL11.glDepthMask(true);
@@ -227,7 +289,7 @@ public final class CaveView {
     }
 
     private static void clearFaces() {
-        icons.clear(); faceBlocks.clear(); faceMeta.clear(); faceOrder.clear(); ironFaces.clear(); orderDirty = true;
+        icons.clear(); faceBlocks.clear(); faceMeta.clear(); faceOrder.clear(); ironFaces.clear(); liveIronFaces.clear(); orderDirty = true;
     }
 
     private static void finishScan(World w, int skin, long tick) {
@@ -316,6 +378,42 @@ public final class CaveView {
         t.draw();
     }
 
+    /** A small real-terrain rim makes the upper connection read as a surface opening. */
+    private static void drawMouth(World w) {
+        if (!liveExit()) return;
+        Tessellator t = Tessellator.instance;
+        t.startDrawingQuads();
+        t.setBrightness(0xF000F0);
+        int ex = volume.exitX, ey = volume.exitY, ez = volume.exitZ;
+        for (int x = ex - 3; x <= ex + 3; x++) for (int z = ez - 3; z <= ez + 3; z++) {
+            if (!w.blockExists(x, ey, z)) continue;
+            int top = w.getHeightValue(x, z) - 1;
+            if (top < ey - 2 || top > ey + 3 || !w.blockExists(x, top, z)) continue;
+            mouthFace(t, w, x, top, z, 1);
+            // Draw the actual shallow sides of the depression, at most three layers.
+            int[][] d = {{-1, 0, 4}, {1, 0, 5}, {0, -1, 2}, {0, 1, 3}};
+            for (int[] side : d) {
+                int nx = x + side[0], nz = z + side[1];
+                if (!w.blockExists(nx, ey, nz)) continue;
+                int low = w.getHeightValue(nx, nz) - 1;
+                for (int y = Math.max(low + 1, top - 2); y <= top; y++)
+                    if (w.blockExists(x, y, z)) mouthFace(t, w, x, y, z, side[2]);
+            }
+        }
+        t.draw();
+    }
+
+    private static void mouthFace(Tessellator t, World w, int x, int y, int z, int side) {
+        Block b = w.getBlock(x, y, z);
+        if (!b.isNormalCube()) return;
+        IIcon icon = b.getIcon(w, x, y, z, side);
+        if (icon == null) return;
+        int color = b.colorMultiplier(w, x, y, z);
+        t.setColorRGBA_F(((color >> 16) & 255) / 255f, ((color >> 8) & 255) / 255f,
+                (color & 255) / 255f, 1f);
+        face(t, new CaveGeometry.Face(x, y, z, side), icon);
+    }
+
     private static void face(Tessellator t, CaveGeometry.Face f, IIcon i) {
         double x = f.x, y = f.y, z = f.z;
         double u0 = i.getMinU(), u1 = i.getMaxU(), v0 = i.getMinV(), v1 = i.getMaxV();
@@ -349,7 +447,7 @@ public final class CaveView {
             GL11.glVertex3d(a.posX, a.boundingBox.minY, a.posZ);
             GL11.glVertex3d(a.posX, a.boundingBox.minY + 2.3, a.posZ);
         }
-        if (volume != null && volume.exit) {
+        if (liveExit()) {
             GL11.glColor4f(1f, 0.78f, 0.20f, 1f);
             GL11.glVertex3d(volume.exitX + 0.5, volume.exitY, volume.exitZ + 0.5);
             GL11.glVertex3d(volume.exitX + 0.5, volume.exitY + 3, volume.exitZ + 0.5);

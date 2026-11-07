@@ -303,10 +303,15 @@ public class Commander {
         if (CaveView.active()) {
             // The selected component is a persistent map. Agent movement cannot change
             // its center or silently replace it with a disconnected air pocket.
-            px = CaveView.anchorX();
-            pz = CaveView.anchorZ();
-            CaveGeometry.Result g = CaveView.volume;
-            py = g != null && g.cells > 0 ? (g.minLevel + g.maxLevel) * 0.5 : viewed.boundingBox.minY + 0.6;
+            double[] focus = CaveView.focusPoint(viewed);
+            if (focus != null) { px = focus[0]; py = focus[1]; pz = focus[2]; }
+            else {
+                if (CaveView.focused()) { CaveView.resetFocus(); dist = 45; pitch = 42; }
+                px = CaveView.anchorX();
+                pz = CaveView.anchorZ();
+                CaveGeometry.Result g = CaveView.volume;
+                py = g != null && g.cells > 0 ? (g.minLevel + g.maxLevel) * 0.5 : viewed.boundingBox.minY + 0.6;
+            }
         } else if (viewed != null && Slice.active()) {
             px = viewed.posX;
             pz = viewed.posZ;
@@ -1027,7 +1032,11 @@ public class Commander {
             }
             if (code == Keyboard.KEY_Y) Fog.on = !Fog.on;
             if (code == Keyboard.KEY_U && viewedSkin > 0) {
-                if (CaveView.on) { CaveView.exit(); if (!viewedUnderground) centerSurfaceView(); }
+                if (CaveView.on) {
+                    CaveView.exit();
+                    if (!viewedUnderground) centerSurfaceView();
+                    else { dist = 22; pitch = 56; }
+                }
                 else if (Slice.on) Slice.exit();
                 else if (viewedUnderground) { Slice.follow = true; Slice.enter(); }
             }
@@ -1047,6 +1056,14 @@ public class Commander {
             if (code == Keyboard.KEY_X) arm(Armed.ATTACK);
             if (code == Keyboard.KEY_G) arm(Armed.GUARD);
             if (code == Keyboard.KEY_I && selected.size() == 1) fullInv = !fullInv;
+            if (code == Keyboard.KEY_F && CaveView.active()) {
+                if (CaveView.toggleFocus()) {
+                    dist = CaveView.focused() ? 9 : 45;
+                    pitch = CaveView.focused() ? 35 : 42;
+                    Director.log("cave view: focus " + (CaveView.focused() ? "agent" : "map"));
+                } else Director.log("cave view: focus unavailable outside mapped component");
+                return;
+            }
             if (code == Keyboard.KEY_K || code == Keyboard.KEY_P || code == Keyboard.KEY_F || code == Keyboard.KEY_N) filmKey(code, shift);
             if (code == Keyboard.KEY_V && Cam.instance != null) { Cam.instance.autoOn = false; Cam.instance.release(); }
             if (code == Keyboard.KEY_H && !selected.isEmpty()) Orders.give(picked(), Orders.Kind.STOP, 0, 0, 0, -1, false);
@@ -1420,6 +1437,7 @@ public class Commander {
             if (vOn) { gmx = curX() / scale; gmy = (mc.displayHeight - curY()) / scale; }
             for (Agent a : clientAgents()) {   // names and health over every agent
                 if (Slice.active() && a.boundingBox.minY >= Slice.level) continue;
+                if (CaveView.active() && !CaveView.containsEntity(a)) continue;
                 float[] s = toScreen(a.posX, a.boundingBox.maxY + 0.45, a.posZ);
                 if (s == null) continue;
                 int x = (int) (s[0] / scale), y = (int) ((mc.displayHeight - s[1]) / scale);
@@ -1431,6 +1449,18 @@ public class Commander {
                 int nw = fontRendererObj.getStringWidth(n);
                 Ui.round(x - nw / 2 - 4, y - 12, x + nw / 2 + 4, y - 1, 4, sel ? 0xB0204828 : 0x90101418);   // a chip under the name
                 fontRendererObj.drawStringWithShadow(n, x - nw / 2, y - 10, sel ? 0x90FF90 : 0xFFFFFF);
+            }
+            if (CaveView.active() && !CaveView.focused() && CaveView.liveExit()) {
+                CaveGeometry.Result g = CaveView.volume;
+                float[] s = toScreen(g.exitX + 0.5, g.exitY + 1.0, g.exitZ + 0.5);
+                if (s != null && s[0] >= 0 && s[0] <= mc.displayWidth && s[1] >= 0 && s[1] <= mc.displayHeight) {
+                    String text = "ОТКРЫТЫЙ ВЕРХ Y" + g.exitY;
+                    int tw = fontRendererObj.getStringWidth(text);
+                    int x = Math.max(2, Math.min(width - tw - 8, (int) (s[0] / scale) - tw / 2));
+                    int y = Math.max(63, Math.min(height - 42, (int) ((mc.displayHeight - s[1]) / scale) + 4));
+                    Ui.round(x - 4, y - 3, x + tw + 4, y + 10, 4, 0xD0203020);
+                    fontRendererObj.drawStringWithShadow(text, x, y, 0xBFFF8B);
+                }
             }
             if (dragging && selecting) {   // the box being dragged
                 int x0 = downX / scale, y0 = (mc.displayHeight - downY) / scale, x1 = curX() / scale, y1 = (mc.displayHeight - curY()) / scale;
@@ -1519,15 +1549,18 @@ public class Commander {
             }
             if (CaveView.active()) {
                 CaveGeometry.Result g = CaveView.volume;
+                boolean exitLive = CaveView.liveExit();
+                String top = exitLive ? " · открытый верх ↑" : g != null && g.exit ? " · верх не подтверждён" : " · верх не проверен";
                 String mode = CaveView.holdingLast() ? "ЧАСТЬ: прежняя карта; обновление ждёт"
                         : g == null || CaveView.scanning() ? "Пещера: обновляю карту…" : g.cells == 0 ? "Пещера: нет доступной полости"
-                        : g.limited() ? "ЧАСТЬ: Y" + g.minLevel + "–" + g.maxLevel + (g.exit ? " · открытый верх ↑" : " · верх не проверен")
-                        : "Полость Y" + g.minLevel + "–" + g.maxLevel + (g.exit ? " · открытый верх ↑" : " · верх не найден");
+                        : g.limited() ? "ЧАСТЬ: Y" + g.minLevel + "–" + g.maxLevel + top
+                        : "Полость Y" + g.minLevel + "–" + g.maxLevel + (g.exit ? top : " · верх не найден");
                 Ui.round(x0, 28, x0 + w, 60, 4, 0xD01A2630);
                 fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(mode, w - 8), x0 + 4, 32, 0xB8E9FF);
-                String keys = !viewedUnderground ? "Агент вышел; C закрыть · Q/E: поворот · колесо: масштаб"
+                String keys = !viewedUnderground ? "Агент вышел; C закрыть · Q/E: поворот"
                         : CaveView.agentOutside() ? "Агент вне карты · C дважды: новая карта"
-                        : "C: выкл · Q/E: поворот · колесо: масштаб · карта без кликов";
+                        : CaveView.focused() ? "F: вся карта · Q/E: поворот · колесо: масштаб"
+                        : "F: к агенту · Q/E: поворот · колесо: масштаб";
                 fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(keys, w - 8), x0 + 4, 45, 0xC6DEE0);
             } else if (Slice.active()) {
                 String mode = "Только один слой: Y=" + Slice.level + (Slice.follow ? " · за агентом" : " · вручную");

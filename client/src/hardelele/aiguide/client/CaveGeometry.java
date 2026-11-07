@@ -46,6 +46,19 @@ final class CaveGeometry {
 
     private CaveGeometry() {}
 
+    /** Pick only a face already exposed by this component; callers mark actual ore faces. */
+    static int nearestFace(List<Face> faces, BitSet eligible, double x, double y, double z, double maxDistance) {
+        int bestIndex = -1;
+        double best = maxDistance * maxDistance;
+        for (int i = eligible.nextSetBit(0); i >= 0 && i < faces.size(); i = eligible.nextSetBit(i + 1)) {
+            Face f = faces.get(i);
+            double dx = f.x + 0.5 - x, dy = f.y + 0.5 - y, dz = f.z + 0.5 - z;
+            double distance = dx * dx + dy * dy + dz * dz;
+            if (distance <= best) { best = distance; bestIndex = i; }
+        }
+        return bestIndex;
+    }
+
     /** The renderer advances this on game ticks, keeping a large cave scan off any single frame. */
     static final class Scanner {
         final Probe p;

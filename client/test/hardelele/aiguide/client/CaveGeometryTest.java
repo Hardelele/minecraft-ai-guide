@@ -2,6 +2,7 @@ package hardelele.aiguide.client;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.BitSet;
 
 /** Real 3D adjacency and bounded visibility controls; runs without Minecraft or OpenGL. */
 public final class CaveGeometryTest {
@@ -30,6 +31,21 @@ public final class CaveGeometryTest {
         check(r.contains(2,5,0) && !r.contains(0,4,0), "component membership leaked across rock");
         for (CaveGeometry.Face face : r.faces)
             check(!(face.x == 0 && face.y == 4 && face.z == 0), "unreached air rendered as solid");
+        // The detail pivot may use an exposed iron face, never a sealed block
+        // absent from the mapped component's face list.
+        BitSet visibleIron = new BitSet();
+        int exposed = -1;
+        for (int i = 0; i < r.faces.size(); i++) {
+            CaveGeometry.Face face = r.faces.get(i);
+            if (face.x == 2 && face.y == 5 && face.z == 1) exposed = i;
+            check(!(face.x == 5 && face.y == 4 && face.z == 5), "sealed ore received a visible face");
+        }
+        check(exposed >= 0, "exposed-ore fixture face missing");
+        visibleIron.set(exposed);
+        check(CaveGeometry.nearestFace(r.faces, visibleIron, 2.5, 5.5, 0.5, 3) == exposed,
+                "detail pivot missed an exposed nearby face");
+        check(CaveGeometry.nearestFace(r.faces, visibleIron, 10, 10, 10, 3) == -1,
+                "detail pivot selected a distant face");
 
         // A nearby 34-cell pocket must not replace the already mapped route to the top
         // merely because the tracked agent steps into it. The viewer keeps the first seed.
