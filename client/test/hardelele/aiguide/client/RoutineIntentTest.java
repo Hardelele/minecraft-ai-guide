@@ -1,23 +1,29 @@
 package hardelele.aiguide.client;
 
-/** Standalone check: management words cannot enter Commander's semantic quick-run path. */
+/** Standalone check: only explicit commands can enter Commander's semantic quick-run path. */
 public final class RoutineIntentTest {
     private static void check(boolean expected, String text) {
-        if (RoutineIntent.management(text) != expected) throw new AssertionError(text);
+        if (RoutineIntent.quickRun(text) != expected) throw new AssertionError(text);
     }
 
     public static void main(String[] args) {
-        check(true, "удали сценарий Лесоруб");
-        check(true, "Переименуй рутину в Лес");
-        check(true, "изменить сценарий добычи");
-        check(true, "поправь сценарий добычи");
-        check(true, "останови сценарий добычи");
-        check(true, "не запускай сценарий сейчас");
-        check(true, "create a new routine");
-        check(true, "show saved scenarios");
-        check(false, "руби деревья");
-        check(false, "запусти сценарий Лесоруб");
-        check(false, "добывай руду как обычно");
+        check(false, "удали сценарий Лесоруб");
+        check(false, "Переименуй рутину в Лес");
+        check(false, "изменить сценарий добычи");
+        check(false, "поправь сценарий добычи");
+        check(false, "останови сценарий добычи");
+        check(false, "не запускай сценарий сейчас");
+        check(false, "не хочу запускать сценарий");
+        check(false, "расскажи про сценарий Лесоруб");
+        check(false, "как запустить сценарий?");
+        check(false, "как мне запусти сценарий?");
+        check(false, "делай сценарий для дерева");
+        check(false, "create a new routine");
+        check(false, "show saved scenarios");
+        check(true, "руби деревья");
+        check(true, "запусти сценарий Лесоруб");
+        check(true, "повтори добычу руды");
+        check(true, "run the wood routine");
         System.out.println("RoutineIntentTest PASS");
     }
 }

@@ -75,10 +75,16 @@ public class Routines {
     static List<Routine> read(File f) throws Exception {
         List<Routine> out = new ArrayList<Routine>();
         if (!f.isFile()) return out;
+        java.util.Set<String> names = new java.util.HashSet<String>();
         JsonArray a = new JsonParser().parse(new String(Files.readAllBytes(f.toPath()), "UTF-8")).getAsJsonArray();
         for (JsonElement e : a) {
             Routine r = new Gson().fromJson(e, Routine.class);
-            if (r == null || r.name == null || r.name.trim().isEmpty() || r.target == null)
+            if (r == null || r.name == null || r.name.trim().isEmpty() || r.target == null
+                    || !(r.target.equals("tree") || r.target.matches("(?:ore|block)\\s+\\S+"))
+                    || r.radius < 4 || r.radius > 64 || r.untilCount < 0
+                    || r.untilItem == null && r.untilCount != 0
+                    || r.untilItem != null && (r.untilItem.trim().isEmpty() || r.untilCount < 1)
+                    || !names.add(r.name.trim().toLowerCase(java.util.Locale.ROOT)))
                 throw new IllegalStateException("Invalid routine definition in " + f.getName());
             out.add(r);
         }
@@ -185,8 +191,7 @@ public class Routines {
                     previous == null ? 24 : previous.radius, previous == null || previous.deposit);
             if (error != null) return error;
             Routine r = named(name);
-            if (agents != null && !agents.trim().isEmpty()) return "Saved routine '" + r.name + "'. " + runFor(r, agents);
-            return "Saved routine '" + r.name + "' (open Scenarios in Commander to manage it). Already running agents keep the previous definition until stopped.";
+            return "Saved routine '" + r.name + "' without starting it (open Scenarios in Commander or request run separately). Already running agents keep the previous definition until stopped.";
         }
         if (a.startsWith("run")) {
             Routine r = named(name);

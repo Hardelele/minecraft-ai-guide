@@ -843,6 +843,15 @@ public class Commander {
     // the command card: name, key (shown), id
     static final String[][] CARD = { { "Идти", "M" }, { "Рубить", "B" }, { "Атака", "X" }, { "Охрана", "G" }, { "Стоп", "H" }, { "ИИ", "R" }, { "Крафт", "" }, { "Плавка", "" }, { "Чертёж", "" } };
 
+    static final class RoutineLayout {
+        static boolean compact(int h) { return h < 294; }
+        static int dialogH(int h) { return Math.min(278, h - 16); }
+        static int top(int h) { return Math.max(8, (h - dialogH(h)) / 2); }
+        static int fieldY(int h, int i) { return top(h) + (compact(h) ? 30 + i * 22 : 36 + i * 30); }
+        static int bottomY(int h) { return top(h) + dialogH(h) - (compact(h) ? 25 : 34); }
+        static int rows(int h) { return compact(h) ? 5 : 6; }
+    }
+
     class Screen extends GuiScreen {
         int downX, downY, downButton = -1;
         boolean dragging, selecting;
@@ -933,7 +942,7 @@ public class Commander {
             new Thread(new Runnable() {
                 public void run() {
                     try {
-                        Routines.Routine known = RoutineIntent.management(text) ? null : Routines.match(text.trim(), 0.80);
+                        Routines.Routine known = RoutineIntent.quickRun(text) ? Routines.match(text.trim(), 0.80) : null;
                         if (known != null) {
                             int[] ws = who2;
                             if (ws.length == 0) { List<Integer> all = new ArrayList<Integer>(); for (Agent g : clientAgents()) all.add(g.skin()); ws = new int[all.size()]; for (int i = 0; i < ws.length; i++) ws[i] = all.get(i); }
@@ -1090,9 +1099,14 @@ public class Commander {
             if (routineSelected == null || !names.contains(routineSelected)) routineSelected = names.isEmpty() ? null : names.get(0);
         }
 
+        boolean routineCompact() { return RoutineLayout.compact(height); }
+        int routineH() { return RoutineLayout.dialogH(height); }
         int routineX() { return px0() + 4; }
-        int routineY() { return Math.max(8, (height - 278) / 2); }
+        int routineY() { return RoutineLayout.top(height); }
         int routineW() { return bandW() - 8; }
+        int routineFieldY(int i) { return RoutineLayout.fieldY(height, i); }
+        int routineBottomY() { return RoutineLayout.bottomY(height); }
+        int routineRows() { return RoutineLayout.rows(height); }
 
         void beginRoutineEdit(boolean fresh) {
             Routines.Routine r = fresh ? null : Routines.definition(routineSelected);
@@ -1104,7 +1118,7 @@ public class Commander {
                     : new String[] { r.name, r.description, r.target, r.untilItem == null ? "" : r.untilItem + " " + r.untilCount, String.valueOf(r.radius) };
             routineFields = new net.minecraft.client.gui.GuiTextField[5];
             for (int i = 0; i < routineFields.length; i++) {
-                routineFields[i] = new net.minecraft.client.gui.GuiTextField(fontRendererObj, routineX() + 112, routineY() + 36 + i * 30, routineW() - 124, 16);
+                routineFields[i] = new net.minecraft.client.gui.GuiTextField(fontRendererObj, routineX() + 112, routineFieldY(i), routineW() - 124, routineCompact() ? 14 : 16);
                 routineFields[i].setMaxStringLength(i == 1 ? 200 : 80);
                 routineFields[i].setText(values[i] == null ? "" : values[i]);
             }
@@ -1132,7 +1146,7 @@ public class Commander {
 
         void routineInput(int b, boolean state, int gx, int gy, int wheel) {
             if (wheel != 0 && !routineEditing && !routineDeleting) {
-                int max = Math.max(0, Routines.names().size() - 6);
+                int max = Math.max(0, Routines.names().size() - routineRows());
                 routineOffset = Math.max(0, Math.min(max, routineOffset + (wheel < 0 ? 1 : -1)));
             }
             if (b != 0 || !state) return;
@@ -1193,55 +1207,57 @@ public class Commander {
         void routineDialog(int mx, int my) {
             Gui.drawRect(0, 0, width, height, 0xA0000000);
             int x = routineX(), y = routineY(), w = routineW();
-            Ui.round(x, y, x + w, y + 278, 8, 0xF015222E);
+            Ui.round(x, y, x + w, y + routineH(), 8, 0xF015222E);
             routineHits.clear();
             fontRendererObj.drawStringWithShadow(routineEditing ? (routineOriginal == null ? "Новый сценарий" : "Правка сценария") : "Сценарии мира", x + 12, y + 10, 0xFFFFFF);
             routineButton("Закрыть", "close", x + w - 67, y + 7, mx, my);
             if (routineEditing) {
                 String[] labels = { "Имя", "Описание", "Цель", "До запаса", "Радиус" };
                 for (int i = 0; i < labels.length; i++) {
-                    int yy = y + 36 + i * 30;
+                    int yy = routineFieldY(i);
                     fontRendererObj.drawString(labels[i], x + 12, yy + 4, 0xB8CBD8);
                     routineFields[i].drawTextBox();
                 }
-                routineButton(draftDeposit ? "Сносить в сундук: да" : "Сносить в сундук: нет", "deposit", x + 12, y + 191, mx, my);
-                fontRendererObj.drawString("Цель: tree / ore iron_ore / block stone", x + 12, y + 213, 0x9EB0BD);
-                routineButton("Сохранить", "save", x + 12, y + 244, mx, my);
-                routineButton("Отмена", "cancel", x + 100, y + 244, mx, my);
+                routineButton(draftDeposit ? "Сносить в сундук: да" : "Сносить в сундук: нет", "deposit", x + 12, y + (routineCompact() ? 141 : 191), mx, my);
+                fontRendererObj.drawString("Цель: tree / ore iron_ore / block stone", x + 12, y + (routineCompact() ? 160 : 213), 0x9EB0BD);
+                routineButton("Сохранить", "save", x + 12, routineBottomY(), mx, my);
+                routineButton("Отмена", "cancel", x + 100, routineBottomY(), mx, my);
             } else {
                 List<String> names = Routines.names();
-                routineOffset = Math.min(routineOffset, Math.max(0, names.size() - 6));
-                for (int i = routineOffset; i < names.size() && i < routineOffset + 6; i++) {
+                int rows = routineRows();
+                routineOffset = Math.min(routineOffset, Math.max(0, names.size() - rows));
+                for (int i = routineOffset; i < names.size() && i < routineOffset + rows; i++) {
                     String n = names.get(i);
-                    int yy = y + 29 + (i - routineOffset) * 18;
-                    Ui.round(x + 10, yy, x + w - 10, yy + 17, 3, n.equals(routineSelected) ? 0xD0446270 : 0x8023323E);
-                    fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(n, w - 34), x + 16, yy + 4, 0xFFFFFF);
-                    routineHits.add(new Object[] { "select:" + n, x + 10, yy, x + w - 10, yy + 17 });
+                    int yy = y + (routineCompact() ? 26 + (i - routineOffset) * 16 : 29 + (i - routineOffset) * 18);
+                    int rh = routineCompact() ? 15 : 17;
+                    Ui.round(x + 10, yy, x + w - 10, yy + rh, 3, n.equals(routineSelected) ? 0xD0446270 : 0x8023323E);
+                    fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(n, w - 34), x + 16, yy + 3, 0xFFFFFF);
+                    routineHits.add(new Object[] { "select:" + n, x + 10, yy, x + w - 10, yy + rh });
                 }
-                if (names.size() > 6) fontRendererObj.drawString("Колесо: список  " + (routineOffset + 1) + "–" + Math.min(names.size(), routineOffset + 6) + " / " + names.size(), x + 12, y + 140, 0xA4B8C8);
+                if (names.size() > rows) fontRendererObj.drawString("Колесо: список  " + (routineOffset + 1) + "–" + Math.min(names.size(), routineOffset + rows) + " / " + names.size(), x + 12, y + (routineCompact() ? 110 : 140), 0xA4B8C8);
                 Routines.Routine r = Routines.definition(routineSelected);
                 if (r != null) {
-                    fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth("Цель: " + r.target + "   радиус: " + r.radius + "   сундук: " + (r.deposit ? "да" : "нет"), w - 24), x + 12, y + 160, 0xDFE8EF);
-                    fontRendererObj.drawStringWithShadow("До запаса: " + (r.untilItem == null ? "без условия" : r.untilItem + " " + r.untilCount), x + 12, y + 175, 0xB9CBD8);
+                    fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth("Цель: " + r.target + "   радиус: " + r.radius + "   сундук: " + (r.deposit ? "да" : "нет"), w - 24), x + 12, y + (routineCompact() ? 126 : 160), 0xDFE8EF);
+                    fontRendererObj.drawStringWithShadow("До запаса: " + (r.untilItem == null ? "без условия" : r.untilItem + " " + r.untilCount), x + 12, y + (routineCompact() ? 139 : 175), 0xB9CBD8);
                     List<?> lines = fontRendererObj.listFormattedStringToWidth(r.description == null ? "" : r.description, w - 24);
-                    for (int i = 0; i < Math.min(2, lines.size()); i++) fontRendererObj.drawString((String) lines.get(i), x + 12, y + 190 + i * 10, 0xB9CBD8);
-                } else fontRendererObj.drawString("Пока нет сохранённых сценариев.", x + 12, y + 163, 0xB9CBD8);
+                    for (int i = 0; i < Math.min(routineCompact() ? 1 : 2, lines.size()); i++) fontRendererObj.drawString((String) lines.get(i), x + 12, y + (routineCompact() ? 152 : 190) + i * 10, 0xB9CBD8);
+                } else fontRendererObj.drawString("Пока нет сохранённых сценариев.", x + 12, y + (routineCompact() ? 126 : 163), 0xB9CBD8);
                 if (routineDeleting) {
-                    fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth("Удалить «" + routineSelected + "»? Запущенные задания продолжатся.", w - 24), x + 12, y + 215, 0xFFE09A);
-                    routineButton("Удалить", "confirmDelete", x + 12, y + 244, mx, my);
-                    routineButton("Отмена", "backDelete", x + 94, y + 244, mx, my);
+                    if (routineError == null) fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth("Удалить «" + routineSelected + "»? Запущенные задания продолжатся.", w - 24), x + 12, y + (routineCompact() ? 169 : 215), 0xFFE09A);
+                    routineButton("Удалить", "confirmDelete", x + 12, routineBottomY(), mx, my);
+                    routineButton("Отмена", "backDelete", x + 94, routineBottomY(), mx, my);
                 } else {
-                    fontRendererObj.drawString("Правка не меняет уже запущенные задания.", x + 12, y + 215, 0x93AAB9);
+                    if (routineError == null) fontRendererObj.drawString("Правка не меняет уже запущенные задания.", x + 12, y + (routineCompact() ? 169 : 215), 0x93AAB9);
                     int bx = x + 12;
-                    bx = routineButton("Новый", "new", bx, y + 244, mx, my);
+                    bx = routineButton("Новый", "new", bx, routineBottomY(), mx, my);
                     if (r != null) {
-                        bx = routineButton("Править", "edit", bx, y + 244, mx, my);
-                        bx = routineButton("Удалить", "delete", bx, y + 244, mx, my);
-                        routineButton("Запустить", "run", bx, y + 244, mx, my);
+                        bx = routineButton("Править", "edit", bx, routineBottomY(), mx, my);
+                        bx = routineButton("Удалить", "delete", bx, routineBottomY(), mx, my);
+                        routineButton("Запустить", "run", bx, routineBottomY(), mx, my);
                     }
                 }
             }
-            if (routineError != null) fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(routineError, w - 24), x + 12, y + 228, 0xFFE0A0);
+            if (routineError != null) fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(routineError, w - 24), x + 12, y + (routineCompact() ? 169 : 228), 0xFFE0A0);
         }
 
         /** one mouse event (b -1: a move or the wheel), the person's or the script's: the same handling */

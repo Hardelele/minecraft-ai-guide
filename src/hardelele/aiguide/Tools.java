@@ -112,11 +112,11 @@ class Tools {
             if (crewAvailable())
                 a.add(tool("crew_routine", "The crew's routines: a repeated behaviour the player asks for in words, saved under a short name and run "
                         + "again later by a click (or by a like request): find the nearest target, do its work, bring what it got to the chest, "
-                        + "again, until the chest has as much as asked or nothing is left near. When the player asks for such a repeated job "
-                        + "(\"keep chopping trees near and put the logs in the chest\"), save it with a name and run it for the agents meant.", P, PD,
+                        + "again, until the chest has as much as asked or nothing is left near. Save a definition without starting work; "
+                        + "call run separately only when the player explicitly asks to start it.", P, PD,
                         "action", "save | run | list | forget", "name", "a short name in the player's language (e.g. Лесоруб)",
                         "description", "the player's own words of what it does", "target", "tree | ore BLOCK (coal_ore, iron_ore...) | block BLOCK (stone, sand, dirt...)",
-                        "until", "ITEM COUNT for the chest (e.g. log 64), or empty: until nothing is left near", "agents", "all, or agent numbers: 1,3 (for save: run it too; empty: only save)"));
+                        "until", "ITEM COUNT for the chest (e.g. log 64), or empty: until nothing is left near", "agents", "for run: all, or agent numbers 1,3; ignored when saving"));
             if (crewAvailable())
                 a.add(tool("crew_order", "Direct orders to the crew's agents, as the player gives them in the commander view (when the player asks "
                         + "for something at a place: 'take that hill', 'chop this tree', 'all of you here', 'kill the zombie'). The agents ordered "

@@ -55,6 +55,19 @@ public final class RoutineSnapshotTest {
         catch (RuntimeException expected) { }
         if (!"broken".equals(new String(Files.readAllBytes(broken.toPath()), StandardCharsets.UTF_8)))
             throw new AssertionError("corrupt source was modified");
+        File duplicate = new File(root, "duplicate.json");
+        Files.write(duplicate.toPath(), ("[{\"name\":\"Mine\",\"target\":\"tree\",\"radius\":24},"
+                + "{\"name\":\"mine\",\"target\":\"ore iron_ore\",\"radius\":24}]").getBytes(StandardCharsets.UTF_8));
+        try { Routines.read(duplicate); throw new AssertionError("duplicate names accepted"); }
+        catch (IllegalStateException expected) { }
+        File hidden = new File(root, "invalid-target.json");
+        Files.write(hidden.toPath(), "[{\"name\":\"Bad\",\"target\":\"ore \"}]".getBytes(StandardCharsets.UTF_8));
+        try { Routines.read(hidden); throw new AssertionError("invalid target accepted"); }
+        catch (IllegalStateException expected) { }
+        File legacy = new File(root, "legacy.json");
+        Files.write(legacy.toPath(), "[{\"name\":\"Legacy\",\"target\":\"tree\"}]".getBytes(StandardCharsets.UTF_8));
+        if (Routines.read(legacy).get(0).radius != 24)
+            throw new AssertionError("existing definitions without explicit radius stopped loading");
         System.out.println("RoutineSnapshotTest PASS");
     }
 }
