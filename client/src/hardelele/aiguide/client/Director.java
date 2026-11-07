@@ -51,6 +51,7 @@ public class Director {
     String typed;
     String pendingPill;
     long pendingPillAtMs;
+    volatile int cmddigAck; // 0 pending, 1 server validated, 2 server rejected
     Writer log;
     // an eased look: from, to, over ticks
     float lookYaw0, lookPitch0, lookYaw1, lookPitch1;
@@ -133,6 +134,14 @@ public class Director {
         pc = -1; t = step = 0;
     }
 
+    void abortCaptureToQuit(String reason) {
+        event("script aborted: " + reason);
+        serverQueue.clear();
+        lines.clear();
+        lines.add("recstop"); lines.add("worldrec stop"); lines.add("worldrec waitstop"); lines.add("quit");
+        pc = -1; t = step = 0;
+    }
+
     @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent e) {
         if (e.phase != TickEvent.Phase.END) return;
@@ -197,6 +206,67 @@ public class Director {
             String[] a = arg.split(" ");
             Commander.instance.orderBlock(Integer.parseInt(a[0]), Integer.parseInt(a[1]), Integer.parseInt(a[2]), 1, a.length > 3);
             return true;
+        }
+        if (cmd.equals("cmddig")) {   // capture fixture only: wait for one real player-style dig, never edit a block
+            String[] v = arg.trim().split("\\s+");
+            Commander c = Commander.instance;
+            int[] who = c == null ? new int[0] : c.picked();
+            if (v.length != 3 || who.length != 1 || who[0] != 1 || c.renderedAgent(1) == null) {
+                abortCaptureToQuit("cmddig needs x y z and selected Agent 1 loaded");
+                return true;
+            }
+            int x, y, z;
+            try {
+                x = Integer.parseInt(v[0]); y = Integer.parseInt(v[1]); z = Integer.parseInt(v[2]);
+            } catch (NumberFormatException ex) {
+                abortCaptureToQuit("cmddig coordinates are not integers");
+                return true;
+            }
+            if (WorldRec.active == null || mc.theWorld == null || !mc.theWorld.blockExists(x, y, z)) {
+                abortCaptureToQuit("cmddig requires WorldRec and a loaded target");
+                return true;
+            }
+            net.minecraft.block.Block block = mc.theWorld.getBlock(x, y, z);
+            if (t == 0) {
+                if (block != net.minecraft.init.Blocks.stone) {
+                    abortCaptureToQuit("cmddig starting target is not stone");
+                    return true;
+                }
+                cmddigAck = 0;
+                final int bx = x, by = y, bz = z;
+                serverQueue.add(new Runnable() { public void run() {
+                    net.minecraft.server.MinecraftServer s = net.minecraft.server.MinecraftServer.getServer();
+                    WorldServer w = s == null ? null : s.worldServers[0];
+                    Agent agent = Cam.serverAgent(1);
+                    if (w == null || agent == null || agent.isDead || agent.worldObj != w
+                            || !w.loadedEntityList.contains(agent) || !w.blockExists(bx, by, bz)
+                            || w.getBlock(bx, by, bz) != net.minecraft.init.Blocks.stone) {
+                        cmddigAck = 2;
+                        event("cmddig rejected: Agent 1 or target not ready on server");
+                        return;
+                    }
+                    Orders.designate(new int[] {1}, false, java.util.Collections.singletonList(new int[] {bx, by, bz}), "");
+                    cmddigAck = 1;
+                    event("cmddig validated Agent 1 entity " + agent.getEntityId() + ", queued one-block designation at " + bx + " " + by + " " + bz);
+                }});
+            }
+            if (cmddigAck == 2) {
+                abortCaptureToQuit("cmddig rejected by server");
+                return true;
+            }
+            if (block == net.minecraft.init.Blocks.air) {
+                if (cmddigAck != 1) {
+                    abortCaptureToQuit("cmddig target changed before server acceptance");
+                    return true;
+                }
+                event("cmddig target became air after " + t + " ticks; verify actor in WorldRec");
+                return true;
+            }
+            if (block != net.minecraft.init.Blocks.stone || t >= 20 * 30) {
+                abortCaptureToQuit("cmddig target did not become air within 30 seconds");
+                return true;
+            }
+            return false;
         }
         if (cmd.equals("cmdclicknear")) {   // <block name> [q]: a right click on the nearest such block (seen from above: open to the sky or the air) to the camera's point
             String[] a = arg.split(" ");

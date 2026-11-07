@@ -361,6 +361,10 @@ class Orders {
                 java.util.Collections.sort(bs, (p, q) -> build ? p[1] - q[1] : q[1] - p[1]);
                 List<Agent> who = new ArrayList<Agent>();
                 for (int n : agents) for (Agent g : c.agents) if (g.skin() == n && !g.isDead) who.add(g);
+                if (agents.length > 0 && who.isEmpty()) {
+                    Events.log("order: designation rejected; selected agents unavailable");
+                    return; // never turn an explicit selection into a free-for-anyone card
+                }
                 Map<Long, TaskBoard.Card> at = new HashMap<Long, TaskBoard.Card>();
                 for (TaskBoard.Card k : c.board.cards) if (k.open() && k.at != null && (k.kind.equals("paint dig") || k.kind.equals("paint build")))
                     at.put(Crew.key((int) Math.floor(k.at[0]), (int) Math.floor(k.at[1]), (int) Math.floor(k.at[2])), k);
