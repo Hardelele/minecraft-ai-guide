@@ -171,8 +171,20 @@ class Day2 {
             Day1.Base b = Day1.lastBase;
             int[] s = Crew.site;
             if (b == null || s == null) { Events.log("crew: no house to shelter in"); return; }
-            // The guard stays outside by design. Do not also give it an unfinishable inside card.
-            Agent outsideGuard = guard ? Guard.pick(c, null) : null;
+            // An already leased or posted guard stays outside too: never wait for it as an entrant.
+            Agent outsideGuard = null;
+            boolean existingGuard = false;
+            if (guard) {
+                for (TaskBoard.Card card : c.board.cards) {
+                    if (!card.kind.equals("guard") || !card.open()) continue;
+                    Agent assigned = card.holder != null ? card.holder : card.only;
+                    if (assigned == null || assigned.isDead || !c.agents.contains(assigned)) continue;
+                    outsideGuard = assigned;
+                    existingGuard = true;
+                    break;
+                }
+                if (outsideGuard == null) outsideGuard = Guard.pick(c, null);
+            }
             int half = b.size == 0 ? 2 : 3, x0 = s[0] + 2 - half, z0 = s[2] + 2 - half, y0 = s[1];
             List<int[]> spots = new ArrayList<int[]>();
             for (int x = x0 + 1; x <= x0 + 2 * half - 1; x++)
@@ -211,7 +223,7 @@ class Day2 {
                 c.board.post("inside at night", () -> new ShelterWait(site, b.size, door, doorState, look, wait))
                         .pin(a).after(entry).prio(2).lease(max);
             }
-            if (outsideGuard != null) {   // the planned guard remains outside while the others shelter
+            if (outsideGuard != null && !existingGuard) {   // an existing guard card already keeps its agent outside
                 final double[] post = b.doorAt == null ? new double[] { s[0] + 2.5, y0, s[2] - 1.5 }
                         : new double[] { b.doorAt[0] + 0.5 + (b.doorAt[0] - (s[0] + 2)) * 0.6, y0, b.doorAt[2] + 0.5 + (b.doorAt[2] - (s[2] + 2)) * 0.6 };
                 c.board.post("guard", () -> new Guard.Fight(post)).pin(outsideGuard).prio(4).work(20, 0, 0, 0, 0, 20 * 90);

@@ -38,12 +38,26 @@ def blocked_interior_does_not_pre_fail_shelter(day2: str, board: str) -> bool:
     )
 
 
+def existing_guard_stays_outside(day2: str) -> bool:
+    return (
+        'if (!card.kind.equals("guard") || !card.open()) continue;' in day2
+        and "Agent assigned = card.holder != null ? card.holder : card.only;" in day2
+        and "outsideGuard = assigned;" in day2
+        and "existingGuard = true;" in day2
+        and "a != outsideGuard" in day2
+        and "outsideGuard != null && !existingGuard" in day2
+    )
+
+
 def main() -> None:
     crew = (ROOT / "client/src/hardelele/aiguide/client/Crew.java").read_text(encoding="utf-8")
     day2 = (ROOT / "client/src/hardelele/aiguide/client/Day2.java").read_text(encoding="utf-8")
     board = (ROOT / "client/src/hardelele/aiguide/client/TaskBoard.java").read_text(encoding="utf-8")
     assert wired(crew, day2), "shelter route/closure wiring missing"
     assert blocked_interior_does_not_pre_fail_shelter(day2, board), "blocked interior pre-fails entry/wait cards"
+    assert existing_guard_stays_outside(day2), "already leased guard included as an entrant"
+    assert not existing_guard_stays_outside(day2.replace("outsideGuard = assigned;", "outsideGuard = null;")), "leased-guard exclusion mutant survived"
+    assert not existing_guard_stays_outside(day2.replace("outsideGuard != null && !existingGuard", "outsideGuard != null")), "duplicate-guard-card mutant survived"
     interior_prefilter_mutant = day2.replace(
         '.pin(a).prio(3).work(60, 1, 0, 0, 0, 0)',
         '.pin(a).prio(3).at(sp[0], sp[1], sp[2]).work(60, 1, 0, 0, 0, 0)',
@@ -60,7 +74,7 @@ def main() -> None:
     assert not wired(crew, day2.replace("entry.after(previousEntry)", "entry.prio(3)")), "crowded-door mutant survived"
     assert not wired(crew, day2.replace("doorState.closedAfterEntry = true", "doorState.closedAfterEntry = false")), "early-wait mutant survived"
     assert not wired(crew, day2.replace(".onBlockActivated(w, x, y, z, Skills.hands(a, w)", ".setBlock(x, y, z, Blocks.air)")), "world-edit mutant survived"
-    print("test_shelter_entry_wiring PASS: exterior lease, dependent wait, route, single opening, serial entry, real door activation mutants")
+    print("test_shelter_entry_wiring PASS: exterior lease, dependent wait, pre-leased guard, route, single opening, serial entry, real door activation mutants")
 
 
 if __name__ == "__main__":
