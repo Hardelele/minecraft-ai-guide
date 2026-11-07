@@ -50,11 +50,11 @@ class Day1 {
             e.delayBeforeCanPickup = 12;
             HANDED.put(e, Boolean.TRUE);   // caught, it is a hand-over, not a find
             w.spawnEntityInWorld(e);
-            if (s == from.getHeldItem()) from.setCurrentItemOrArmor(0, null);
+            if (s == from.getHeldItem()) from.body.hold(null);
             it.remove();
         }
         w.playSoundEffect(from.posX, from.posY + 1, from.posZ, "random.pop", 0.4F, 1.3F);
-        if (from.getHeldItem() != null && !from.bag.contains(from.getHeldItem())) from.setCurrentItemOrArmor(0, null);
+        if (from.getHeldItem() != null && !from.bag.contains(from.getHeldItem())) from.body.hold(null);
     }
 
     /** the agent picks up what lies within reach of its hands */
@@ -70,7 +70,7 @@ class Day1 {
             Ledger.act(a, "pick up");
             it.setDead();
             got += s.stackSize;
-            if (a.getHeldItem() == null) a.setCurrentItemOrArmor(0, Skills.lastOf(a, s.getItem()));
+            if (a.getHeldItem() == null) a.body.hold(Skills.lastOf(a, s.getItem()));
         }
         return got;
     }
@@ -144,7 +144,7 @@ class Day1 {
                     if (ticks > 20 * 40) { state = 0; ticks = 0; }
                     return Result.RUNNING;
                 }
-                a.getNavigator().clearPathEntity();
+                a.body.stop();
                 Crew.face(a, from.posX, from.posY + 1.4, from.posZ);
                 Crew.face(from, a.posX, a.posY + 1.4, a.posZ);
                 List<ItemStack> tools = new ArrayList<ItemStack>();
@@ -152,7 +152,7 @@ class Day1 {
                 from.bag.removeAll(tools);
                 toss(from, a.posX, a.posY + 1.0, a.posZ, w, null);
                 from.bag.addAll(tools);
-                if (from.getHeldItem() == null && !tools.isEmpty()) from.setCurrentItemOrArmor(0, tools.get(0));
+                if (from.getHeldItem() == null && !tools.isEmpty()) from.body.hold(tools.get(0));
                 say(from, "Лови, " + a.getCustomNameTag() + "!");
                 ticks = 0;
                 state = 2;
@@ -317,6 +317,7 @@ class Day1 {
         int k = 1, tries;
         Crew.Break br;
         Crew.GoTo walk;
+        Skills.PlaceFrom put;
         Steps(int x0, int y0, int z0, int dx, int dz, int n) { this.x0 = x0; this.y0 = y0; this.z0 = z0; this.dx = dx; this.dz = dz; this.n = n; }
         public Result step(Agent a, WorldServer w) {
             if (br != null) {
@@ -324,6 +325,7 @@ class Day1 {
                 if (r == Result.RUNNING) return r;
                 br = null;
                 if (r == Result.NO_TOOL) { say(a, "Нечем копать камень"); return Result.NO_TOOL; }
+                if ((r == Result.NOT_VISIBLE || r == Result.OUT_OF_REACH) && ++tries > 4) { tries = 0; k++; walk = null; return Result.RUNNING; }   // not got at: the next step
                 catchNear(a, w, 1.4);
                 return Result.RUNNING;
             }
@@ -346,10 +348,15 @@ class Day1 {
             }
             // the step is open: a floor under it, from the agent's own cobblestone (or dirt), or the stairs end here
             if (Crew.soft(w, cx, floor - 1, cz)) {
-                Item fill = Skills.count(a.bag, COBBLE, -1) > 0 ? COBBLE : Skills.count(a.bag, Item.getItemFromBlock(Blocks.dirt), -1) > 0 ? Item.getItemFromBlock(Blocks.dirt) : null;
-                Result put = fill == null ? Result.NO_ITEMS : Skills.placeFromBag(a, w, cx, floor - 1, cz, fill, -1);
-                if (put == Result.BUSY) return Result.RUNNING;   // someone in the cell: they step aside
-                if (put != Result.OK) { catchNear(a, w, 2.5); return Result.OK; }
+                if (put == null) {
+                    Item fill = Skills.count(a.bag, COBBLE, -1) > 0 ? COBBLE : Skills.count(a.bag, Item.getItemFromBlock(Blocks.dirt), -1) > 0 ? Item.getItemFromBlock(Blocks.dirt) : null;
+                    if (fill == null) { catchNear(a, w, 2.5); return Result.OK; }
+                    put = new Skills.PlaceFrom(cx, floor - 1, cz, fill, -1).pillar(0);   // from where its eyes see a face of the hole (no pillar in a mine)
+                }
+                Result r = put.step(a, w);   // someone in the cell steps aside meanwhile
+                if (r == Result.RUNNING) return r;
+                put = null;
+                if (r != Result.OK) { catchNear(a, w, 2.5); return Result.OK; }
             }
             k++;
             tries = 0;
@@ -748,7 +755,10 @@ class Day1 {
                 if (size == 0) lay(c, w, 0, stone);
             }
             this.size = size;
-            budget(plan.size(), 0, plan.size(), plan.size() / 4, 0, 0);   // every block walked to and put, the planks and fences made
+            int high = 0;   // blocks over the eyes from the ground: a row's or a layer's first one goes up from a pillar (two blocks put, two dug)
+            for (int[] pb : plan) if (pb[1] >= Crew.site[1] + 2) high++;
+            int pillars = high / 6;
+            budget(plan.size() + pillars * 6, pillars * 3, plan.size() + pillars * 3, plan.size() / 4, 0, 0);   // every block walked to and put, the planks and fences made
             Map<String, Integer> b = toMake(c, w);
             Events.log("crew: base of size " + size + ", " + plan.size() + " blocks, bill " + b + ", wood " + wood + " logs (needs " + logsFor(b) + "), torches " + torches);
             show(c, w);

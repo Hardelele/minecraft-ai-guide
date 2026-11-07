@@ -17,7 +17,7 @@ def wired(crew: str, day2: str) -> bool:
         and "a != outsideGuard" in day2
         and "for (Agent member : entering)" in day2
         and "doorState.closedAfterEntry = true" in day2
-        and ".onBlockActivated(w, x, y, z, Skills.hands(a, w)" in day2
+        and "a.body.activate(w, x, y, z)" in day2   # the agent's own hands at the door it sees (Body)
         and "setBlock(" not in day2[day2.index("static class ShelterClose"):day2.index("static class ShelterWait")]
     )
 
@@ -73,7 +73,7 @@ def main() -> None:
     assert not wired(crew, day2.replace("ShelterRoute.atDoor(a.posX, a.boundingBox.minY, a.posZ, door)", "true")), "fake-door-crossing mutant survived"
     assert not wired(crew, day2.replace("entry.after(previousEntry)", "entry.prio(3)")), "crowded-door mutant survived"
     assert not wired(crew, day2.replace("doorState.closedAfterEntry = true", "doorState.closedAfterEntry = false")), "early-wait mutant survived"
-    assert not wired(crew, day2.replace(".onBlockActivated(w, x, y, z, Skills.hands(a, w)", ".setBlock(x, y, z, Blocks.air)")), "world-edit mutant survived"
+    assert not wired(crew, day2.replace("a.body.activate(w, x, y, z)", "w.setBlock(x, y, z, Blocks.air)")), "world-edit mutant survived"
     print("test_shelter_entry_wiring PASS: exterior lease, dependent wait, pre-leased guard, route, single opening, serial entry, real door activation mutants")
 
 

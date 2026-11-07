@@ -333,9 +333,9 @@ class Day2 {
                 if (r == Result.RUNNING) return r;
                 if (r.failed() || Crew.dist(a, x + 0.5, y, z + 0.5) > 2.7) return Result.BLOCKED;
             }
-            Crew.face(a, x + 0.5, y + 1.0, z + 0.5);
-            w.getBlock(x, y, z).onBlockActivated(w, x, y, z, Skills.hands(a, w), 0, 0.5F, 0.5F, 0.5F);
-            a.swingItem();
+            Result use = a.body.activate(w, x, y, z);   // its own hands, at the door it sees
+            if (use == Result.RUNNING) return use;   // still turning to it
+            if (use != Result.OK) return Result.BLOCKED;
             attempted = true;
             return Result.RUNNING; // read the actual closed metadata on the next server tick
         }

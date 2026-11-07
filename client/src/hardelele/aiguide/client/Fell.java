@@ -151,31 +151,16 @@ class Fell implements Crew.Task {
 
     /**
      * Up on a pillar to a block out of reach: beside its column, it jumps and puts a block from the bag under its feet,
-     * again, until the block is in reach; cuts it; then digs its pillar back down under itself (the blocks back in the bag).
+     * again, until the block is in reach; cuts it; then digs its pillar back down under itself (the blocks back in the
+     * bag). The climbing and the taking down are the crew's one pillar (Skills.Scaffold).
      */
     static class Pillar implements Crew.Task {
         final int[] target;
-        int state, baseY = Integer.MIN_VALUE, built, ticks;
-        int px, pz;
-        Crew.Task walk, cut;
-        Crew.Break down;
+        Skills.Scaffold up;
         Pillar(int[] target) { this.target = target; }
 
-        static ItemStack block(Agent a) {   // something solid to stand on: dirt, stone, planks
-            ItemStack best = null;
-            for (ItemStack s : a.bag) {
-                if (!(s.getItem() instanceof ItemBlock)) continue;
-                Block b = Block.getBlockFromItem(s.getItem());
-                if (!b.isOpaqueCube() || !b.getMaterial().isSolid() || b instanceof net.minecraft.block.ITileEntityProvider || b == Blocks.gravel || b == Blocks.sand) continue;
-                if (best == null || b == Blocks.dirt || b == Blocks.cobblestone) best = s;
-            }
-            return best;
-        }
-
-        public Result step(Agent a, WorldServer w) {
-            ticks++;
-            if (ticks > 20 * 120) return Result.TIMEOUT;
-            if (state == 0) {   // the foot of the pillar: the nearest free ground beside the column under the target
+        public Result step(final Agent a, WorldServer w) {
+            if (up == null) {   // the foot of the pillar: the nearest free ground beside the column under the target
                 int[] best = null;
                 double bd = 1e9;
                 for (int dx = -2; dx <= 2; dx++)
@@ -187,42 +172,12 @@ class Fell implements Crew.Task {
                         if (d < bd) { bd = d; best = new int[] { x, y, z }; }
                     }
                 if (best == null) return Result.NO_PATH;
-                if (block(a) == null) return Result.NO_ITEMS;   // nothing to build a pillar of
-                px = best[0]; pz = best[2]; baseY = best[1];
-                walk = new Crew.GoTo(px + 0.5, baseY, pz + 0.5, 0.3);
-                state = 1;
-                Events.log("crew: " + a.getCustomNameTag() + " builds a pillar at " + px + " " + baseY + " " + pz + " to reach " + target[0] + " " + target[1] + " " + target[2]);
+                if (Skills.Scaffold.block(a, null) == null) return Result.NO_ITEMS;   // nothing to build a pillar of
+                Events.log("crew: " + a.getCustomNameTag() + " builds a pillar at " + best[0] + " " + best[1] + " " + best[2] + " to reach " + target[0] + " " + target[1] + " " + target[2]);
+                up = new Skills.Scaffold(best, 12, ag -> Crew.eyeDist(ag, target[0], target[1], target[2]) <= Crew.REACH - 0.3, new Cut(target[0], target[1], target[2]), null);
             }
-            if (state == 1) {
-                if (walk.step(a, w) == Result.RUNNING) return Result.RUNNING;
-                state = 2;
-            }
-            if (state == 2) {   // up: in reach yet?
-                if (Crew.eyeDist(a, target[0], target[1], target[2]) <= Crew.REACH - 0.3) { cut = new Cut(target[0], target[1], target[2]); state = 3; return Result.RUNNING; }
-                ItemStack s = block(a);
-                if (s == null) { state = 4; return Result.RUNNING; }   // out of blocks: down again (the target stays: told)
-                int feet = baseY + built;
-                if (!w.isAirBlock(px, feet + 2, pz)) { state = 4; return Result.RUNNING; }   // its head would hit something
-                a.getMoveHelper().setMoveTo(px + 0.5, a.posY, pz + 0.5, 0.6);
-                if (a.onGround) a.getJumpHelper().setJumping();
-                if (a.posY >= feet + 1.05) {   // over the cell: a block under its feet
-                    Result r = Skills.placeFromBag(a, w, px, feet, pz, s.getItem(), s.getMetadata());
-                    if (r == Result.OK) { built++; Ledger.act(a, "pillar up"); }
-                }
-                return Result.RUNNING;
-            }
-            if (state == 3) {
-                if (cut.step(a, w) == Result.RUNNING) return Result.RUNNING;
-                state = 4;
-            }
-            if (state == 4) {   // down: the block under its feet, one by one
-                if (down != null) { if (down.step(a, w) == Result.RUNNING) return Result.RUNNING; down = null; }
-                int under = MathHelper.floor_double(a.posY + 0.01) - 1;
-                if (built <= 0 || under < baseY) return Result.OK;
-                if (a.onGround && !w.isAirBlock(px, under, pz)) { down = new Crew.Break(px, under, pz, 0); built--; Ledger.act(a, "pillar down"); }
-                return Result.RUNNING;
-            }
-            return Result.RUNNING;
+            Result r = up.step(a, w);
+            return r == Result.RUNNING ? r : Result.OK;   // the log is looked at again by the felling
         }
     }
 }

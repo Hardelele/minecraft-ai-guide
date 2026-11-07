@@ -185,7 +185,7 @@ public class Crew {
             board.cancel(current);
             for (Agent a : agents) {
                 clearJobs(a);
-                a.getNavigator().clearPathEntity();
+                a.body.stop();
                 if (!a.bag.isEmpty() && chest != null) Crew.job(a, new Stash(Item.getItemFromBlock(Blocks.log), 1));
             }
             current.max = Integer.MAX_VALUE;
@@ -234,10 +234,8 @@ public class Crew {
         for (Agent a : agents) Exploration.observe(this, a, w);
         board.tick(w);
         for (Agent a : agents) {
-            if (a.aside != null) {   // stepping out of a placement's way comes before anything else
-                if (a.aside.step(a, w).done()) a.aside = null;
-                continue;
-            }
+            a.body.sense(w);   // the body's snapshot of this tick, before anything acts on it
+            if (Reacts.tick(this, a, w)) continue;   // layer 2: a reflex (or what a task asked for itself) has the body this tick; the job waits
             Task t = a.jobs.peek();
             if (t == null && (w.getTotalWorldTime() + a.skin()) % 10 == 0 && board.feed(a, w)) t = a.jobs.peek();   // idle: the board gives it something (asked twice a second, not every tick)
             else if (t != null && w.getTotalWorldTime() % 20 == a.skin() && !a.origins.isEmpty() && a.origins.peek() == Origin.AUTO_DEFAULT
@@ -285,6 +283,7 @@ public class Crew {
             int[] at = base != null ? Ground.anchor(this, w) : null;
             if (at == null) { net.minecraft.util.ChunkCoordinates sp = w.getSpawnPoint(); at = new int[] { sp.posX, w.getTopSolidOrLiquidBlock(sp.posX, sp.posZ), sp.posZ }; }
             Agent a = new Agent(w);
+            a.undo.owed.addAll(d.undo.owed);   // what it left changed (a pillar) it gives back now: those jobs are gone
             a.number = d.number;
             a.commanded = d.commanded;
             a.setCustomNameTag(d.getCustomNameTag());
@@ -341,6 +340,7 @@ public class Crew {
         loaded = true;
         Exploration.load(w);
         Routines.loaded = false;   // this world's routines, read when first asked for
+        Cases.book();              // this world's cases, read back on a thread of their own
         try {
             java.io.File f = new java.io.File(w.getSaveHandler().getWorldDirectory(), "crew.json");
             if (!f.isFile()) return;
@@ -431,11 +431,9 @@ public class Crew {
         return Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
 
+    /** turn the head toward a point (the body's limited turn) */
     static void face(Agent a, double x, double y, double z) {
-        a.getLookHelper().setLookPosition(x, y, z, 30F, 40F);
-        float yaw = (float) (Math.atan2(z - a.posZ, x - a.posX) * 180 / Math.PI) - 90F;
-        float d = MathHelper.wrapAngleTo180_float(yaw - a.rotationYaw);
-        a.rotationYaw += Math.max(-25F, Math.min(25F, d));
+        a.body.lookAt(x, y, z);
     }
 
     /** what the agent's eyes meet on the way to the block's middle: null when it is the block itself */
@@ -533,31 +531,77 @@ public class Crew {
         GoTo walkOnly() { noDig = true; return this; }
         GoTo shelterEntry(int[] door) { shelterEntry = true; shelterDoor = door; return this; }
 
+        long last = -1, goal;
+
+        /**
+         * A tick of the walk, and what layer 2 needs of it: the agent's memory of walks that failed (a goal that did not
+         * get there waits 10 s, then 20, then is given up for a while: no walking at one unreachable point again and
+         * again); the walk shown to the reflexes (Agent.walking); a pause for a reaction is not counted as no progress,
+         * and a reaction about this way that failed (a climb, a way round) ends the walk with its reason.
+         */
         public Result step(Agent a, WorldServer w) {
+            long now = w.getTotalWorldTime();
+            if (last < 0) {
+                goal = key(MathHelper.floor_double(x), MathHelper.floor_double(y + 0.01), MathHelper.floor_double(z));
+                if (dist(a, x, y, z) > within && !a.walks.mayTry(goal, now)) {
+                    if (a.walks.tell(goal, now))
+                        Events.log("crew: " + a.getCustomNameTag() + " does not try the way to " + (int) Math.floor(x) + " " + (int) Math.floor(y) + " " + (int) Math.floor(z) + " again yet ("
+                                + a.walks.failures(goal) + " failed" + (a.walks.givenUp(goal, now) ? ", given up for now" : "") + ")");
+                    return Result.NO_PATH;
+                }
+            } else if (now - last > 1) {   // it waited for a reaction: where it is now, from now
+                since = 0;
+                stuckFor = 0;
+                best = dist(a, x, y, z);
+                route = null;
+                lastTry = -100;
+                Result f = a.slot.wayFailed(now);
+                if (f != null) return ended(a, now, f);
+            }
+            last = now;
+            a.walking = this;
+            a.walkingAt = now;
+            Result r = walk(a, w);
+            return r.done() ? ended(a, now, r) : r;
+        }
+
+        Result ended(Agent a, long now, Result r) {
+            int[] f = Ground.feet((WorldServer) a.worldObj, a.posX, a.posY, a.posZ);
+            if (r == Result.OK) a.walks.ok(goal);
+            else if ((r == Result.NO_PATH || r == Result.TIMEOUT) && a.walks.failed(goal, key(f[0], f[1], f[2]), now))
+                Events.log("crew: " + a.getCustomNameTag() + " gives up the way to " + (int) Math.floor(x) + " " + (int) Math.floor(y) + " " + (int) Math.floor(z) + " for now (" + Retry.GIVE_UP + " tries)");
+            if (a.walking == this) a.walking = null;
+            return r;
+        }
+
+        Result walk(Agent a, WorldServer w) {
             if (noDig && (state == DIG || br != null || dig != null)) return Result.NO_PATH;
             ticks++;
             double d = dist(a, x, y, z);
-            if (d <= within) { a.getNavigator().clearPathEntity(); return Result.OK; }
+            if (d <= within) { a.body.stop(); return Result.OK; }
             if (d < best - 0.4) { best = d; since = 0; stuckFor = 0; } else { since++; stuckFor++; }   // progress: nearer by a bit
             if (br != null) {
                 Result r = br.step(a, w);
                 if (r == Result.RUNNING) return r;
                 br = null;
-                Ground.changed();
-                Day1.catchNear(a, w, 2.0);
-                Skills.lightUp(a, w);   // a way dug into the dark gets its torches
-                since = 0;
-                stuckFor = 0;   // a block dug on the way is progress
-                if (dig == null) { state = ROUTE; route = null; }   // through the gap: a route again (on a dig route: on along it)
+                if (r != Result.OK) { dig = null; state = ROUTE; route = null; }   // not got at from here (not seen, out of reach): another way; no progress
+                else {
+                    Ground.changed();
+                    Day1.catchNear(a, w, 2.0);
+                    Skills.lightUp(a, w);   // a way dug into the dark gets its torches
+                    since = 0;
+                    stuckFor = 0;   // a block dug on the way is progress
+                    if (dig == null) { state = ROUTE; route = null; }   // through the gap: a route again (on a dig route: on along it)
+                }
             }
             // out of time only by no progress (nearer, or a block dug on the way) for a minute; a long way that goes on is not a failure
             // (the states' own clock, since, starts again at each change of state; this one only at real progress: a walk round the states that gets nowhere ends)
             if (since > 20 * 60 || stuckFor > 20 * 60 || ticks > 20 * 900) return Result.TIMEOUT;
             switch (state) {
                 case NAV:
-                    if (ticks % 20 == 1 || a.getNavigator().noPath() && ticks - lastTry >= 10) {
+                    if (ticks % 20 == 1 || a.body.pathless() && ticks - lastTry >= 10) {
                         lastTry = ticks;
-                        a.getNavigator().tryMoveToXYZ(x, y, z, 1.0D);
+                        a.body.walkTo(x, y, z, 1.0D);
                     }
                     if (since > 20 * 4) { state = ROUTE; route = null; since = 0; }
                     return Result.RUNNING;
@@ -575,16 +619,12 @@ public class Crew {
                     boolean woodenDoor = Roles.is(w, p[0], p[1], p[2], Roles.Role.DOOR) && w.getBlock(p[0], p[1], p[2]).getMaterial() == Material.wood;
                     if (woodenDoor) {   // a closed door on the way: opened by hand, as a player does
                         int lower = (w.getBlockMetadata(p[0], p[1], p[2]) & 8) != 0 ? p[1] - 1 : p[1];
-                        if ((w.getBlockMetadata(p[0], lower, p[2]) & 4) == 0 && dist(a, p[0] + 0.5, p[1], p[2] + 0.5) < 2.5) {
-                            face(a, p[0] + 0.5, p[1] + 1, p[2] + 0.5);
-                            w.getBlock(p[0], lower, p[2]).onBlockActivated(w, p[0], lower, p[2], Skills.hands(a, w), 0, 0.5F, 0.5F, 0.5F);
-                            a.swingItem();
-                        }
+                        if ((w.getBlockMetadata(p[0], lower, p[2]) & 4) == 0 && dist(a, p[0] + 0.5, p[1], p[2] + 0.5) < 2.5) a.body.activate(w, p[0], lower, p[2]);
                     }
                     if (Math.abs(a.posX - (p[0] + 0.5)) < 0.45 && Math.abs(a.posZ - (p[2] + 0.5)) < 0.45 && Math.abs(a.posY - p[1]) < 1.1) { ri++; return Result.RUNNING; }
-                    a.getMoveHelper().setMoveTo(p[0] + 0.5, p[1], p[2] + 0.5, 1.0D);   // the waypoint next to it: straight there
+                    a.body.stepTo(p[0] + 0.5, p[1], p[2] + 0.5, 1.0D);   // the waypoint next to it: straight there
                     boolean doorDrop = ShelterRoute.descendThroughDoor(shelterEntry, woodenDoor, p[1], a.posY);
-                    if (p[1] > a.posY + 0.5 || a.isCollidedHorizontally && !doorDrop || a.isInWater()) a.getJumpHelper().setJumping();
+                    if (p[1] > a.posY + 0.5 || a.isCollidedHorizontally && !doorDrop || a.isInWater()) a.body.jump();
                     if (since > 20 * 5) { route = null; since = 0; }   // no progress on it: a new route (or digging)
                     return Result.RUNNING;
                 default:   // DIG: the cheapest way through what may be dug (an opening of its own house only when nothing else goes)
@@ -637,10 +677,10 @@ public class Crew {
                         return Result.RUNNING;
                     }
                     if (Math.abs(a.posX - (n[0] + 0.5)) < 0.45 && Math.abs(a.posZ - (n[2] + 0.5)) < 0.45 && Math.abs(a.posY - n[1]) < 1.1) { di++; return Result.RUNNING; }
-                    a.getMoveHelper().setMoveTo(n[0] + 0.5, n[1], n[2] + 0.5, 1.0D);
+                    a.body.stepTo(n[0] + 0.5, n[1], n[2] + 0.5, 1.0D);
                     boolean doorDropDig = ShelterRoute.descendThroughDoor(shelterEntry,
                             Roles.is(w, n[0], n[1], n[2], Roles.Role.DOOR), n[1], a.posY);
-                    if (up > 0 || a.isCollidedHorizontally && !doorDropDig || a.isInWater()) a.getJumpHelper().setJumping();
+                    if (up > 0 || a.isCollidedHorizontally && !doorDropDig || a.isInWater()) a.body.jump();
                     if (since > 20 * 6) { dig = null; since = 0; }   // stuck on the way: the route again
                     return Result.RUNNING;
             }
@@ -662,7 +702,7 @@ public class Crew {
 
     /** an agent standing where a block is to go moves to the nearest free spot beside it (not over the cell) */
     static void stepAside(Agent a, int x, int y, int z) {
-        if (a.aside != null) return;
+        if (a.slot.busy()) return;
         WorldServer w = (WorldServer) a.worldObj;
         int[] f = Ground.feet(w, a.posX, a.posY, a.posZ);
         int[] best = null;
@@ -677,8 +717,7 @@ public class Crew {
                     if (d < bd) { bd = d; best = new int[] { cx, cy, cz }; }
                 }
         if (best == null) return;
-        a.getNavigator().clearPathEntity();
-        a.aside = new GoTo(best[0] + 0.5, best[1], best[2] + 0.5, 0.35);
+        a.interject(new GoTo(best[0] + 0.5, best[1], best[2] + 0.5, 0.35), Reflexes.CLEAR_CELL, "clear-cell", false);   // not while its own task may not be interrupted (on a pillar)
     }
 
     /** look at a point for a while */
@@ -693,39 +732,31 @@ public class Crew {
     }
 
     /**
-     * break one block as a player: the best tool of the bag in hand, looking at it, the arm swinging, the cracks
-     * growing for as long as the game says that tool takes, then the game's own harvest (BreakEvent, drops, wear).
-     * A block that gives nothing without the right tool (stone without a pickaxe) is not broken: NO_TOOL.
+     * break one block as a player: the body's left button held on it (Body.dig): the eyes turned onto it, the best
+     * tool of the bag in hand, the cracks growing while the aim is on it for as long as the game says that tool takes,
+     * then the game's own harvest (BreakEvent, drops, wear). A block that gives nothing without the right tool (stone
+     * without a pickaxe) is not broken: NO_TOOL; one not seen from here or out of reach: NOT_VISIBLE, OUT_OF_REACH.
      */
     static class Break {
-        int x, y, z, ticks, need = -2;
+        int x, y, z, offTries;
+        GoTo off;
         Break(int x, int y, int z, double seconds) { this.x = x; this.y = y; this.z = z; }
         Result step(Agent a, WorldServer w) {
-            Block b = w.getBlock(x, y, z);
-            if (b.getMaterial() == Material.air) return Result.OK;
-            face(a, x + 0.5, y + 0.5, z + 0.5);
-            a.act(x, y, z, 1);
-            if (need == -2) {   // the tool for it, and how long
-                int meta = w.getBlockMetadata(x, y, z);
-                ItemStack tool = Skills.bestTool(a, b, meta);
-                ItemStack held = a.getHeldItem();
-                if (tool != null && tool != held) a.setCurrentItemOrArmor(0, tool);
-                else if (tool == null && held != null && !held.isStackable() && a.bag.contains(held)) a.setCurrentItemOrArmor(0, null);   // a tool that does not help: bare hands
-                need = Skills.breakTicks(a, w, x, y, z);
-                if (need < 0) return Result.NO_TOOL;
+            if (off != null) {   // off the block first
+                Result r = off.step(a, w);
+                if (r == Result.RUNNING) return r;
+                off = null;
             }
-            ticks++;
-            if (ticks < 6) return Result.RUNNING;   // turn to it first
-            if (ticks % 5 == 0) {
-                a.swingItem();
-                w.playSoundEffect(x + 0.5, y + 0.5, z + 0.5, b.stepSound.getStepSound(), 0.35F, 0.6F);
+            if (Reacts.standsOn(a, w, x, y, z)) {   // what it stands on: a player who digs it falls (into a cave, a shaft); off it first
+                int[] c = offTries++ < 2 ? Reacts.offCell(a, w, x, y, z) : null;
+                if (c == null) {
+                    Events.log("crew: " + a.getCustomNameTag() + " will not dig the block it stands on at " + x + " " + y + " " + z);
+                    return Result.BLOCKED;
+                }
+                off = new GoTo(c[0] + 0.5, c[1], c[2] + 0.5, 0.3).walkOnly();
+                return Result.RUNNING;
             }
-            double k = (ticks - 6) / (double) need;
-            w.destroyBlockInWorldPartially(a.getEntityId(), x, y, z, Math.min(9, (int) (k * 10)));
-            if (k < 1) return Result.RUNNING;
-            w.destroyBlockInWorldPartially(a.getEntityId(), x, y, z, -1);
-            Ledger.act(a, "break " + b.getUnlocalizedName().replace("tile.", ""));
-            return Skills.harvest(a, w, x, y, z) ? Result.OK : Result.BLOCKED;
+            return a.body.dig(w, x, y, z);
         }
     }
     /** a tree: from a spot beside the trunk, the logs bottom up, each only when seen; leaves in the way first */
@@ -768,7 +799,10 @@ public class Crew {
                 return Result.RUNNING;
             }
             if (br != null) {   // breaking something
-                if (br.step(a, w) != Result.RUNNING) br = null;
+                Result r = br.step(a, w);
+                if (r == Result.RUNNING) return r;
+                br = null;
+                if (r == Result.NOT_VISIBLE || r == Result.OUT_OF_REACH) state = 0;   // not got at from here: another side
                 return Result.RUNNING;
             }
             int y = -1;   // the lowest log left of this trunk
@@ -813,7 +847,7 @@ public class Crew {
                 Ledger.act(a, "pick up");
                 it.setDead();
                 if (a.getHeldItem() == null || a.getHeldItem().getItem() == s.getItem() || !(a.getHeldItem().getItem() instanceof net.minecraft.item.ItemTool))
-                    a.setCurrentItemOrArmor(0, new ItemStack(s.getItem(), 1, s.getMetadata()));
+                    a.body.hold(new ItemStack(s.getItem(), 1, s.getMetadata()));
             }
             if (target == null || target.isDead) {
                 target = null;
@@ -878,7 +912,7 @@ public class Crew {
                 Ledger.act(a, "stash");
                 if (kept > 0 && keep != null) a.bag.add(new ItemStack(keep, kept));
                 inv.markDirty();
-                if (a.getHeldItem() != null && !(a.getHeldItem().getItem() instanceof net.minecraft.item.ItemTool)) a.setCurrentItemOrArmor(0, null);
+                if (a.getHeldItem() != null && !(a.getHeldItem().getItem() instanceof net.minecraft.item.ItemTool)) a.body.hold(null);
             }
             if (ticks == 22) { w.addBlockEvent(chest[0], chest[1], chest[2], w.getBlock(chest[0], chest[1], chest[2]), 1, 0); w.playSoundEffect(chest[0] + 0.5, chest[1] + 0.5, chest[2] + 0.5, "random.chestclosed", 0.5F, 1.0F); }
             return (ticks >= 26) ? Result.OK : Result.RUNNING;
@@ -894,7 +928,7 @@ public class Crew {
         public Result step(Agent a, WorldServer w) {
             face(a, x, y, z);
             ticks++;
-            if ((ticks + phase) % 16 == 0 && a.onGround) a.getJumpHelper().setJumping();
+            if ((ticks + phase) % 16 == 0 && a.onGround) a.body.jump();
             if ((ticks + phase) % 9 == 0) a.swingItem();
             return (ticks >= len) ? Result.OK : Result.RUNNING;
         }
@@ -1156,6 +1190,7 @@ public class Crew {
                 br = null;
                 if (onTarget && r == Result.OK) mined++;
                 if (r == Result.NO_TOOL && onTarget) return Result.NO_TOOL;
+                if ((r == Result.NOT_VISIBLE || r == Result.OUT_OF_REACH) && ++tries > 3) { i++; tries = 0; missed++; walk = null; return Result.RUNNING; }   // not got at from anywhere it went
                 Ground.changed();
                 Skills.lightUp(a, w);
                 return Result.RUNNING;
@@ -1251,6 +1286,32 @@ public class Crew {
             if (!super.done(c)) return false;
             return true;
         }
+
+        private Set<Long> cells;
+        private int cellsOf = -1, x0, x1, z0, z1;
+
+        /** the plan's cells (nobody stands in one to build, no pillar goes up in one), and the walls' box */
+        Set<Long> cells() {
+            if (cells == null || cellsOf != plan.size()) {
+                cells = new HashSet<Long>();
+                x0 = z0 = Integer.MAX_VALUE;
+                x1 = z1 = Integer.MIN_VALUE;
+                for (int[] b : plan) {
+                    cells.add(key(b[0], b[1], b[2]));
+                    if (site != null && b[1] == site[1] && b[3] != 4 && b[3] != 5) {   // the walls' ground row (not the fence, not a torch)
+                        x0 = Math.min(x0, b[0]); x1 = Math.max(x1, b[0]); z0 = Math.min(z0, b[2]); z1 = Math.max(z1, b[2]);
+                    }
+                }
+                cellsOf = plan.size();
+            }
+            return cells;
+        }
+
+        /** inside the walls */
+        boolean within(int x, int z) {
+            cells();
+            return x > x0 && x < x1 && z > z0 && z < z1;
+        }
         /** the next block for an agent: the lowest not done and not claimed, resting on something, nearest */
         int[] next(Agent a, WorldServer w) {
             int low = Integer.MAX_VALUE;
@@ -1282,9 +1343,9 @@ public class Crew {
     static class Build implements Task {
         final House h;
         int[] cur;
-        GoTo walk;
+        Skills.PlaceFrom put;
         Task fetch;
-        int ticks, wait, fetchKind;
+        int wait, fetchKind, pillarWaits;
         Build(House h) { this.h = h; }
         /** the stack in the bag for a kind of block of the plan (any wood for a log), or null */
         static ItemStack item(Agent a, int kind) {
@@ -1326,38 +1387,34 @@ public class Crew {
                     cur = null;
                     return Result.RUNNING;
                 }
-                h.claimed.add(key(cur[0], cur[1], cur[2]));
-                a.setCurrentItemOrArmor(0, item(a, cur[3]));
-                // a spot outside the house, toward the agent, on the ground
-                int[] s = site;
-                double cx = s[0] + 2.5, cz = s[2] + 2.5, dx = cur[0] + 0.5 - cx, dz = cur[2] + 0.5 - cz, dl = Math.max(0.5, Math.hypot(dx, dz));
-                double out = 4.3 - Math.min(2.0, dl * 0.0);
-                double tx = cx + dx / dl * out, tz = cz + dz / dl * out;
-                if (dl < 1.0) { tx = a.posX; tz = a.posZ; }
-                int gy = ground(w, MathHelper.floor_double(tx), s[1], MathHelper.floor_double(tz));
-                walk = new GoTo(tx, gy < 0 ? s[1] : gy, tz, 1.4);
-                if (eyeDist(a, cur[0], cur[1], cur[2]) <= 6.0 && !inside(a)) walk = null;   // in reach from here: no walk
-                ticks = 0;
-            }
-            if (!soft(w, cur[0], cur[1], cur[2])) { h.claimed.remove(key(cur[0], cur[1], cur[2])); cur = null; return Result.RUNNING; }
-            double reach = 6.4;
-            if (eyeDist(a, cur[0], cur[1], cur[2]) > reach && walk != null) {
-                if (walk.step(a, w) != Result.RUNNING) {   // arrived and still far: closer
-                    walk = new GoTo(cur[0] + 0.5, a.posY, cur[2] + 0.5, 2.0);
+                ItemStack in = item(a, cur[3]);
+                a.body.hold(in);
+                // where its eyes see a face to put it against: outside the walls rather than in, never in a cell of the plan;
+                // a block seen only from a pillar waits a little while there are others to put from the ground
+                put = new Skills.PlaceFrom(cur[0], cur[1], cur[2], in.getItem(), in.getMetadata()).avoid(h.cells()).prefer((x, y, z) -> h.within(x, z) ? 8 : 0);
+                Sight.View v = put.plan(a, w);
+                if (v != null && v.pillar > 0 && pillarWaits < 3) {
+                    pillarWaits++;
+                    h.retry.postpone(key(cur[0], cur[1], cur[2]), h.ticks, 100);
+                    cur = null;
+                    put = null;
+                    return Result.RUNNING;
                 }
-                return Result.RUNNING;
+                if (v != null && v.pillar > 0) pillarWaits = 0;
+                h.claimed.add(key(cur[0], cur[1], cur[2]));
             }
-            a.getNavigator().clearPathEntity();
-            face(a, cur[0] + 0.5, cur[1] + 0.5, cur[2] + 0.5);
-            a.act(cur[0], cur[1], cur[2], 3);
-            if (++ticks < 4) return Result.RUNNING;
-            ItemStack in = item(a, cur[3]);   // what is put comes out of the bag (Skills: the right item, its own place sound)
-            Result r = in == null ? Result.NO_ITEMS : Skills.placeFromBag(a, w, cur[0], cur[1], cur[2], in.getItem(), in.getMetadata());
+            if (!soft(w, cur[0], cur[1], cur[2])) { h.claimed.remove(key(cur[0], cur[1], cur[2])); cur = null; put = null; return Result.RUNNING; }
+            Result r = put.step(a, w);   // what is put comes out of the bag (the body: from where it sees it, the right item, its own place sound)
+            if (r == Result.RUNNING) return r;
+            if (r == Result.OK) pillarWaits = 0;
             if (r == Result.BUSY) h.retry.postpone(key(cur[0], cur[1], cur[2]), h.ticks, 60);   // someone moves out of the cell: another block meanwhile
-            else if (r != Result.OK && r != Result.BLOCKED) Events.log("crew: " + a.getCustomNameTag() + " build " + Ledger.name(in) + " at " + cur[0] + " " + cur[1] + " " + cur[2] + " -> " + r);
-            if (r == Result.BLOCKED) h.fail(cur, a);   // nothing to put it against: later, later still, then not in this phase
+            else if (r != Result.OK && r != Result.GONE) {   // nothing to put it against, not seen from anywhere it gets to: later, later still, then not in this phase
+                Events.log("crew: " + a.getCustomNameTag() + " build " + Ledger.name(new ItemStack(put.item)) + " at " + cur[0] + " " + cur[1] + " " + cur[2] + " -> " + r);
+                if (r != Result.NO_ITEMS) h.fail(cur, a);
+            }
             h.claimed.remove(key(cur[0], cur[1], cur[2]));
             cur = null;
+            put = null;
             return Result.RUNNING;
         }
     }
