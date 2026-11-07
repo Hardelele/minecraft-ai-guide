@@ -63,19 +63,31 @@ public final class RoutinesObservedTargetTest {
         Routines.Loop.MineObserved guarded = new Routines.Loop.MineObserved(
                 new int[] {3, 64, 0}, wanted, simulated);
         guarded.mine = guarded.guardedMine();
-        guarded.mine.br = new Crew.Break(3, 64, 0, .75);
+        Crew.GoTo safeWalk = guarded.mine.approach(new int[] {3, 64, 0});
+        if (!safeWalk.noDig || new Crew.Mine(new ArrayList<int[]>()).approach(new int[] {3, 64, 0}).noDig)
+            throw new AssertionError("routine approach may dig or ordinary mining was changed");
+        safeWalk.state = Crew.GoTo.DIG;
+        Crew.Break pathBreak = new Crew.Break(2, 64, 0, 0);
+        safeWalk.br = pathBreak;
+        if (safeWalk.step(null, null) != Result.NO_PATH || pathBreak.ticks != 0)
+            throw new AssertionError("walk-only path entered GoTo DIG break");
+        Crew.Break pending = new Crew.Break(3, 64, 0, .75);
+        guarded.mine.br = pending;
         guarded.mine.onTarget = true;
         inSight[0] = false;
-        if (guarded.step(null, null) != Result.NO_PATH || guarded.mine.br.ticks != 0)
+        if (guarded.step(null, null) != Result.NO_PATH || pending.ticks != 0 || guarded.mine.br != null)
             throw new AssertionError("occluded target reached pending break");
         inSight[0] = true;
         actual[0] = replacement;
-        if (guarded.step(null, null) != Result.GONE || guarded.mine.br.ticks != 0)
+        pending = new Crew.Break(3, 64, 0, .75);
+        guarded.mine.br = pending;
+        if (guarded.step(null, null) != Result.GONE || pending.ticks != 0 || guarded.mine.br != null)
             throw new AssertionError("replacement block reached pending break");
         actual[0] = wanted;
-        guarded.mine.br = new Crew.Break(2, 64, 0, .75);
-        if (guarded.step(null, null) != Result.NO_PATH || guarded.mine.br.ticks != 0)
+        pending = new Crew.Break(2, 64, 0, .75);
+        guarded.mine.br = pending;
+        if (guarded.step(null, null) != Result.NO_PATH || pending.ticks != 0 || guarded.mine.br != null)
             throw new AssertionError("routine tried to break an unobserved path blocker");
-        System.out.println("sealed ore absent; exposed ore selected; radius, visibility and action-time break guard enforced");
+        System.out.println("sealed/exposed ore, action-time break guard and walk-only routine navigation PASS");
     }
 }

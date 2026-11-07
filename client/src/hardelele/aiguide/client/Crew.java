@@ -531,6 +531,7 @@ public class Crew {
         GoTo walkOnly() { noDig = true; return this; }
 
         public Result step(Agent a, WorldServer w) {
+            if (noDig && (state == DIG || br != null || dig != null)) return Result.NO_PATH;
             ticks++;
             double d = dist(a, x, y, z);
             if (d <= within) { a.getNavigator().clearPathEntity(); return Result.OK; }
@@ -1121,12 +1122,21 @@ public class Crew {
         Result beforeBreak(Agent a, WorldServer w, int x, int y, int z) {
             return targetGuard == null ? null : targetGuard.beforeBreak(a, w, x, y, z);
         }
+        GoTo approach(int[] b) {
+            GoTo to = b.length > 5 && tries == 1 ? new GoTo(b[3] + 0.5, b[4], b[5] + 0.5, 0.7)
+                    : new GoTo(b[0] + 0.5, b[1] + 1, b[2] + 0.5 + (tries == 3 ? 1.5 : 0), 1.8);
+            return targetGuard == null ? to : to.walkOnly();
+        }
         public Result step(Agent a, WorldServer w) {
             if (i >= blocks.size()) return mined > 0 || missed == 0 ? Result.OK : Result.BLOCKED;   // nothing got at: not a success
             int[] b = blocks.get(i);
             if (br != null) {
                 Result gate = beforeBreak(a, w, br.x, br.y, br.z);
-                if (gate != null) return gate;
+                if (gate != null) {
+                    if (a != null && w != null) w.destroyBlockInWorldPartially(a.getEntityId(), br.x, br.y, br.z, -1);
+                    br = null; // remove a stale crack overlay when a live target changes mid-swing
+                    return gate;
+                }
                 Result r = br.step(a, w);
                 if (r == Result.RUNNING) return r;
                 br = null;
@@ -1152,8 +1162,7 @@ public class Crew {
             }
             if (walk == null) {
                 if (++tries > 3) { i++; tries = 0; missed++; return Result.RUNNING; }   // could not get at it
-                walk = b.length > 5 && tries == 1 ? new GoTo(b[3] + 0.5, b[4], b[5] + 0.5, 0.7)
-                        : new GoTo(b[0] + 0.5, b[1] + 1, b[2] + 0.5 + (tries == 3 ? 1.5 : 0), 1.8);
+                walk = approach(b);
             }
             if (walk.step(a, w) != Result.RUNNING) walk = null;
             return Result.RUNNING;
