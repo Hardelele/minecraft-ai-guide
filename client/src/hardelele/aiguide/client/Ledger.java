@@ -65,6 +65,7 @@ public class Ledger {
     static synchronized void act(Agent a, String kind) {
         add(sub(actions, (a == null || a.origin == null ? Origin.SCRIPT : a.origin).name()), kind, 1);
         dirty++;
+        if (a != null && a.slot.busy()) Cases.act(a, kind + " " + a.actX + " " + a.actY + " " + a.actZ);   // what the body did in a reaction, for its case
     }
 
     static synchronized void result(Result r) {

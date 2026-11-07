@@ -234,17 +234,7 @@ public class Crew {
         board.tick(w);
         for (Agent a : agents) {
             a.body.sense(w);   // the body's snapshot of this tick, before anything acts on it
-            if (a.aside != null) {   // stepping out of a placement's way, a torch in the dark: before anything else
-                Result ar;
-                try {
-                    ar = a.aside.step(a, w);
-                } catch (Exception ex) {
-                    Events.log("crew: " + a.getCustomNameTag() + " aside failed: " + ex);
-                    ar = Result.BLOCKED;
-                }
-                if (ar.done()) a.aside = null;
-                continue;
-            }
+            if (Reacts.tick(this, a, w)) continue;   // layer 2: a reflex (or what a task asked for itself) has the body this tick; the job waits
             Task t = a.jobs.peek();
             if (t == null && (w.getTotalWorldTime() + a.skin()) % 10 == 0 && board.feed(a, w)) t = a.jobs.peek();   // idle: the board gives it something (asked twice a second, not every tick)
             else if (t != null && w.getTotalWorldTime() % 20 == a.skin() && !a.origins.isEmpty() && a.origins.peek() == Origin.AUTO_DEFAULT
@@ -292,6 +282,7 @@ public class Crew {
             int[] at = base != null ? Ground.anchor(this, w) : null;
             if (at == null) { net.minecraft.util.ChunkCoordinates sp = w.getSpawnPoint(); at = new int[] { sp.posX, w.getTopSolidOrLiquidBlock(sp.posX, sp.posZ), sp.posZ }; }
             Agent a = new Agent(w);
+            a.undo.owed.addAll(d.undo.owed);   // what it left changed (a pillar) it gives back now: those jobs are gone
             a.number = d.number;
             a.commanded = d.commanded;
             a.setCustomNameTag(d.getCustomNameTag());
@@ -533,8 +524,50 @@ public class Crew {
         int stuckFor;    // ticks without getting nearer or digging anything (whatever the state)
         boolean noDig;   // a walk only (the player's "go there"): never dig a way, no way is NO_PATH
         GoTo walkOnly() { noDig = true; return this; }
+        long last = -1, goal;
 
+        /**
+         * A tick of the walk, and what layer 2 needs of it: the agent's memory of walks that failed (a goal that did not
+         * get there waits 10 s, then 20, then is given up for a while: no walking at one unreachable point again and
+         * again); the walk shown to the reflexes (Agent.walking); a pause for a reaction is not counted as no progress,
+         * and a reaction about this way that failed (a climb, a way round) ends the walk with its reason.
+         */
         public Result step(Agent a, WorldServer w) {
+            long now = w.getTotalWorldTime();
+            if (last < 0) {
+                goal = key(MathHelper.floor_double(x), MathHelper.floor_double(y + 0.01), MathHelper.floor_double(z));
+                if (dist(a, x, y, z) > within && !a.walks.mayTry(goal, now)) {
+                    if (a.walks.tell(goal, now))
+                        Events.log("crew: " + a.getCustomNameTag() + " does not try the way to " + (int) Math.floor(x) + " " + (int) Math.floor(y) + " " + (int) Math.floor(z) + " again yet ("
+                                + a.walks.failures(goal) + " failed" + (a.walks.givenUp(goal, now) ? ", given up for now" : "") + ")");
+                    return Result.NO_PATH;
+                }
+            } else if (now - last > 1) {   // it waited for a reaction: where it is now, from now
+                since = 0;
+                stuckFor = 0;
+                best = dist(a, x, y, z);
+                route = null;
+                lastTry = -100;
+                Result f = a.slot.wayFailed(now);
+                if (f != null) return ended(a, now, f);
+            }
+            last = now;
+            a.walking = this;
+            a.walkingAt = now;
+            Result r = walk(a, w);
+            return r.done() ? ended(a, now, r) : r;
+        }
+
+        Result ended(Agent a, long now, Result r) {
+            int[] f = Ground.feet((WorldServer) a.worldObj, a.posX, a.posY, a.posZ);
+            if (r == Result.OK) a.walks.ok(goal);
+            else if ((r == Result.NO_PATH || r == Result.TIMEOUT) && a.walks.failed(goal, key(f[0], f[1], f[2]), now))
+                Events.log("crew: " + a.getCustomNameTag() + " gives up the way to " + (int) Math.floor(x) + " " + (int) Math.floor(y) + " " + (int) Math.floor(z) + " for now (" + Retry.GIVE_UP + " tries)");
+            if (a.walking == this) a.walking = null;
+            return r;
+        }
+
+        Result walk(Agent a, WorldServer w) {
             ticks++;
             double d = dist(a, x, y, z);
             if (d <= within) { a.body.stop(); return Result.OK; }
@@ -650,7 +683,7 @@ public class Crew {
 
     /** an agent standing where a block is to go moves to the nearest free spot beside it (not over the cell) */
     static void stepAside(Agent a, int x, int y, int z) {
-        if (a.aside != null) return;
+        if (a.slot.busy()) return;
         WorldServer w = (WorldServer) a.worldObj;
         int[] f = Ground.feet(w, a.posX, a.posY, a.posZ);
         int[] best = null;
@@ -665,8 +698,7 @@ public class Crew {
                     if (d < bd) { bd = d; best = new int[] { cx, cy, cz }; }
                 }
         if (best == null) return;
-        a.body.stop();
-        a.aside = new GoTo(best[0] + 0.5, best[1], best[2] + 0.5, 0.35);
+        a.interject(new GoTo(best[0] + 0.5, best[1], best[2] + 0.5, 0.35), Reflexes.CLEAR_CELL, "clear-cell", false);   // not while its own task may not be interrupted (on a pillar)
     }
 
     /** look at a point for a while */
@@ -687,9 +719,24 @@ public class Crew {
      * without a pickaxe) is not broken: NO_TOOL; one not seen from here or out of reach: NOT_VISIBLE, OUT_OF_REACH.
      */
     static class Break {
-        int x, y, z;
+        int x, y, z, offTries;
+        GoTo off;
         Break(int x, int y, int z, double seconds) { this.x = x; this.y = y; this.z = z; }
         Result step(Agent a, WorldServer w) {
+            if (off != null) {   // off the block first
+                Result r = off.step(a, w);
+                if (r == Result.RUNNING) return r;
+                off = null;
+            }
+            if (Reacts.standsOn(a, w, x, y, z)) {   // what it stands on: a player who digs it falls (into a cave, a shaft); off it first
+                int[] c = offTries++ < 2 ? Reacts.offCell(a, w, x, y, z) : null;
+                if (c == null) {
+                    Events.log("crew: " + a.getCustomNameTag() + " will not dig the block it stands on at " + x + " " + y + " " + z);
+                    return Result.BLOCKED;
+                }
+                off = new GoTo(c[0] + 0.5, c[1], c[2] + 0.5, 0.3).walkOnly();
+                return Result.RUNNING;
+            }
             return a.body.dig(w, x, y, z);
         }
     }

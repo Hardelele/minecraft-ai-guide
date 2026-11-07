@@ -266,6 +266,17 @@ final class Reflexes {
             return retry.failed(goal, now);
         }
 
+        final Map<Long, Long> told = new HashMap<Long, Long>();
+
+        /** to be told now that a walk to it is not tried (once in 10 s a goal, not every time it is asked) */
+        boolean tell(long goal, long now) {
+            Long t = told.get(goal);
+            if (t != null && now - t < 200) return false;
+            if (told.size() > 256) told.clear();
+            told.put(goal, now);
+            return true;
+        }
+
         /** got there: forgotten */
         void ok(long goal) {
             retry.ok(goal);

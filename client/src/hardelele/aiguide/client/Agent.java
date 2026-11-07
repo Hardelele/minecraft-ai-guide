@@ -21,8 +21,43 @@ import net.minecraft.world.World;
 public class Agent extends EntityCreature {
     final Deque<Crew.Task> jobs = new ArrayDeque<Crew.Task>();
     final Deque<Origin> origins = new ArrayDeque<Origin>();   // where each job came from
-    /** a short job before its jobs, without touching them: out of someone's way (a block goes where it stands), a torch put up in the dark */
-    Crew.Task aside;
+    /**
+     * Layer 2: the reaction that has the body in front of its jobs, without touching them (a reflex, or what a task
+     * asked for itself: out of someone's way, a torch in the dark); the job on top waits meanwhile and goes on after.
+     */
+    final Reflexes.Slot<Crew.Task> slot = new Reflexes.Slot<Crew.Task>();
+    Reacts.Run run;
+    /** the priority under which its task is not interrupted (30; a task raises it each tick on a critical part: a pillar 70, a fight 85) */
+    int guard = 30;
+    long guardAt = -10;
+    /** what its tasks changed for a while and owe back (a pillar, a hole in its wall) */
+    final Undo.Book undo = new Undo.Book();
+    /** the walks that failed (an unreachable goal is not tried again and again) and the walk its task is on now */
+    final Reflexes.Walks walks = new Reflexes.Walks();
+    Crew.GoTo walking;
+    long walkingAt = -10;
+
+    /** this tick its task is at a part not to be interrupted below this priority */
+    void guarded(int priority) {
+        guard = priority;
+        guardAt = worldObj.getTotalWorldTime();
+    }
+
+    /** a short job before its jobs (the slot): own, asked by its own task (always taken), else only over its task's guard */
+    boolean interject(Crew.Task t, int priority, String why, boolean own) {
+        return slot.interject(t, priority, why, own, guardAt >= worldObj.getTotalWorldTime() - 1 ? guard : 30);
+    }
+
+    /** a change made for a while, owed back to the job on now (the reaction's, when there is no job) */
+    void owe(Undo.Kind kind, int x, int y, int z, int block, int meta, String why) {
+        Object owner = jobs.peek() != null ? jobs.peek() : slot.task;
+        undo.owe(new Undo(kind, x, y, z, block, meta, why, owner, worldObj.getTotalWorldTime()));
+    }
+
+    /** given back by the task itself */
+    void paid(int x, int y, int z) {
+        undo.paid(x, y, z);
+    }
     /** its body: the one way it acts on the world (the head, the hands, the legs) and what it senses */
     final Body body = new Body(this);
     Origin origin = Origin.SCRIPT;   // of the job it does now
@@ -139,6 +174,7 @@ public class Agent extends EntityCreature {
 
     @Override
     public void onDeath(DamageSource s) {
+        if (!worldObj.isRemote && slot.busy()) Cases.drop(this, "DIED");   // a reaction open: its case ends so
         if (!worldObj.isRemote) setCurrentItemOrArmor(0, null);   // the held thing is in the bag: it falls once, with the bag
         super.onDeath(s);
         if (worldObj.isRemote) return;

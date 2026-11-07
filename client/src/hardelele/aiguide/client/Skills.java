@@ -97,13 +97,16 @@ class Skills {
         FakePlayer p = hands.get(a.getEntityId());
         if (p == null || p.worldObj != w) {
             p = FakePlayerFactory.get(w, new GameProfile(UUID.nameUUIDFromBytes(("aiguide-agent-" + a.skin()).getBytes()), "[Agent " + a.skin() + "]"));
-            if (p.playerNetServerHandler == null) {   // the game's hooks send a fake player packets (a block back, a slot): to nowhere
-                final net.minecraft.server.MinecraftServer srv = net.minecraft.server.MinecraftServer.getServer();
-                new net.minecraft.network.NetHandlerPlayServer(srv, new net.minecraft.network.NetworkManager(false), p) {
-                    @Override public void sendPacket(net.minecraft.network.Packet pk) { }
-                };
-            }
             hands.put(a.getEntityId(), p);
+        }
+        // the game's hooks send a fake player packets (ForgeHooks.onBlockBreakEvent: the block back; a slot): to nowhere.
+        // Looked at every time, not only when the hands are made: FakePlayerFactory hands out its cached player, whose
+        // handler something else may have dropped (the NPE at ForgeHooks:459 under tryHarvestBlock in the runs before this)
+        if (p.playerNetServerHandler == null) {
+            final net.minecraft.server.MinecraftServer srv = net.minecraft.server.MinecraftServer.getServer();
+            new net.minecraft.network.NetHandlerPlayServer(srv, new net.minecraft.network.NetworkManager(false), p) {
+                @Override public void sendPacket(net.minecraft.network.Packet pk) { }
+            };
         }
         p.setLocationAndAngles(a.posX, a.posY, a.posZ, a.rotationYawHead, a.rotationPitch);
         p.onGround = true;
@@ -172,7 +175,7 @@ class Skills {
      * (the body turns to it first); true when one is to be put.
      */
     static boolean lightUp(Agent a, WorldServer w) {
-        if (a.aside != null || light(a, w) >= 7 || count(a.bag, Day1.TORCH, -1) == 0) return false;
+        if (a.slot.busy() || light(a, w) >= 7 || count(a.bag, Day1.TORCH, -1) == 0) return false;
         int x = MathHelper.floor_double(a.posX), y = MathHelper.floor_double(a.posY + 0.01), z = MathHelper.floor_double(a.posZ);
         int[][] spots = { { x + 1, y + 1, z }, { x - 1, y + 1, z }, { x, y + 1, z + 1 }, { x, y + 1, z - 1 }, { x + 1, y, z }, { x - 1, y, z }, { x, y, z + 1 }, { x, y, z - 1 } };
         for (int[] s : spots) {
@@ -180,8 +183,7 @@ class Skills {
             List<int[]> sup = supports(w, s[0], s[1], s[2], false);   // the placing's own rule
             if (sup.isEmpty() || a.body.sees(w, sup) == null) continue;
             Events.log("crew: " + a.getCustomNameTag() + " puts up a torch at " + s[0] + " " + s[1] + " " + s[2] + " (dark)");
-            a.aside = new PlaceFrom(s[0], s[1], s[2], Day1.TORCH, -1).here();
-            return true;
+            return a.interject(new PlaceFrom(s[0], s[1], s[2], Day1.TORCH, -1).here(), Reflexes.TORCH, "torch", true);
         }
         return false;
     }
@@ -523,7 +525,12 @@ class Skills {
             return view;
         }
 
+        long last = -1;
+
         public Result step(Agent a, WorldServer w) {
+            long now = w.getTotalWorldTime();
+            if (last >= 0 && now - last > 1 && go == null) { view = null; went = null; }   // it waited for a reaction and may be elsewhere now: the place worked out again
+            last = now;
             if (go != null) {   // on the way to the place it sees it from (and, on a pillar, done there)
                 Result r = go.step(a, w);
                 if (r == Result.RUNNING) return r;
@@ -577,7 +584,9 @@ class Skills {
         int state, built, ticks, landed;
         Crew.Task walk;
         Result result;
+        boolean stay;        // left standing when up (a reflex's climb): owed to the job, taken down by the undo reflex
         Scaffold(int[] foot, int height, Until until, Crew.Task work, Item keep) { this.foot = foot; this.height = height; this.until = until; this.work = work; this.keep = keep; }
+        Scaffold keep() { stay = true; return this; }
 
         /** something solid to stand on (dirt and stone first), keeping one of the item that is to be put */
         static ItemStack block(Agent a, Item keep) {
@@ -609,6 +618,7 @@ class Skills {
 
         public Result step(Agent a, WorldServer w) {
             ticks++;
+            if (state >= 1) a.guarded(70);   // up there only survival and a fall interrupt it (not a torch, not someone's block)
             if (state < 3 && ticks > 20 * 120) { result = Result.TIMEOUT; state = 3; }
             if (state == 0) {   // to its foot
                 if (walk == null) walk = new Crew.GoTo(foot[0] + 0.5, foot[1], foot[2] + 0.5, 0.3);
@@ -629,7 +639,7 @@ class Skills {
                 if (a.onGround && a.posY < cell + 0.5) a.body.jump();
                 if (a.posY >= cell + 1.05) {   // over the cell: the block under its feet
                     Result r = a.body.place(w, foot[0], cell, foot[2], s.getItem(), s.getMetadata());
-                    if (r == Result.OK) { built++; Ledger.act(a, "pillar up"); }
+                    if (r == Result.OK) { built++; Ledger.act(a, "pillar up"); a.owe(Undo.Kind.REMOVE, foot[0], cell, foot[2], 0, 0, "pillar"); }   // owed back until taken down
                 }
                 return Result.RUNNING;
             }
@@ -637,6 +647,7 @@ class Skills {
                 Result r = work == null ? Result.OK : work.step(a, w);
                 if (r == Result.RUNNING) return r;
                 result = r;
+                if (stay) return r;   // up, and stays up: the pillar is owed
                 state = 3;
             }
             if (state == 3) {   // back onto the pillar's top (it may have stepped off it)
@@ -660,7 +671,7 @@ class Skills {
             if (!a.onGround) return Result.RUNNING;
             Result r = a.body.dig(w, foot[0], under, foot[2]);
             if (r == Result.RUNNING) return r;
-            if (r == Result.OK) { built--; Ledger.act(a, "pillar down"); return Result.RUNNING; }
+            if (r == Result.OK) { built--; Ledger.act(a, "pillar down"); a.paid(foot[0], under, foot[2]); return Result.RUNNING; }
             Events.log("crew: " + a.getCustomNameTag() + " cannot take its pillar down at " + foot[0] + " " + under + " " + foot[2] + " (" + r + "): " + built + " blocks of it left standing");
             return result;
         }

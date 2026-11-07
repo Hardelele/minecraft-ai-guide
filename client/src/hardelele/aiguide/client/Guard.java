@@ -129,6 +129,7 @@ class Guard {
 
         public Result step(Agent a, WorldServer w) {
             Crew c = Crew.instance;
+            a.guarded(85);   // a fight is interrupted only by survival (lava, fire, drowning, buried) and a fall
             ticks++;
             if (cool > 0) cool--;
             if (retreat) {   // into the house (or the base), then the card ends: the watch picks another

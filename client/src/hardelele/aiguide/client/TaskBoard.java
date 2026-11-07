@@ -327,6 +327,7 @@ class TaskBoard {
                 Events.log("board: " + k + " back on the board (" + a.getCustomNameTag() + " died)");
                 continue;
             }
+            if (a != null && a.slot.busy()) { k.since++; continue; }   // a reaction has its holder's body: the lease waits with the card's work
             if (a == null || now - k.since > k.lease) {
                 if (a != null) {
                     Crew.clearJobs(a);

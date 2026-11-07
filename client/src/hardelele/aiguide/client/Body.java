@@ -327,10 +327,24 @@ class Body {
         final List<EntityLivingBase> mobs = new ArrayList<EntityLivingBase>();   // living things it sees, nearest first
         EntityLivingBase threat;   // the nearest hostile one it sees
         double threatDist = 1e9;
+        String threatKind = "";    // its kind, as the game names it ("Creeper", "Zombie")
+        int threatFuse;            // a creeper's: above 0 it hisses
+        // for the reflexes (layer 2), each a few lookups at most
+        boolean inWall;            // the eyes inside a block (buried)
+        int air = 300;             // breath
+        int drop;                  // free cells under the feet while off the ground, up to 6
+        boolean headroom = true;   // the cell over the head free
+        boolean pit;               // walled in at the feet and the head on all four sides (every 10 ticks)
+        int inWaterTicks;          // in water this long
+        int still;                 // ticks it has not moved a third of a block (counted every 20)
+        int blocks;                // blocks of the bag for a pillar (every 10 ticks)
+        double weapon = 1;         // the bag's best attack damage (every 10 ticks)
+        boolean digTool;           // a shovel or a pickaxe in the bag
     }
 
     final Senses senses = new Senses();
     private int lastHurt = -1000, ray;
+    private double stillX, stillY, stillZ;
 
     /** the blocks the senses' rays met lately: key -> x, y, z, block id, meta, face, tick (at most 1024, the oldest go) */
     final Map<Long, int[]> seen = new LinkedHashMap<Long, int[]>(256, 0.75F, true) {
@@ -365,6 +379,32 @@ class Body {
         s.collided = a.isCollidedHorizontally;
         s.feet = Ground.feet(w, a.posX, a.posY, a.posZ);
         s.under = w.getBlock(s.feet[0], s.feet[1] - 1, s.feet[2]);
+        s.inWall = a.isEntityInsideOpaqueBlock();
+        s.air = a.getAir();
+        s.inWaterTicks = s.inWater ? s.inWaterTicks + 1 : 0;
+        int bx = MathHelper.floor_double(a.posX), by = MathHelper.floor_double(a.posY), bz = MathHelper.floor_double(a.posZ);
+        s.drop = 0;
+        if (!a.onGround) while (s.drop < 6 && Ground.passable(w, bx, by - 1 - s.drop, bz, null) && !Ground.liquid(w, bx, by - 1 - s.drop, bz)) s.drop++;
+        s.headroom = Ground.passable(w, s.feet[0], s.feet[1] + 2, s.feet[2], null);
+        long slow = t + a.getEntityId();
+        if (slow % 10 == 0) {
+            s.pit = Moves.pit(space(w), s.feet[0], s.feet[1], s.feet[2]);
+            s.blocks = Skills.Scaffold.blocks(a, null);
+            s.weapon = a.weapon();
+            s.digTool = false;
+            for (net.minecraft.item.ItemStack it : a.bag) if (it.getItem() instanceof net.minecraft.item.ItemPickaxe || it.getItem() instanceof net.minecraft.item.ItemSpade) s.digTool = true;
+        }
+        if (slow % 20 == 0) {
+            if (Math.abs(a.posX - stillX) + Math.abs(a.posY - stillY) + Math.abs(a.posZ - stillZ) < 0.33) s.still += 20;
+            else { s.still = 0; stillX = a.posX; stillY = a.posY; stillZ = a.posZ; }
+        }
+        if (s.threat != null) {   // the one it saw, followed every tick (it is looked for every fourth)
+            if (s.threat.isDead) { s.threat = null; s.threatDist = 1e9; s.threatFuse = 0; }
+            else {
+                s.threatDist = a.getDistanceToEntity(s.threat);
+                s.threatFuse = s.threat instanceof net.minecraft.entity.monster.EntityCreeper ? ((net.minecraft.entity.monster.EntityCreeper) s.threat).getCreeperState() : 0;
+            }
+        }
         float y0 = yawNow(), p0 = pitchNow();
         Vec3 from = Vec3.createVectorHelper(eyeX(), eyeY(), eyeZ());
         for (int k = 0; k < RAYS; k++) {
@@ -399,7 +439,7 @@ class Body {
             if (d > 1.5 && (dx * v[0] + dy * v[1] + dz * v[2]) / d < FOV) continue;   // out of the field of view (one touching it is felt)
             if (!a.canEntityBeSeen(e)) continue;
             s.mobs.add(e);
-            if (s.threat == null && Guard.hostile(e)) { s.threat = e; s.threatDist = d; }
+            if (s.threat == null && Guard.hostile(e)) { s.threat = e; s.threatDist = d; s.threatKind = Cases.name(e); }
         }
     }
 
