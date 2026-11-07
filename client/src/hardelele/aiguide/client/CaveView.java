@@ -130,10 +130,14 @@ public final class CaveView {
         if (a == null || a.isDead || mc.renderViewEntity == null) { exit(); return; }
         int ax = MathHelper.floor_double(a.posX), ay = MathHelper.floor_double(a.boundingBox.minY + 0.2), az = MathHelper.floor_double(a.posZ);
         long tick = mc.theWorld.getTotalWorldTime();
+        boolean surfaced = !Slice.belowSurface(a);
+        if (surfaced && (scanner == null || sampledWorld != mc.theWorld || volume == null)) { exit(); return; }
         boolean moved = Math.abs(ax - sampledX) > 3 || Math.abs(ay - sampledY) > 1 || Math.abs(az - sampledZ) > 3;
-        boolean changed = sampledWorld == mc.theWorld && checkedTick != tick && nearbyBlockChanged(mc.theWorld, ax, ay, az);
+        boolean changed = !surfaced && sampledWorld == mc.theWorld && checkedTick != tick && nearbyBlockChanged(mc.theWorld, ax, ay, az);
         checkedTick = tick;
-        if (scanner == null || sampledWorld != mc.theWorld || changed || scanner.done && (moved || tick - completedTick >= 40)) {
+        // Once the tracked agent reaches daylight, retain the underground component rather
+        // than replacing it with a one-cell sky scan or silently switching off the overview.
+        if (scanner == null || sampledWorld != mc.theWorld || !surfaced && (changed || scanner.done && (moved || tick - completedTick >= 40))) {
             scanner = scan(mc.theWorld, ax, ay, az);
             volume = scanner.out;
             clearFaces(); scanNanos = 0; steppedTick = -1;
@@ -153,7 +157,9 @@ public final class CaveView {
                         + (scanNanos / 1000000) + " ms scan" + (volume.limited() ? ", bounded" : ""));
             }
         }
-        boolean selectedInside = volume != null && (volume.contains(ax, ay, az) || volume.contains(ax, ay + 1, az));
+        boolean selectedInside = volume != null && (volume.contains(ax, ay, az) || volume.contains(ax, ay + 1, az)
+                || surfaced && volume.exit && Math.abs(ax - volume.exitX) <= 2 && Math.abs(az - volume.exitZ) <= 2
+                && ay >= volume.exitY && ay <= volume.exitY + 4);
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT | GL11.GL_LIGHTING_BIT | GL11.GL_TEXTURE_BIT | GL11.GL_FOG_BIT | GL11.GL_LINE_BIT);
         GL11.glPushMatrix();
         try {

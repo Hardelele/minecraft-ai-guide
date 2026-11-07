@@ -228,6 +228,8 @@ public class Commander {
         if (viewed != null && Math.hypot(viewed.posX - mc.thePlayer.posX, viewed.posZ - mc.thePlayer.posZ) > viewLimit) viewed = null;
         int skin = viewed == null || viewed.isDead ? -1 : viewed.skin();
         if (skin != viewedSkin) {
+            // A new selection must not inherit the previous agent's cave volume.
+            if (CaveView.on) CaveView.exit();
             viewedSkin = skin;
             if (viewed != null) {
                 px = sx = viewed.posX;
@@ -255,7 +257,12 @@ public class Commander {
             if (underground != viewedUnderground) {
                 viewedUnderground = underground;
                 if (underground) { if (!CaveView.on) { Slice.follow = true; Slice.enter(); dist = 11; pitch = 52; } }
-                else { Slice.exit(); CaveView.exit(); dist = 22; pitch = 56; }
+                else {
+                    Slice.exit();
+                    // Keep the cave volume while this same agent reaches its upper opening.
+                    // The person explicitly leaves the overview with C or selects another agent.
+                    if (!CaveView.on) { dist = 22; pitch = 56; }
+                }
             }
         }
         long now = System.nanoTime();
@@ -294,10 +301,13 @@ public class Commander {
         px += mxp * speed;
         pz += mzp * speed;
         if (viewed != null && (Slice.active() || CaveView.active())) {
-            // Follow both horizontal movement and the current stair level.
-            px = viewed.posX;
-            pz = viewed.posZ;
-            py = CaveView.active() || Slice.follow ? viewed.boundingBox.minY + 0.6 : Slice.level - 1;
+            // Hold the cave at its last underground anchor after the tracked agent exits.
+            // The actor is drawn only while it remains inside or immediately above the volume.
+            if (!CaveView.active() || viewedUnderground) {
+                px = viewed.posX;
+                pz = viewed.posZ;
+                py = CaveView.active() || Slice.follow ? viewed.boundingBox.minY + 0.6 : Slice.level - 1;
+            }
         } else {
             int gy = mc.theWorld.getHeightValue(MathHelper.floor_double(px), MathHelper.floor_double(pz));
             if (gy > 0) py = gy;
@@ -558,6 +568,17 @@ public class Commander {
     void look(double x, double z, double turn, double d) {
         px = sx = x; pz = sz = z; yaw = syaw = turn; dist = sdist = d;
         placed = true;
+    }
+
+    private void centerSurfaceView() {
+        Agent a = renderedAgent(viewedSkin);
+        if (a != null) {
+            px = sx = a.posX;
+            pz = sz = a.posZ;
+            py = sy = a.boundingBox.minY + 0.6;
+        }
+        dist = sdist = 22;
+        pitch = 56;
     }
 
     // ---- blueprints: what can be built, as cells over the ground (x across, y up, z deep), the door left open --
@@ -1002,9 +1023,17 @@ public class Commander {
                 return;
             }
             if (code == Keyboard.KEY_Y) Fog.on = !Fog.on;
-            if (code == Keyboard.KEY_U && viewedSkin > 0) { if (CaveView.on) CaveView.exit(); if (Slice.on) Slice.exit(); else { Slice.follow = true; Slice.enter(); } }
-            if (code == Keyboard.KEY_C && viewedSkin > 0 && viewedUnderground) {
-                if (CaveView.on) { CaveView.exit(); if (viewedUnderground) { Slice.follow = true; Slice.enter(); dist = 11; pitch = 52; } }
+            if (code == Keyboard.KEY_U && viewedSkin > 0) {
+                if (CaveView.on) { CaveView.exit(); if (!viewedUnderground) centerSurfaceView(); }
+                else if (Slice.on) Slice.exit();
+                else if (viewedUnderground) { Slice.follow = true; Slice.enter(); }
+            }
+            if (code == Keyboard.KEY_C && viewedSkin > 0 && (viewedUnderground || CaveView.on)) {
+                if (CaveView.on) {
+                    CaveView.exit();
+                    if (viewedUnderground) { Slice.follow = true; Slice.enter(); dist = 11; pitch = 52; }
+                    else centerSurfaceView();
+                }
                 else CaveView.enter();
             }
             if (Slice.on && code == Keyboard.KEY_HOME) { Slice.follow = true; Slice.updateFollow(); }
@@ -1473,7 +1502,8 @@ public class Commander {
                         : "Полость Y" + g.minLevel + "–" + g.maxLevel + (g.exit ? " · открытый верх ↑" : " · верх не найден");
                 Ui.round(x0, 28, x0 + w, 60, 4, 0xD01A2630);
                 fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(mode, w - 8), x0 + 4, 32, 0xB8E9FF);
-                String keys = "C: выкл · Q/E: поворот · колесо: масштаб · карта без кликов";
+                String keys = viewedUnderground ? "C: выкл · Q/E: поворот · колесо: масштаб · карта без кликов"
+                        : "Агент вышел; C закрыть · Q/E: поворот · колесо: масштаб";
                 fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(keys, w - 8), x0 + 4, 45, 0xC6DEE0);
             } else if (Slice.active()) {
                 String mode = "Только один слой: Y=" + Slice.level + (Slice.follow ? " · за агентом" : " · вручную");
