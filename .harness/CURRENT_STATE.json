@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "updatedAt": "2026-11-07T23:02:23+05:00",
+  "updatedAt": "2026-11-07T23:45:00+05:00",
   "objective": "Complete Minecraft AI Guide 3D cave feature, all-four night/door/run cinematic hook, coherent promo with limited user-voice narration, exact captions, full AV review, and reversible game-profile integration.",
-  "userPriority": "Full takeover by a NEW visible elevated Claude Code terminal. Claude owns all remaining implementation, filming, editing and verification; Codex agents are stopped. Read .harness/CLAUDE_TAKEOVER_20261107.md first.",
+  "userPriority": "Claude is sole integrator. Door/night/run proven in WorldRec door_fx13_night_a2; V10 filming in captures/v10_hook.",
   "canonicalRemote": "git@github.com:Hardelele/minecraft-ai-guide.git",
   "mainSha": "bae2af05ed55eae535cc8be14a8c668650353fcb",
   "activeBranches": [
@@ -43,6 +43,14 @@
     "Do not use the failed all-four door gate as evidence of entry/closure/night or manually edit/teleport world to fake it."
   ],
   "provenFacts": [
+    {
+      "claim": "All four agents entered through the furnace-blocked doorway, Agent 4 closed the original door after the last entrant, the crew stayed motionless inside through the real night, opened the door at dawn and ran to camera in four lanes on real MOVE orders. One continuous WorldRec, 13044 ticks, no breaks, no teleport.",
+      "checkedAt": "2026-11-07T23:30:00+05:00",
+      "sourceIdentity": "a31073f client D6E0FA59 server 32C4BEF6; world copy of outcome-mineE-copy13; session SHA 33D90885",
+      "method": "tools/promo/worldrec_read.py on session.bin.gz: door meta 5->1 tick509 time12662, 1->5 tick11477 time23630, run ticks 12590-12825",
+      "evidence": "//192.168.1.9/c/Videos/aiguide-promo/recordings/door_fx13_night_a2; verification/door_fx13/a2_evidence.json",
+      "doesNotProve": "Normal-profile behaviour; world ran at difficulty 0 (peaceful), start time set to 12150 before recording; no mobs threatened the house."
+    },
     {
       "claim": "Integration worktree was clean at 7f8ee2b before this handoff; main remains bae2af0. Fresh tracker searches for Minecraft, AI Guide and aiguide found no matching task.",
       "checkedAt": "2026-11-07T23:02:23+05:00",
@@ -114,10 +122,10 @@
     "Normal Minecraft profile still contains older mod JARs, isolated test is not deployment."
   ],
   "runtimeState": {
-    "codeSha": "7f8ee2b6dacd28a7910a2a041293ccb01ec7dda0",
-    "clientJarSha256": "C1A9F1799B0DA82A99B65F9ED7019A8A96B406B0C61434D93E5036A056756DA2",
-    "serverJarSha256": "771D31020E43B956718DFD3EF34189044BD6BE7F6CDCB1C3729394EACFD21D03",
-    "isolatedDoorGate": "FAIL_FIXTURE_AGENT1_UNDERGROUND",
+    "codeSha": "a31073f28e5ded1cc243271e20b861e974ce22df",
+    "clientJarSha256": "D6E0FA5913CD56292AF73AF38F78C9E8AA0FE5F4F0C6312C1101D12B69F2EE90",
+    "serverJarSha256": "32C4BEF64107AF42896334FB801FAB36E9C9776DB38AAACDC118D269F850643F",
+    "isolatedDoorGate": "PASS_A2_FULL_NIGHT",
     "caveGate": "ACCEPT_BOUNDED_CORE_PRODUCT",
     "film": "V9_PREVIEW_USER_REJECTED_EDITORIAL",
     "laptopProcesses": "Agents reported java/javaw/ffmpeg absent at stop; recheck before launch.",
