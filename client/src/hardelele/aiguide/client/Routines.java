@@ -265,20 +265,41 @@ public class Routines {
 
         /** A remembered target may change while the agent walks toward it. Check it at action time. */
         static class MineObserved implements Crew.Task {
+            interface TargetCheck { Result check(Agent a, WorldServer w, int[] p, Block want); }
+            static final TargetCheck LIVE = new TargetCheck() {
+                public Result check(Agent a, WorldServer w, int[] p, Block want) {
+                    if (!Exploration.visible(a, w, p[0], p[1], p[2])) return Result.NO_PATH;
+                    Result result = observedStatus(true, w.getBlock(p[0], p[1], p[2]), want);
+                    if (result == Result.GONE) Exploration.invalidate(w, p[0], p[1], p[2]);
+                    return result;
+                }
+            };
             final int[] p;
             final Block want;
+            final TargetCheck check;
             Crew.Mine mine;
-            MineObserved(int[] p, Block want) { this.p = p.clone(); this.want = want; }
+            MineObserved(int[] p, Block want) { this(p, want, LIVE); }
+            MineObserved(int[] p, Block want, TargetCheck check) {
+                this.p = p.clone(); this.want = want; this.check = check;
+            }
+            static Result observedStatus(boolean visible, Block actual, Block wanted) {
+                return !visible ? Result.NO_PATH : actual != wanted ? Result.GONE : null;
+            }
+            Crew.Mine guardedMine() {
+                return new Crew.Mine(new ArrayList<int[]>(java.util.Arrays.asList(p)),
+                        new Crew.Mine.TargetGuard() { public Result beforeBreak(Agent a, WorldServer w, int x, int y, int z) {
+                            if (x != p[0] || y != p[1] || z != p[2]) return Result.NO_PATH;
+                            return check.check(a, w, p, want);
+                        } });
+            }
             public Result step(Agent a, WorldServer w) {
                 if (mine == null) {
-                    if (!Exploration.visible(a, w, p[0], p[1], p[2])) return Result.NO_PATH;
-                    if (w.getBlock(p[0], p[1], p[2]) != want) {
-                        Exploration.invalidate(w, p[0], p[1], p[2]);
-                        return Result.GONE;
-                    }
-                    mine = new Crew.Mine(new ArrayList<int[]>(java.util.Arrays.asList(p)));
+                    Result gate = check.check(a, w, p, want);
+                    if (gate != null) return gate;
+                    mine = guardedMine();
                 }
                 Result result = mine.step(a, w);
+                if (result.failed()) return result;
                 if (w.isAirBlock(p[0], p[1], p[2])) Exploration.invalidate(w, p[0], p[1], p[2]);
                 return result;
             }

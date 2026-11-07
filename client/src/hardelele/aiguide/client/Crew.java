@@ -1109,16 +1109,24 @@ public class Crew {
 
     /** dig blocks one after another, each from where it is seen and reached */
     static class Mine implements Task {
+        interface TargetGuard { Result beforeBreak(Agent a, WorldServer w, int x, int y, int z); }
         final List<int[]> blocks;
+        final TargetGuard targetGuard;
         int i, tries, mined, missed;
         GoTo walk;
         Break br;
         boolean onTarget;
-        Mine(List<int[]> blocks) { this.blocks = blocks; }
+        Mine(List<int[]> blocks) { this(blocks, null); }
+        Mine(List<int[]> blocks, TargetGuard targetGuard) { this.blocks = blocks; this.targetGuard = targetGuard; }
+        Result beforeBreak(Agent a, WorldServer w, int x, int y, int z) {
+            return targetGuard == null ? null : targetGuard.beforeBreak(a, w, x, y, z);
+        }
         public Result step(Agent a, WorldServer w) {
             if (i >= blocks.size()) return mined > 0 || missed == 0 ? Result.OK : Result.BLOCKED;   // nothing got at: not a success
             int[] b = blocks.get(i);
             if (br != null) {
+                Result gate = beforeBreak(a, w, br.x, br.y, br.z);
+                if (gate != null) return gate;
                 Result r = br.step(a, w);
                 if (r == Result.RUNNING) return r;
                 br = null;
@@ -1131,8 +1139,16 @@ public class Crew {
             if (soft(w, b[0], b[1], b[2]) || w.getBlock(b[0], b[1], b[2]).getMaterial().isLiquid()) { i++; tries = 0; walk = null; return Result.RUNNING; }   // gone already
             int[] in = blocker(a, w, b[0], b[1], b[2]);
             if (eyeDist(a, b[0], b[1], b[2]) <= REACH) {
-                if (in == null) { br = new Break(b[0], b[1], b[2], 0.75); onTarget = true; return Result.RUNNING; }
-                if (GoTo.mayDigThrough(a, w, in[0], in[1], in[2])) { br = new Break(in[0], in[1], in[2], 0); onTarget = false; return Result.RUNNING; }   // rock in the way: through it
+                if (in == null) {
+                    Result gate = beforeBreak(a, w, b[0], b[1], b[2]);
+                    if (gate != null) return gate;
+                    br = new Break(b[0], b[1], b[2], 0.75); onTarget = true; return Result.RUNNING;
+                }
+                if (GoTo.mayDigThrough(a, w, in[0], in[1], in[2])) {
+                    Result gate = beforeBreak(a, w, in[0], in[1], in[2]);
+                    if (gate != null) return gate;
+                    br = new Break(in[0], in[1], in[2], 0); onTarget = false; return Result.RUNNING;
+                }   // rock in the way: through it
             }
             if (walk == null) {
                 if (++tries > 3) { i++; tries = 0; missed++; return Result.RUNNING; }   // could not get at it

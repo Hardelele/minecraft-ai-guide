@@ -5,6 +5,9 @@ import java.util.List;
 
 /** A sealed ore cannot be selected by a routine until an agent actually sees its face. */
 public final class RoutinesObservedTargetTest {
+    static final class FakeBlock extends net.minecraft.block.Block {
+        FakeBlock() { super(net.minecraft.block.material.Material.rock); }
+    }
     static List<int[]> knownIron(Exploration.Memory memory) {
         List<int[]> out = new ArrayList<int[]>();
         for (java.util.Map.Entry<Exploration.Pos, String> e : memory.seen.entrySet())
@@ -46,6 +49,33 @@ public final class RoutinesObservedTargetTest {
         scene.blocks.put(new Exploration.Pos(2, 64, 0), "minecraft:stone");
         if (Routines.Loop.nearestKnown(knownIron(memory), 0, 64, 0, 8, 12, 8, visible) != null)
             throw new AssertionError("occluded remembered ore was selected");
-        System.out.println("sealed ore absent; exposed ore selected; radius and current visibility enforced");
+
+        // Enter the same pending-break branch used after a real approach. A replacement or lost
+        // sight must return before Crew.Break.step can touch the world.
+        final boolean[] inSight = {true};
+        final net.minecraft.block.Block wanted = new FakeBlock(), replacement = new FakeBlock();
+        final net.minecraft.block.Block[] actual = {wanted};
+        Routines.Loop.MineObserved.TargetCheck simulated = new Routines.Loop.MineObserved.TargetCheck() {
+            public Result check(Agent a, net.minecraft.world.WorldServer w, int[] p, net.minecraft.block.Block want) {
+                return Routines.Loop.MineObserved.observedStatus(inSight[0], actual[0], want);
+            }
+        };
+        Routines.Loop.MineObserved guarded = new Routines.Loop.MineObserved(
+                new int[] {3, 64, 0}, wanted, simulated);
+        guarded.mine = guarded.guardedMine();
+        guarded.mine.br = new Crew.Break(3, 64, 0, .75);
+        guarded.mine.onTarget = true;
+        inSight[0] = false;
+        if (guarded.step(null, null) != Result.NO_PATH || guarded.mine.br.ticks != 0)
+            throw new AssertionError("occluded target reached pending break");
+        inSight[0] = true;
+        actual[0] = replacement;
+        if (guarded.step(null, null) != Result.GONE || guarded.mine.br.ticks != 0)
+            throw new AssertionError("replacement block reached pending break");
+        actual[0] = wanted;
+        guarded.mine.br = new Crew.Break(2, 64, 0, .75);
+        if (guarded.step(null, null) != Result.NO_PATH || guarded.mine.br.ticks != 0)
+            throw new AssertionError("routine tried to break an unobserved path blocker");
+        System.out.println("sealed ore absent; exposed ore selected; radius, visibility and action-time break guard enforced");
     }
 }
