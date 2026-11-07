@@ -88,6 +88,7 @@ public class Recorder {
         if (e.phase != TickEvent.Phase.END || finished) return;
         try {
             if (pbo == null) begin();
+            requireEncoder();
             if (mc.displayWidth != w || mc.displayHeight != h) return;   // the window changed: frames of the old size only
             GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, pbo[at]);
             GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT, 1);
@@ -98,7 +99,7 @@ public class Recorder {
                 ByteBuffer b = GL15.glMapBuffer(GL21.GL_PIXEL_PACK_BUFFER, GL15.GL_READ_ONLY, size, null);
                 if (b != null) {
                     // A replay may render slower than real time, but must never skip a source tick.
-                    byte[] f = pool.poll(Replay.active != null ? 30000 : 200, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    byte[] f = freeFrame();
                     if (f == null && Replay.active != null) throw new java.io.IOException("replay encoder stalled; refusing to drop a frame");
                     if (f != null) {
                         b.get(f);
@@ -132,6 +133,23 @@ public class Recorder {
         }
     }
 
+    void requireEncoder() {
+        CaptureEncoderState.requireHealthy(failure, ff != null && ff.isAlive(), writer != null && writer.isAlive());
+    }
+
+    byte[] freeFrame() throws Exception {
+        long limit = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(Replay.active != null ? 30000 : 200);
+        for (;;) {
+            requireEncoder();
+            byte[] frame = pool.poll(10, java.util.concurrent.TimeUnit.MILLISECONDS);
+            if (frame != null) return frame;
+            if (System.nanoTime() >= limit) {
+                requireEncoder();
+                return null;
+            }
+        }
+    }
+
     void begin() throws Exception {
         validateEncoder();
         w = mc.displayWidth;
@@ -146,7 +164,7 @@ public class Recorder {
         GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
         List<String> command = new ArrayList<String>(Arrays.asList(FFMPEG, detached ? "-n" : "-y", "-loglevel", "error",
                 "-f", "rawvideo", "-pix_fmt", "bgra", "-s", w + "x" + h, "-framerate", String.valueOf(FPS),
-                "-i", "-", "-filter_threads", "1", "-vf", "vflip", "-c:v", ENCODER));
+                "-i", "-", "-filter_threads", "1", "-vf", CaptureVideoGeometry.filter(), "-c:v", ENCODER));
         if (ENCODER.equals("libx264")) {
             // Four detached tracks share the launcher's two-CPU affinity. No hardware-specific flags.
             command.addAll(Arrays.asList("-threads", detached ? "1" : "2", "-preset", "veryfast", "-crf", "19",
@@ -162,7 +180,8 @@ public class Recorder {
         running = true;
         final OutputStream out = ff.getOutputStream();
         final long t0 = System.nanoTime();
-        Director.log("recorder: start " + w + "x" + h + " -> " + path + " encoder=" + ENCODER + " at " + System.currentTimeMillis());
+        Director.log("recorder: start " + w + "x" + h + " (encoded " + CaptureVideoGeometry.encoded(w) + "x"
+                + CaptureVideoGeometry.encoded(h) + ") -> " + path + " encoder=" + ENCODER + " at " + System.currentTimeMillis());
         writer = new Thread(new Runnable() {   // every rendered frame once, in order: the video is locked to the frames, not to the clock
             @Override public void run() {
                 try {
@@ -177,6 +196,7 @@ public class Recorder {
                 } catch (Exception ex) {
                     failure = ex.toString();
                     Director.log("recorder writer: " + ex);
+                    try { out.close(); } catch (Exception ignored) { }
                 }
             }
         }, "AIGuide-recorder");        writer.setDaemon(true);
