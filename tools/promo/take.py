@@ -6,7 +6,7 @@ recording start, for lining up the director's events).
     python take.py <game_dir> <script> <out_base> [--timeout 900] [--size 1600x900]
 """
 import argparse, csv, ctypes, ctypes.wintypes as wt, json, os, re, subprocess, sys, threading, time
-from capture_config import executable
+from capture_config import executable, capture_diag_java_options
 
 MC = os.environ.get("AIGUIDE_MINECRAFT_HOME", r"C:\Users\harde\AppData\Roaming\.minecraft")
 VER = os.environ.get("AIGUIDE_MINECRAFT_VERSION", "OptiForgeLiteLoader 1.7.10")
@@ -55,6 +55,7 @@ ap.add_argument("--source", help="exact source identity written into the observe
 ap.add_argument("--bench-minutes", type=int, default=40, help="positive observer timeout in game minutes")
 ap.add_argument("--recordings", help="WorldRec directory, including a laptop UNC share")
 ap.add_argument("--capture-source", help="source identity for the recording report (does not assert deployed JAR identity)")
+ap.add_argument("--capture-diag", action="store_true", help="opt-in multicamera GL/readback diagnostics")
 ap.add_argument("--encoder", choices=("h264_nvenc", "libx264"), default="h264_nvenc", help="internal Recorder encoder; no automatic fallback")
 ap.add_argument("--ffmpeg", help="FFmpeg executable; otherwise AIGUIDE_FFMPEG, PATH, then legacy path")
 ap.add_argument("--hidden", action="store_true",
@@ -103,6 +104,7 @@ cmd = [java, "-Xmx3G", "-Xms512M", "-XX:+UseG1GC", "-XX:MaxGCPauseMillis=20", "-
        "-Djava.library.path=" + os.path.join(vdir, "natives"), "-cp", os.pathsep.join(cp), d["mainClass"]] + game_args + ["--width", W, "--height", H]
 si, flags = None, 0x4000   # below normal (its ffmpeg inherits it)
 cmd[1:1] = ["-Daiguide.video.ffmpeg=" + FFMPEG, "-Daiguide.video.encoder=" + a.encoder]
+cmd[1:1] = capture_diag_java_options(a.capture_diag)
 if a.recordings:
     cmd.insert(1, "-Daiguide.recordings=" + os.path.abspath(a.recordings))
 if a.capture_source:
@@ -263,7 +265,7 @@ def reader():
         if "[Director] inworld" in line: events["inworld"].set()
 threading.Thread(target=reader, daemon=True).start()
 
-rec = None; meta = {"stopfile": stopfile}; hung = False
+rec = None; meta = {"stopfile": stopfile, "capture_diag": a.capture_diag}; hung = False
 t0 = time.time()
 checked = False
 next_league_check = 0.0

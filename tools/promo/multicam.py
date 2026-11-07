@@ -14,7 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 from capture_impact import low_impact
-from capture_config import executable, existing_capture_artifacts, fresh_attempt_prefix, verified_runtime_jars
+from capture_config import executable, existing_capture_artifacts, fresh_attempt_prefix, verified_runtime_jars, capture_diag_cli_options
 
 ROOT = Path(os.environ.get("AIGUIDE_CAPTURE_ROOT", os.environ.get("AIGUIDE_MEDIA_ROOT", r"C:\Users\harde\Videos\aiguide-promo")))
 MEDIA = Path(os.environ.get("AIGUIDE_MEDIA_ROOT", r"\\192.168.1.9\c\Videos\aiguide-promo"))
@@ -61,6 +61,7 @@ ap.add_argument("--recordings", help="WorldRec directory used by the live take")
 ap.add_argument("--heroes", nargs="+", type=int, choices=range(1, 5), default=[1, 2, 3, 4])
 ap.add_argument("--resume", action="store_true", help="verify and reuse known tracks; never overwrite unknown existing video")
 ap.add_argument("--single-client", action="store_true", help="experimental coordinated cameras in one hidden replay client; requires matching runtime")
+ap.add_argument("--capture-diag", action="store_true", help="opt-in GL/readback diagnostic in a single hidden replay client")
 ap.add_argument("--capture-source", help="exact source commit used to build the deployed multicapture runtime")
 ap.add_argument("--expected-jar-sha256", help="SHA256 of the approved client JAR installed in the selected game")
 ap.add_argument("--expected-server-jar-sha256", help="SHA256 of the approved server JAR installed in the selected game")
@@ -68,6 +69,8 @@ ap.add_argument("--encoder", choices=("h264_nvenc", "libx264"), default="h264_nv
 ap.add_argument("--ffmpeg", help="FFmpeg executable; otherwise AIGUIDE_FFMPEG, PATH, legacy fallback")
 ap.add_argument("--ffprobe", help="FFprobe executable; otherwise AIGUIDE_FFPROBE, FFmpeg sibling, PATH, legacy fallback")
 a = ap.parse_args()
+if a.capture_diag and not a.single_client:
+    ap.error("--capture-diag requires --single-client")
 if a.single_client and not a.capture_source:
     ap.error("--single-client requires --capture-source; verify the deployed runtime before use")
 if a.single_client and not a.expected_jar_sha256:
@@ -112,12 +115,13 @@ manifest = {"recording": a.recording, "requested_start_tick": a.start * 20,
             "capture_source": a.capture_source if a.single_client else None,
             "client_sha256": a.expected_jar_sha256.lower() if a.single_client else None,
             "server_sha256": a.expected_server_jar_sha256.lower() if a.single_client else None,
+            "capture_diag": a.capture_diag,
             "interface": "Use the live Commander video and its world_tick timeline; replay omits inventory and UI history."}
 if manifest_path.exists():
     if not a.resume:
         ap.error("manifest exists; use --resume to validate and reuse it, or choose a new --name")
     existing = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if any(existing.get(key) != manifest[key] for key in ("recording", "requested_start_tick", "fps", "frames", "hidden", "capture_source", "client_sha256", "server_sha256")):
+    if any(existing.get(key) != manifest[key] for key in ("recording", "requested_start_tick", "fps", "frames", "hidden", "capture_source", "client_sha256", "server_sha256", "capture_diag")):
         ap.error("existing manifest recording, interval, capture mode or runtime identity differs")
     if not isinstance(existing.get("tracks"), list):
         ap.error("existing manifest has no track list")
@@ -184,6 +188,7 @@ quit
                "expected_server_jar_sha256": a.expected_server_jar_sha256.lower(),
                "runtime_jars": runtime_jars, "script": str(script),
                "encoder": a.encoder, "ffmpeg": capture_ffmpeg, "ffprobe": FP,
+               "capture_diag": a.capture_diag,
                "started_wall_ns": time.time_ns(), "validated_heroes": [], "failures": {}}
     manifest.setdefault("attempts", []).append(attempt)
     manifest["status"] = "capture_running"
@@ -194,7 +199,8 @@ quit
             "--hidden", "--capture-source", a.capture_source,
             "--encoder", a.encoder, "--ffmpeg", capture_ffmpeg,
             "--timeout", str(max(240, int(a.seconds * len(missing) * 8 + 180))),
-            "--size", "1920x1080"] + (["--recordings", a.recordings] if a.recordings else []),
+            "--size", "1920x1080"] + (["--recordings", a.recordings] if a.recordings else [])
+            + capture_diag_cli_options(a.capture_diag),
             cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
     attempt["runner_exit"] = result.returncode
     attempt["finished_wall_ns"] = time.time_ns()

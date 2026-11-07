@@ -11,6 +11,15 @@ LEGACY_BIN = Path(r"C:\Users\harde\AppData\Local\Microsoft\WinGet\Packages\Gyan.
 CAPTURE_SUFFIXES = ("", ".timeline.tsv", ".frames.txt", ".ffmpeg.txt")
 
 
+def capture_diag_cli_options(enabled):
+    """Opt in to the costly GL probe only for an explicitly requested launch."""
+    return ["--capture-diag"] if enabled else []
+
+
+def capture_diag_java_options(enabled):
+    return ["-Daiguide.capture.diag=true"] if enabled else []
+
+
 def _verified_jar(mods, pattern, expected_sha256, flag):
     if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256 or ""):
         raise ValueError(f"{flag} requires a 64-character SHA256 digest")
