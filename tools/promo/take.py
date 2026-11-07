@@ -5,30 +5,18 @@ recording start, for lining up the director's events).
 
     python take.py <game_dir> <script> <out_base> [--timeout 900] [--size 1600x900]
 """
-import argparse, csv, ctypes, ctypes.wintypes as wt, json, os, re, subprocess, sys, threading, time
+import argparse, ctypes, ctypes.wintypes as wt, json, os, re, subprocess, sys, threading, time
 from capture_config import executable, capture_diag_java_options
+from league_guard import active_league, capture_stop_reason
 
 MC = os.environ.get("AIGUIDE_MINECRAFT_HOME", r"C:\Users\harde\AppData\Roaming\.minecraft")
 VER = os.environ.get("AIGUIDE_MINECRAFT_VERSION", "OptiForgeLiteLoader 1.7.10")
 FFMPEG = r"C:\Users\harde\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin\ffmpeg.exe"
 
-def active_league():
-    """Read exact image names only; never change another application's state."""
-    result = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True,
-                            text=True, errors="replace", timeout=10,
-                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    if result.returncode != 0:
-        raise RuntimeError("tasklist exited with code " + str(result.returncode))
-    rows = [row for row in csv.reader(result.stdout.splitlines(), strict=True) if row]
-    if not rows or any(len(row) < 2 or not row[1].strip().isdigit() for row in rows):
-        raise RuntimeError("tasklist did not return a valid process CSV")
-    return any(row[0].strip().casefold() == "league of legends.exe" for row in rows)
-
-
 def require_no_active_league():
     try:
         running = active_league()
-    except (OSError, subprocess.SubprocessError, csv.Error, RuntimeError) as exc:
+    except Exception as exc:
         print("Capture launch blocked: cannot verify whether League of Legends is running (" + str(exc) + ").", flush=True)
         raise SystemExit(2)
     if running:
@@ -276,10 +264,7 @@ while p.poll() is None:
         next_league_check = now + 2
         reason = "external stop marker" if os.path.lexists(stopfile) else None
         if reason is None:
-            try:
-                if active_league(): reason = "League of Legends.exe started; stopping owned capture"
-            except (OSError, subprocess.SubprocessError, csv.Error, RuntimeError) as exc:
-                reason = "League process check failed; stopping owned capture: " + str(exc)
+            reason = capture_stop_reason()
         if reason is None and events["launch"].is_set() and not events["inworld"].is_set() and time.time() - launch_at[0] > 120:
             hung = True
             reason = "world did not open in two minutes; stopping owned capture"
