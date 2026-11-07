@@ -346,6 +346,7 @@ public class Crew {
     void load(WorldServer w) {
         loaded = true;
         Routines.loaded = false;   // this world's routines, read when first asked for
+        Cases.book();              // this world's cases, read back on a thread of their own
         try {
             java.io.File f = new java.io.File(w.getSaveHandler().getWorldDirectory(), "crew.json");
             if (!f.isFile()) return;
