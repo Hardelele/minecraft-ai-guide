@@ -7,7 +7,7 @@ be cut or retimed from its source, and a source shorter than the shot is refused
 plan = {
   "fps": 30, "size": [1920, 1080], "music": path, "music_in": seconds, "music_gain_db": -3, "tail_fade": seconds,
   "shots": [{"id", "source", "in": seconds, "frames": n, "speed": 1.0 (source seconds per film second), "note"}],
-  "captions": [{"png": path, "from": frame, "to": frame}],   # PNG strips, placed at caption_y
+  "caption_track": path,   # transparent video strip, placed at caption_y
   "caption_y": 800,
   "voice": [{"file": path, "at": frame, "gain_db": 0}]
 }
@@ -52,44 +52,41 @@ def picture(plan, names, work, ff):
             f.write("file '%s'\n" % n.replace("\\", "/"))
     base = os.path.join(work, "base.mp4")
     run([ff, "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", base])
-    caps = plan.get("captions", [])
-    if not caps:
-        return base
-    fps = plan["fps"]; y = plan.get("caption_y", 800); fade = 6 / fps
-    cmd = [ff, "-y", "-v", "error", "-i", base]
-    graph, last = [], "0:v"
-    for i, c in enumerate(caps):
-        dur = (c["to"] - c["from"]) / fps
-        cmd += ["-loop", "1", "-framerate", str(fps), "-t", "%.4f" % dur, "-i", c["png"]]
-        start = c["from"] / fps
-        graph.append("[%d:v]format=rgba,fade=t=in:st=0:d=%.3f:alpha=1,fade=t=out:st=%.3f:d=%.3f:alpha=1,setpts=PTS-STARTPTS+%.4f/TB[c%d]" % (i + 1, fade, dur - fade, fade, start, i))
-        graph.append("[%s][c%d]overlay=(W-w)/2:%d:eof_action=pass:format=auto[v%d]" % (last, i, c.get("y", y), i))
-        last = "v%d" % i
+    track = plan.get("caption_track")   # one transparent full-frame video on the film's own grid (see film_v10_plan.py)
+    v = plan.get("vertical")
     out = os.path.join(work, "picture.mp4")
-    cmd += ["-filter_complex", ";".join(graph), "-map", "[%s]" % last, "-c:v", "libx264", "-preset", "slow", "-crf", "17",
-            "-pix_fmt", "yuv420p", "-color_range", "tv", "-r", str(fps), out]
-    run(cmd)
+    if v:   # the whole 16:9 picture in the middle, its own blurred continuation above and below; the end card takes the whole frame
+        g = ("[0:v]split[a][b];[a]scale=-2:%d,crop=%d:%d,boxblur=26:2,eq=brightness=-0.17:saturation=0.8[bg];"
+             "[b]scale=%d:-2:flags=lanczos[fg];[bg][fg]overlay=0:%d:enable='lt(n,%d)'[p];[p][1:v]overlay=0:0:eof_action=pass:format=auto,format=yuv420p[v]"
+             % (v["h"], v["w"], v["h"], v["w"], v["fg_y"], v["card_from"]))
+    else:
+        g = "[0:v][1:v]overlay=0:%d:eof_action=pass:format=auto,format=yuv420p[v]" % plan.get("caption_y", 800)
+    run([ff, "-y", "-v", "error", "-i", base, "-i", track, "-filter_complex", g,
+         "-map", "[v]", "-c:v", "libx264", "-preset", "slow", "-crf", "19", "-color_range", "tv", "-r", str(plan["fps"]), out])
     return out
 
 
-def sound(plan, total, work, ff):
+def sound(plan, total, work, ff, fp):
     fps = plan["fps"]; dur = total / fps
     tail = plan.get("tail_fade", 1.2)
+    duck = plan.get("duck", 0.4)   # the music's level under the voice, a plain envelope from the voice's own intervals
     cmd = [ff, "-y", "-v", "error", "-ss", str(plan.get("music_in", 0)), "-t", "%.4f" % dur, "-i", plan["music"]]
-    graph = ["[0:a]aresample=48000,aformat=channel_layouts=stereo,volume=%sdB[m]" % plan.get("music_gain_db", -3)]
-    labels = []
+    env, labels, graph = [], [], []
     for i, v in enumerate(plan.get("voice", [])):
         cmd += ["-i", v["file"]]
-        ms = int(v["at"] / fps * 1000)
+        a = v["at"] / fps; b = a + probe(fp, v["file"])
+        ms = int(a * 1000)
         graph.append("[%d:a]aresample=48000,aformat=channel_layouts=stereo,volume=%sdB,adelay=%d|%d[v%d]" % (i + 1, v.get("gain_db", 0), ms, ms, i))
         labels.append("[v%d]" % i)
+        env.append("clip((t-%.3f)/0.25,0,1)*clip((%.3f-t)/0.45,0,1)" % (a - 0.25, b + 0.45))
+    level = "1-%.3f*min(1,%s)" % (1 - duck, "+".join(env)) if env else "1"
+    graph.insert(0, "[0:a]aresample=48000,aformat=channel_layouts=stereo,volume=%sdB,volume='%s':eval=frame,afade=t=out:st=%.4f:d=%.4f[md]" % (plan.get("music_gain_db", -3), level, dur - tail, tail))
     if labels:
-        graph.append("%samix=inputs=%d:normalize=0:duration=longest,apad,atrim=0:%.4f,asplit=2[vo][key]" % ("".join(labels), len(labels), dur))
-        graph.append("[m][key]sidechaincompress=threshold=0.02:ratio=7:attack=30:release=420:makeup=1[md]")
+        graph.append("%samix=inputs=%d:normalize=0:duration=longest[vo]" % ("".join(labels), len(labels)))
         graph.append("[md][vo]amix=inputs=2:normalize=0:duration=first[mix]")
     else:
-        graph.append("[m]anull[mix]")
-    graph.append("[mix]afade=t=out:st=%.4f:d=%.4f,alimiter=limit=0.84:level=disabled,atrim=0:%.4f[a]" % (dur - tail, tail, dur))
+        graph.append("[md]anull[mix]")
+    graph.append("[mix]alimiter=limit=0.84:level=disabled,apad,atrim=0:%.4f[a]" % dur)
     out = os.path.join(work, "sound.wav")
     cmd += ["-filter_complex", ";".join(graph), "-map", "[a]", "-c:a", "pcm_s16le", "-ar", "48000", out]
     run(cmd)
@@ -110,7 +107,7 @@ def main():
         pic = os.path.join(a.work, "picture.mp4")
     else:
         pic = picture(plan, segments(plan, a.work, ff, fp), a.work, ff)
-    wav = sound(plan, total, a.work, ff)
+    wav = sound(plan, total, a.work, ff, fp)
     run([ff, "-y", "-v", "error", "-i", pic, "-i", wav, "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "256k",
          "-movflags", "+faststart", "-t", "%.4f" % (total / plan["fps"]), a.out])
     print(json.dumps({"out": a.out, "frames": total, "seconds": total / plan["fps"]}))

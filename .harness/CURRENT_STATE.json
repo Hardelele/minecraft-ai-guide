@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "updatedAt": "2026-11-07T23:45:00+05:00",
+  "updatedAt": "2026-11-08T00:50:00+05:00",
   "objective": "Complete Minecraft AI Guide 3D cave feature, all-four night/door/run cinematic hook, coherent promo with limited user-voice narration, exact captions, full AV review, and reversible game-profile integration.",
-  "userPriority": "Claude is sole integrator. Door/night/run proven in WorldRec door_fx13_night_a2; V10 filming in captures/v10_hook.",
+  "userPriority": "Claude is sole integrator. User watched V10 review: near-final Short. Requested: voice on eleven_v4 (not multilingual_v2), end card like episode 1 (AI Guide, mod in development), vertical 1080x1920 with fields above/below.",
   "canonicalRemote": "git@github.com:Hardelele/minecraft-ai-guide.git",
   "mainSha": "bae2af05ed55eae535cc8be14a8c668650353fcb",
   "activeBranches": [
@@ -127,7 +127,7 @@
     "serverJarSha256": "32C4BEF64107AF42896334FB801FAB36E9C9776DB38AAACDC118D269F850643F",
     "isolatedDoorGate": "PASS_A2_FULL_NIGHT",
     "caveGate": "ACCEPT_BOUNDED_CORE_PRODUCT",
-    "film": "V9_PREVIEW_USER_REJECTED_EDITORIAL",
+    "film": "V10_VERTICAL_SHORT_IN_REVIEW",
     "laptopProcesses": "Agents reported java/javaw/ffmpeg absent at stop; recheck before launch.",
     "normalProfile": "UNCHANGED_OLD_JARS",
     "telegram": "NOT_SENT_ESCAPE_INTERRUPTED"
@@ -141,9 +141,8 @@
     "//192.168.1.9/c/Videos/aiguide-promo/edit/story_v5_20261107/qa_v9_exact_cuts/index.json"
   ],
   "nextActions": [
-    "Claude reads takeover MD/TZ and verifies Git/JAR/process identities; owns all further work, no internal Codex executor continues.",
-    "Offline Ground/TaskBoard preflight on all-surface outcome-mineE-copy13 save, then one isolated guard=false all-four door/close gate with WorldRec; preserve valid night→dawn and synchronized four-agent run toward camera if successful.",
-    "Build a new-viewer cinematic-majority V10 storyboard with evidenced furnace cause and causal captions; short lapshin-z23 voice render with exact alignment, mix audible music to last frame.",
-    "Assemble on one integer-frame grid, inspect action/caption cuts and motion, human full 1x AV review; then reversible normal-profile deployment gate. No Telegram send without fresh instruction."
+    "User 1x AV review of out/story_v10_short*.mp4; fix notes.",
+    "Normal-profile install only on user decision: tools/install_normal_profile.ps1 (reversible, not run).",
+    "No Telegram send without fresh instruction."
   ]
 }
