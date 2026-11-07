@@ -58,7 +58,7 @@ class Orders {
         if (kind == Kind.RELEASE || kind == Kind.STOP) {   // its orders go; stop: it stands (still the player's), release: back to the AI
             cancel(c, a);
             Crew.clearJobs(a);
-            a.getNavigator().clearPathEntity();
+            a.body.stop();
             TaskBoard.Card held = c.board.leased.get(a);
             if (held != null) { c.board.release(a, held); held.state = TaskBoard.State.OPEN; }
             a.commanded = kind == Kind.STOP;
@@ -69,7 +69,7 @@ class Orders {
             if (n >= 0 && n < a.bag.size()) {
                 ItemStack s = a.bag.get(n);
                 a.preferred = s;
-                a.setCurrentItemOrArmor(0, s);
+                a.body.hold(s);
                 Events.log("order: " + a.getCustomNameTag() + " works with " + Ledger.name(s));
             }
             return;

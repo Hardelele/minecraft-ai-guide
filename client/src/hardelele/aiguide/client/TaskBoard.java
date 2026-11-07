@@ -219,7 +219,7 @@ class TaskBoard {
         Card k = best(a, w);
         if (k == null) return false;
         Crew.clearJobs(a);
-        a.getNavigator().clearPathEntity();
+        a.body.stop();
         releaseBlocks(a);
         take(k, a, w);
         return true;
@@ -237,7 +237,7 @@ class TaskBoard {
             Events.log("board: " + held + " back on the board (" + a.getCustomNameTag() + " " + why + ")");
         }
         Crew.clearJobs(a);
-        a.getNavigator().clearPathEntity();
+        a.body.stop();
         releaseBlocks(a);
         take(k, a, w);
     }
@@ -330,7 +330,7 @@ class TaskBoard {
             if (a == null || now - k.since > k.lease) {
                 if (a != null) {
                     Crew.clearJobs(a);
-                    a.getNavigator().clearPathEntity();
+                    a.body.stop();
                     release(a, k);
                 }
                 k.tries++;

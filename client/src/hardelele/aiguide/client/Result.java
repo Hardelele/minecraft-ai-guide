@@ -16,7 +16,11 @@ public enum Result {
     /** in the way of something for good (nothing to put the block against, a station in use) */
     BLOCKED,
     /** not now: someone stands where the block goes (they are asked to step aside); try again shortly */
-    BUSY;
+    BUSY,
+    /** the eyes do not see it from anywhere it got to: something is in the way of every face (or every face looks away) */
+    NOT_VISIBLE,
+    /** no face of it is in a player's reach from where it got to */
+    OUT_OF_REACH;
 
     boolean done() {
         return this != RUNNING;

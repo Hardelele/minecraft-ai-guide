@@ -21,7 +21,10 @@ import net.minecraft.world.World;
 public class Agent extends EntityCreature {
     final Deque<Crew.Task> jobs = new ArrayDeque<Crew.Task>();
     final Deque<Origin> origins = new ArrayDeque<Origin>();   // where each job came from
-    Crew.GoTo aside;   // out of someone's way first (a block goes where it stands): before its jobs, without touching them
+    /** a short job before its jobs, without touching them: out of someone's way (a block goes where it stands), a torch put up in the dark */
+    Crew.Task aside;
+    /** its body: the one way it acts on the world (the head, the hands, the legs) and what it senses */
+    final Body body = new Body(this);
     Origin origin = Origin.SCRIPT;   // of the job it does now
     final List<ItemStack> bag = new ArrayList<ItemStack>();
     int number, idle, stuck;
@@ -109,6 +112,7 @@ public class Agent extends EntityCreature {
         boolean hit = super.attackEntityFrom(s, amount);
         if (hit && !worldObj.isRemote) {
             hurtAt = ticksExisted;
+            hurtBy = s.getEntity() != null ? s.getEntity().getCommandSenderName() : s.getDamageType();
             Events.log("crew: " + getCustomNameTag() + " hurt by " + (s.getEntity() != null ? s.getEntity().getCommandSenderName() : s.getDamageType())
                     + ", health " + Math.round(before) + " -> " + Math.round(getHealth()));
         }
@@ -120,7 +124,12 @@ public class Agent extends EntityCreature {
     /** what the player chose it to work with (a tool, a block to build with): its skills take it first when it fits */
     volatile ItemStack preferred;
     int hurtAt = -1000;
+    String hurtBy;
     int[] diedAt;
+
+    /** the eyes where a player's are (1.62 over the feet), not a creature's (0.85 of its height) */
+    @Override
+    public float getEyeHeight() { return 1.62F; }
 
     @Override
     public void onLivingUpdate() {

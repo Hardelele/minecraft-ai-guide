@@ -149,7 +149,7 @@ class Guard {
                 loot = null;
             }
             ItemStack weapon = a.bestWeapon();
-            if (weapon != null && a.getHeldItem() != weapon) a.setCurrentItemOrArmor(0, weapon);
+            if (weapon != null && a.getHeldItem() != weapon) a.body.hold(weapon);
             if (target == null || !hostile(target) || ticks % 10 == 0) {
                 if (target != null && target.isDead || target != null && target.getHealth() <= 0) {
                     kills++;
@@ -175,7 +175,7 @@ class Guard {
                     for (Agent o : c.agents) if (o != a && !o.isDead && !Crew.inside(o)) allIn = false;
                     if (allIn) { Events.log("crew: " + a.getCustomNameTag() + " ends the guard: the others are in (kills " + kills + ")"); return Result.OK; }
                     if (Crew.dist(a, post[0], post[1], post[2]) > 1.5) {
-                        if (ticks % 20 == 1) a.getNavigator().tryMoveToXYZ(post[0], post[1], post[2], 1.0);
+                        if (ticks % 20 == 1) a.body.walkTo(post[0], post[1], post[2], 1.0);
                     } else if (Crew.site != null && !hold) Crew.face(a, post[0] * 2 - (Crew.site[0] + 2.5), post[1] + 1.5, post[2] * 2 - (Crew.site[2] + 2.5));   // looks out
                     return Result.RUNNING;
                 }
@@ -186,13 +186,14 @@ class Guard {
             double d = a.getDistanceToEntity(target);
             Crew.face(a, target.posX, target.posY + target.getEyeHeight() * 0.8, target.posZ);
             if (d > REACH - 0.4 || !a.canEntityBeSeen(target)) {   // closer: it walks at the mob (from the crew's side, where it was)
-                if (ticks % 8 == 1 || a.getNavigator().noPath()) a.getNavigator().tryMoveToEntityLiving(target, 1.15);
+                if (ticks % 8 == 1 || a.body.pathless()) a.body.walkTo(target, 1.15);
                 a.act((int) Math.floor(target.posX), (int) Math.floor(target.posY), (int) Math.floor(target.posZ), 4);
                 return Result.RUNNING;
             }
-            a.getNavigator().clearPathEntity();
+            a.body.stop();
             a.act((int) Math.floor(target.posX), (int) Math.floor(target.posY), (int) Math.floor(target.posZ), 4);
             if (cool > 0) return Result.RUNNING;
+            if (!a.body.facing(target.posX, target.posY + target.getEyeHeight() * 0.8, target.posZ, 25)) return Result.RUNNING;   // the eyes on it first
             cool = 11;   // about twice a second, as a player clicking (a mob is hurt at most every half second anyway)
             FakePlayer h = Skills.hands(a, w);
             ItemStack held = a.getHeldItem();
@@ -202,7 +203,7 @@ class Guard {
             if (held != null && held.stackSize <= 0) {   // the weapon broke
                 Ledger.flow(Ledger.Way.INGREDIENT, held, "worn out");
                 a.bag.remove(held);
-                a.setCurrentItemOrArmor(0, null);
+                a.body.hold(null);
                 grip(h, null);
             }
             h.inventory.mainInventory[0] = null;

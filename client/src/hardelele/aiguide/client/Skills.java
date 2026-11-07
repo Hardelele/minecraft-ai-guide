@@ -133,7 +133,7 @@ class Skills {
         if (held != null && (after == null || after.stackSize <= 0)) {   // the tool broke
             Ledger.flow(Ledger.Way.INGREDIENT, held, "worn out");
             a.bag.remove(held);
-            a.setCurrentItemOrArmor(0, null);
+            a.body.hold(null);
         }
         p.inventory.mainInventory[0] = null;
         return ok;
@@ -167,24 +167,25 @@ class Skills {
 
     /**
      * Where it is dark (below 7: where mobs would spawn), an agent with torches puts one up: on a wall beside it at head
-     * height, or on the floor. The same for every skill that goes into the dark (digging, tunnels, the mine).
+     * height, or on the floor, where its eyes see a face to put it against from where it stands. The same for every
+     * skill that goes into the dark (digging, tunnels, the mine). The torch is put as a short job before its others
+     * (the body turns to it first); true when one is to be put.
      */
     static boolean lightUp(Agent a, WorldServer w) {
-        if (light(a, w) >= 7 || count(a.bag, Day1.TORCH, -1) == 0) return false;
+        if (a.aside != null || light(a, w) >= 7 || count(a.bag, Day1.TORCH, -1) == 0) return false;
         int x = MathHelper.floor_double(a.posX), y = MathHelper.floor_double(a.posY + 0.01), z = MathHelper.floor_double(a.posZ);
-        int[][] spots = { { x + 1, y + 1, z }, { x - 1, y + 1, z }, { x, y + 1, z + 1 }, { x, y + 1, z - 1 }, { x, y, z } };
+        int[][] spots = { { x + 1, y + 1, z }, { x - 1, y + 1, z }, { x, y + 1, z + 1 }, { x, y + 1, z - 1 }, { x + 1, y, z }, { x - 1, y, z }, { x, y, z + 1 }, { x, y, z - 1 } };
         for (int[] s : spots) {
-            if (!Crew.soft(w, s[0], s[1], s[2]) || s[0] == x && s[1] == y + 1 && s[2] == z) continue;
-            if (supports(w, s[0], s[1], s[2], false).isEmpty()) continue;   // the placing's own rule
-            if (placeFromBag(a, w, s[0], s[1], s[2], Day1.TORCH, -1) == Result.OK) {
-                Events.log("crew: " + a.getCustomNameTag() + " puts up a torch at " + s[0] + " " + s[1] + " " + s[2] + " (dark)");
-                return true;
-            }
+            if (!Crew.soft(w, s[0], s[1], s[2])) continue;
+            List<int[]> sup = supports(w, s[0], s[1], s[2], false);   // the placing's own rule
+            if (sup.isEmpty() || a.body.sees(w, sup) == null) continue;
+            Events.log("crew: " + a.getCustomNameTag() + " puts up a torch at " + s[0] + " " + s[1] + " " + s[2] + " (dark)");
+            a.aside = new PlaceFrom(s[0], s[1], s[2], Day1.TORCH, -1).here();
+            return true;
         }
         return false;
     }
 
-    /** place one of the bag's items at x y z, with the item's own use on a face next to it (the agent looks at it) */
     /**
      * Is the cell free for a block now: items lying there are picked up by the placer (they are within its reach),
      * another agent standing there is asked to step aside, the placer itself or the player there means not now (BUSY).
@@ -206,39 +207,29 @@ class Skills {
                 continue;
             }
             if (e instanceof net.minecraft.entity.item.EntityXPOrb) continue;
-            if (e instanceof Agent) Crew.stepAside((Agent) e, x, y, z);   // another agent, or the placer itself
+            if (e instanceof Agent && e != a) Crew.stepAside((Agent) e, x, y, z);   // another agent: out of the way
             r = Result.BUSY;   // the placer, another agent (asked to move), the player or an animal: not now
         }
         return r;
     }
 
-    static Result placeFromBag(Agent a, WorldServer w, int x, int y, int z, Item item, int meta) {
-        if (!Crew.soft(w, x, y, z)) return Result.GONE;
-        ItemStack in = null;
-        for (ItemStack s : a.bag) if (same(s, item, meta)) { in = s; break; }
-        if (in == null) return Result.NO_ITEMS;
-        Result free = clearCell(a, w, x, y, z, item instanceof net.minecraft.item.ItemDoor ? 2 : 1);
-        if (free != Result.OK) return free;
+    /**
+     * The item's own use on a face its eyes are on (only the body calls this: Body.place, after the aim is checked):
+     * one of the stack goes into the world by onItemUse at the point the aim meets, booked as placed.
+     */
+    static Result use(Agent a, WorldServer w, int x, int y, int z, ItemStack in, int[] c, float hx, float hy, float hz) {
         FakePlayer p = hands(a, w);
-        // where to click: a door on the floor under it (its own use puts both halves), anything else on a solid
-        // neighbour's face: the block below first, then the sides, then above
-        List<int[]> clicks = supports(w, x, y, z, item instanceof net.minecraft.item.ItemDoor);
-        for (int[] c : clicks) {
-            ItemStack one = in.copy();
-            one.stackSize = 1;
-            int face = c[3];
-            boolean ok = one.tryPlaceItemIntoWorld(p, w, c[0], c[1], c[2], face, 0.5F + SIDE[face][0] * 0.5F, 0.5F + SIDE[face][1] * 0.5F, 0.5F + SIDE[face][2] * 0.5F);
-            if (ok && one.stackSize == 0) {
-                take(a, item, meta, 1, Ledger.Way.PLACED);
-                Ground.changed();
-                Block placed = w.getBlock(x, y, z);
-                w.playSoundEffect(x + 0.5, y + 0.5, z + 0.5, placed.stepSound.getPlaceSound(), 1.0F, 0.8F);
-                a.swingItem();
-                Ledger.act(a, "place");
-                return Result.OK;
-            }
-        }
-        return clicks.isEmpty() ? Result.BLOCKED : Result.BLOCKED;
+        ItemStack one = in.copy();
+        one.stackSize = 1;
+        boolean ok = one.tryPlaceItemIntoWorld(p, w, c[0], c[1], c[2], c[3], hx, hy, hz);
+        if (!ok || one.stackSize != 0) return Result.BLOCKED;
+        take(a, in.getItem(), in.getMetadata(), 1, Ledger.Way.PLACED);
+        Ground.changed();
+        Block placed = w.getBlock(x, y, z);
+        w.playSoundEffect(x + 0.5, y + 0.5, z + 0.5, placed.stepSound.getPlaceSound(), 1.0F, 0.8F);
+        a.swingItem();
+        Ledger.act(a, "place");
+        return Result.OK;
     }
     // ---- recipes: the game's own ---------------------------------------------------------------------------
 
@@ -410,7 +401,7 @@ class Skills {
             if (r == null) return made > 0 ? Result.OK : Result.NO_ITEMS;
             made += r.stackSize;
             w.playSoundEffect(a.posX, a.posY + 1, a.posZ, "random.wood_click", 0.4F, 1.2F);
-            if (!r.isStackable()) a.setCurrentItemOrArmor(0, lastOf(a, r.getItem()));
+            if (!r.isStackable()) a.body.hold(lastOf(a, r.getItem()));
             return made >= n ? Result.OK : Result.RUNNING;
         }
     }
@@ -486,28 +477,192 @@ class Skills {
         }
     }
 
-    /** place one block from the bag, walking near first */
+    /**
+     * Place one block from the bag as a player does: from where it stands when its eyes see a face to put it against
+     * in reach; else it goes where they do (Sight finds the place: a cell it walks to, the top of a pillar of its own
+     * blocks, or a few steps off that top, onto what is up there), puts it from there and takes its pillar down after.
+     * With no such place it fails with the reason (NOT_VISIBLE, OUT_OF_REACH), never puts it blind.
+     */
     static class PlaceFrom implements Crew.Task {
         final int x, y, z, meta;
         final Item item;
-        int ticks, aside;
-        Crew.GoTo walk;
+        int aside, tries, maxPillar = 4;
+        boolean here;              // from where it stands only (no walking, no pillar)
+        Sight.Walk penalty;        // what standing somewhere costs besides the walk (a builder outside its walls)
+        java.util.Set<Long> avoid; // cells not to stand in nor build a pillar in (the plan's own)
+        final java.util.Set<Long> bad = new java.util.HashSet<Long>();   // places it stood in and still did not see it from
+        Sight.View view, went;
+        Crew.Task go;
+        Result why = Result.NOT_VISIBLE;
         PlaceFrom(int x, int y, int z, Item item, int meta) { this.x = x; this.y = y; this.z = z; this.item = item; this.meta = meta; }
+        PlaceFrom here() { here = true; maxPillar = 0; return this; }
+        PlaceFrom pillar(int n) { maxPillar = n; return this; }
+        PlaceFrom prefer(Sight.Walk p) { penalty = p; return this; }
+        PlaceFrom avoid(java.util.Set<Long> cells) { avoid = cells; return this; }
+
+        /** where to stand to put it (null: nowhere it can get to); worked out once, again after a place that did not do */
+        Sight.View plan(Agent a, final WorldServer w) {
+            if (view != null) return view;
+            final int[] f = Ground.feet(w, a.posX, a.posY, a.posZ);
+            final Ground.Flood fl = Ground.flood(w, f, 32, null);
+            final Sight.Walk extra = penalty;
+            Sight.Walk walk = (cx, cy, cz) -> {
+                long k = Crew.key(cx, cy, cz);
+                if (!fl.has(cx, cy, cz) || bad.contains(k) || avoid != null && (avoid.contains(k) || avoid.contains(Crew.key(cx, cy + 1, cz)))) return -1;
+                double c = Math.abs(cx - f[0]) + Math.abs(cz - f[2]) + Math.abs(cy - f[1]) * 2;
+                return extra == null ? c : c + Math.max(0, extra.cost(cx, cy, cz));
+            };
+            Sight.Space s = Body.space(w);
+            if (avoid != null && maxPillar > 0) {   // a pillar is not built in the plan's cells
+                Sight.Overlay o = new Sight.Overlay(s);
+                o.banned.addAll(avoid);
+                s = o;
+            }
+            int pillar = Math.min(maxPillar, Scaffold.blocks(a, item));
+            view = Sight.find(s, walk, x, y, z, item instanceof net.minecraft.item.ItemDoor ? 2 : 1, supports(w, x, y, z, item instanceof net.minecraft.item.ItemDoor), Crew.REACH, pillar);
+            return view;
+        }
+
         public Result step(Agent a, WorldServer w) {
-            if (Crew.eyeDist(a, x, y, z) > 4.2) {
-                if (walk == null) walk = new Crew.GoTo(x + 0.5, y, z + 0.5, 2.6);
+            if (go != null) {   // on the way to the place it sees it from (and, on a pillar, done there)
+                Result r = go.step(a, w);
+                if (r == Result.RUNNING) return r;
+                Crew.Task was = go;
+                go = null;
+                if (was instanceof Scaffold) return r;   // put up there (or not), the pillar taken down
+                if (r.failed() && ++tries > 3) return r;
+                went = view;
+            }
+            Result r = a.body.place(w, x, y, z, item, meta);
+            if (r == Result.RUNNING || r == Result.OK || r == Result.GONE || r == Result.NO_ITEMS) return r;
+            if (r == Result.BUSY) return ++aside > 20 * 15 ? Result.BLOCKED : Result.RUNNING;   // someone is moving out of the way
+            if (r == Result.BLOCKED) {
+                Events.log("crew: " + a.getCustomNameTag() + " cannot put " + Ledger.name(new ItemStack(item)) + " at " + x + " " + y + " " + z + " (" + Ledger.name(new ItemStack(w.getBlock(x, y, z))) + " there)");
+                return r;
+            }
+            why = r;   // not seen from here: go where it is
+            if (here) return r;
+            if (went != null) bad.add(Crew.key(went.stand[0], went.stand[1], went.stand[2]));   // stood there and did not see it after all
+            went = null;
+            view = null;
+            if (++tries > 3 || plan(a, w) == null) {
+                Events.log("crew: " + a.getCustomNameTag() + " sees no face to put " + Ledger.name(new ItemStack(item)) + " at " + x + " " + y + " " + z + " against from anywhere it gets to (" + why + ")");
+                return why;
+            }
+            Sight.View v = view;
+            if (v.pillar == 0) go = new Crew.GoTo(v.stand[0] + 0.5, v.stand[1], v.stand[2] + 0.5, 0.4);
+            else {
+                Events.log("crew: " + a.getCustomNameTag() + " goes up to put " + Ledger.name(new ItemStack(item)) + " at " + x + " " + y + " " + z + ": " + v);
+                Crew.Task up = v.steps > 0 ? new TaskBoard.Seq(new Crew.GoTo(v.stand[0] + 0.5, v.stand[1], v.stand[2] + 0.5, 0.4).walkOnly(), new PlaceFrom(x, y, z, item, meta).here())
+                        : new PlaceFrom(x, y, z, item, meta).here();
+                go = new Scaffold(v.foot, v.pillar, null, up, item);
+            }
+            return Result.RUNNING;
+        }
+    }
+
+    /**
+     * Up on a pillar as a player goes up: at its foot it looks down, jumps and puts a block from the bag under its feet,
+     * again, as high as asked (or until the condition holds); does its work up there; comes back onto the pillar's top
+     * and digs it down under itself, picking the blocks up. The pillar taken down is the work's undo: it is done
+     * whatever the work came to; one it could not take down is told.
+     */
+    static class Scaffold implements Crew.Task {
+        interface Until { boolean ok(Agent a); }
+        final int[] foot;
+        final int height;
+        final Until until;
+        final Crew.Task work;
+        final Item keep;     // the item the work puts: not used for the pillar while there is something else
+        int state, built, ticks, landed;
+        Crew.Task walk;
+        Result result;
+        Scaffold(int[] foot, int height, Until until, Crew.Task work, Item keep) { this.foot = foot; this.height = height; this.until = until; this.work = work; this.keep = keep; }
+
+        /** something solid to stand on (dirt and stone first), keeping one of the item that is to be put */
+        static ItemStack block(Agent a, Item keep) {
+            ItemStack best = null;
+            for (ItemStack s : a.bag) {
+                if (!(s.getItem() instanceof ItemBlock) || s.getItem() == keep && s.stackSize <= 1) continue;
+                Block b = Block.getBlockFromItem(s.getItem());
+                if (!b.isOpaqueCube() || !b.getMaterial().isSolid() || b instanceof net.minecraft.block.ITileEntityProvider || b == Blocks.gravel || b == Blocks.sand) continue;
+                if (best == null || b == Blocks.dirt || b == Blocks.cobblestone || best.getItem() == keep) best = s;
+            }
+            return best;
+        }
+
+        /** how many pillar blocks the bag has (one of the item to be put kept back) */
+        static int blocks(Agent a, Item keep) {
+            int n = 0;
+            for (ItemStack s : a.bag) {
+                if (!(s.getItem() instanceof ItemBlock)) continue;
+                Block b = Block.getBlockFromItem(s.getItem());
+                if (!b.isOpaqueCube() || !b.getMaterial().isSolid() || b instanceof net.minecraft.block.ITileEntityProvider || b == Blocks.gravel || b == Blocks.sand) continue;
+                n += s.stackSize - (s.getItem() == keep ? 1 : 0);
+            }
+            return Math.max(0, n);
+        }
+
+        boolean onTop(Agent a) {
+            return Math.abs(a.posX - (foot[0] + 0.5)) < 0.45 && Math.abs(a.posZ - (foot[2] + 0.5)) < 0.45 && Math.abs(a.posY - (foot[1] + built)) < 0.6;
+        }
+
+        public Result step(Agent a, WorldServer w) {
+            ticks++;
+            if (state < 3 && ticks > 20 * 120) { result = Result.TIMEOUT; state = 3; }
+            if (state == 0) {   // to its foot
+                if (walk == null) walk = new Crew.GoTo(foot[0] + 0.5, foot[1], foot[2] + 0.5, 0.3);
                 Result r = walk.step(a, w);
                 if (r == Result.RUNNING) return r;
                 walk = null;
-                if (r != Result.OK && Crew.eyeDist(a, x, y, z) > 5.0) return r;
+                if (r.failed()) return r;
+                state = 1;
             }
-            Crew.face(a, x + 0.5, y + 0.5, z + 0.5);
-            a.act(x, y, z, 3);
-            if (++ticks < 6) return Result.RUNNING;
-            Result r = placeFromBag(a, w, x, y, z, item, meta);
-            if (r == Result.BUSY) return ++aside > 20 * 15 ? Result.BLOCKED : Result.RUNNING;   // someone is moving out of the way
-            if (r == Result.BLOCKED) Events.log("crew: " + a.getCustomNameTag() + " cannot put " + Ledger.name(new ItemStack(item)) + " at " + x + " " + y + " " + z + " (" + Ledger.name(new ItemStack(w.getBlock(x, y, z))) + " there)");
-            return r;
+            if (state == 1) {   // up: a block under its feet at the top of each jump
+                if (built >= height || until != null && until.ok(a)) { state = 2; return Result.RUNNING; }
+                int cell = foot[1] + built;
+                if (!Ground.passable(w, foot[0], cell + 2, foot[2], null)) { result = Result.BLOCKED; state = 3; return Result.RUNNING; }   // its head would hit something
+                ItemStack s = block(a, keep);
+                if (s == null) { result = Result.NO_ITEMS; state = 3; return Result.RUNNING; }   // out of blocks: down again
+                a.body.stepTo(foot[0] + 0.5, a.posY, foot[2] + 0.5, 0.6);
+                a.body.lookAt(foot[0] + 0.5, cell - 0.01, foot[2] + 0.5);   // down at what it stands on, before the jump
+                if (a.onGround && a.posY < cell + 0.5) a.body.jump();
+                if (a.posY >= cell + 1.05) {   // over the cell: the block under its feet
+                    Result r = a.body.place(w, foot[0], cell, foot[2], s.getItem(), s.getMetadata());
+                    if (r == Result.OK) { built++; Ledger.act(a, "pillar up"); }
+                }
+                return Result.RUNNING;
+            }
+            if (state == 2) {   // the work up there
+                Result r = work == null ? Result.OK : work.step(a, w);
+                if (r == Result.RUNNING) return r;
+                result = r;
+                state = 3;
+            }
+            if (state == 3) {   // back onto the pillar's top (it may have stepped off it)
+                if (built <= 0) return result;
+                if (!onTop(a)) {
+                    if (walk == null) walk = new Crew.GoTo(foot[0] + 0.5, foot[1] + built, foot[2] + 0.5, 0.3).walkOnly();
+                    Result r = walk.step(a, w);
+                    if (r == Result.RUNNING) return r;
+                    walk = null;
+                    if (!onTop(a)) {
+                        Events.log("crew: " + a.getCustomNameTag() + " cannot get back onto its pillar at " + foot[0] + " " + foot[1] + " " + foot[2] + ": " + built + " blocks of it left standing");
+                        return result;
+                    }
+                }
+                state = 4;
+            }
+            // down: the block under its feet, one by one, the blocks picked up
+            Day1.catchNear(a, w, 1.5);
+            if (built <= 0) return ++landed > 12 ? result : Result.RUNNING;   // the last one's drop lands first
+            int under = foot[1] + built - 1;
+            if (!a.onGround) return Result.RUNNING;
+            Result r = a.body.dig(w, foot[0], under, foot[2]);
+            if (r == Result.RUNNING) return r;
+            if (r == Result.OK) { built--; Ledger.act(a, "pillar down"); return Result.RUNNING; }
+            Events.log("crew: " + a.getCustomNameTag() + " cannot take its pillar down at " + foot[0] + " " + under + " " + foot[2] + " (" + r + "): " + built + " blocks of it left standing");
+            return result;
         }
     }
 
@@ -527,7 +682,7 @@ class Skills {
             net.minecraft.entity.Entity t = player ? Crew.instance.playerIn(w) : to;
             if (t == null || t.isDead) return Result.GONE;
             if (caught >= 0) {   // thrown to an agent: it turns, the things land, it picks them up
-                to.getNavigator().clearPathEntity();
+                to.body.stop();
                 Crew.face(to, a.posX, a.posY + 1.4, a.posZ);
                 if (++caught < 26) return Result.RUNNING;
                 Day1.catchNear(to, w, 3.0);
@@ -551,7 +706,7 @@ class Skills {
                 if (r == Result.RUNNING || r == Result.OK) return Result.RUNNING;
                 return r;
             }
-            a.getNavigator().clearPathEntity();
+            a.body.stop();
             Crew.face(a, t.posX, t.posY + 1.4, t.posZ);
             if (++ticks < 10) return Result.RUNNING;
             List<ItemStack> keep = new ArrayList<ItemStack>(a.bag);   // throw just this item
@@ -569,7 +724,7 @@ class Skills {
             }
             Day1.toss(a, t.posX, t.posY + 1.0, t.posZ, w, null);
             for (ItemStack s : keep) if (s.stackSize > 0) a.bag.add(s);
-            if (a.getHeldItem() == null) a.setCurrentItemOrArmor(0, bestHeld(a));
+            if (a.getHeldItem() == null) a.body.hold(bestHeld(a));
             if (player) return Result.OK;   // the player picks it up himself
             caught = 0;
             return Result.RUNNING;

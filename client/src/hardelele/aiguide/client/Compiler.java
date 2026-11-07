@@ -312,7 +312,7 @@ class Compiler {
         for (TaskBoard.Card k : failed) {
             what.append(what.length() > 0 ? ", " : "").append(k.kind).append(" -> ").append(k.last);
             for (Map.Entry<Item, Integer> e : k.shortOf.entrySet()) lack.put(e.getKey(), Math.max(lack.containsKey(e.getKey()) ? lack.get(e.getKey()) : 0, e.getValue()));
-            if (k.last == Result.NO_PATH || k.last == Result.TIMEOUT || k.last == Result.BLOCKED) way = true;
+            if (k.last == Result.NO_PATH || k.last == Result.TIMEOUT || k.last == Result.BLOCKED || k.last == Result.NOT_VISIBLE || k.last == Result.OUT_OF_REACH) way = true;
         }
         if (ph instanceof Day1.Base) {   // a base: what of its bill is still to be made, in raw things
             Map<String, Integer> bill = ((Day1.Base) ph).toMake(c, w);
