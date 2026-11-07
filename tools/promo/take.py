@@ -338,10 +338,13 @@ if p.poll() is None and events["quit"].is_set():
     else:
         meta["stop_unconfirmed"] = True
         print("Cooperative shutdown is still saving; leaving the owned client to finish normally.", flush=True)
+script_failures = [line for line in lines if "[Director] script aborted:" in line or "[Director] step failed:" in line]
+if script_failures:
+    meta["script_failure"] = script_failures[-1][:500]
 open(a.out + ".log", "w", encoding="utf-8").write("\n".join(lines))
 json.dump(meta, open(a.out + ".json", "w"))
 print("done", meta, "after", int(time.time() - t0), "s")
-if hung and stop_requested is None and not os.path.lexists(stopfile) and int(os.environ.get("TAKE_ATTEMPT", "1")) < 3:   # again, with the half-made world removed
+if hung and not script_failures and stop_requested is None and not os.path.lexists(stopfile) and int(os.environ.get("TAKE_ATTEMPT", "1")) < 3:   # again, with the half-made world removed
     require_no_active_league()   # a match may have started since the preceding capture
     import shutil
     for l in open(a.script, encoding="utf-8"):
@@ -354,3 +357,5 @@ if hung and stop_requested is None and not os.path.lexists(stopfile) and int(os.
     sys.exit(subprocess.call([sys.executable] + sys.argv))
 for l in lines:
     if re.search(r"(?i)(FATAL|Exception|shader|OptiFine.*load)", l) and not re.search(r"Update check|VersionChecker", l): print(l[:240])
+if script_failures:
+    sys.exit(4)

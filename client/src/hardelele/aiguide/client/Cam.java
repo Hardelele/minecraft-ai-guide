@@ -446,7 +446,7 @@ public class Cam {
     }
 
     final List<Key> keys = new ArrayList<Key>();
-    float fovWas = -1;
+    float fovWas = Float.NaN;
     String pathRec;   // a file the path is recorded to (the recorder stops when the path ends)
 
     /** a Catmull-Rom spline through the keys (the turn unwrapped), its time the keys' own */
@@ -488,7 +488,7 @@ public class Cam {
     void logActions(P lens, float yaw, float pitch) {
         try {
             if (actLog == null) actLog = new OutputStreamWriter(new FileOutputStream(new File(mc.mcDataDir, "act-log.txt"), true), "UTF-8");
-            double vf = Math.toRadians(mc.gameSettings.fovSetting / 2), hf = Math.atan(Math.tan(vf) * mc.displayWidth / Math.max(1, mc.displayHeight));
+            double vf = Math.toRadians(CaptureFov.degrees(mc.gameSettings.fovSetting) / 2), hf = Math.atan(Math.tan(vf) * mc.displayWidth / Math.max(1, mc.displayHeight));
             double cyw = Math.cos(Math.toRadians(yaw)), syw = Math.sin(Math.toRadians(yaw)), cp = Math.cos(Math.toRadians(pitch)), sp = Math.sin(Math.toRadians(pitch));
             double fx = -syw * cp, fy = -sp, fz = cyw * cp, rx = -cyw, rz = -syw;           // forward, right
             double ux = 0 * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - 0 * fx;     // up = right x forward
@@ -607,8 +607,8 @@ public class Cam {
             double[] k = ((KeyPath) shot).at(t);
             shot.yaw = (float) k[3];
             shot.pitch = (float) k[4];
-            if (fovWas < 0) fovWas = mc.gameSettings.fovSetting;
-            mc.gameSettings.fovSetting = (float) Math.max(30, Math.min(110, k[5]));
+            if (Float.isNaN(fovWas)) fovWas = mc.gameSettings.fovSetting;
+            mc.gameSettings.fovSetting = CaptureFov.slider(k[5]);
             shot.started = true;
             shot.pos = p;
             pose(p);
@@ -669,7 +669,7 @@ public class Cam {
         if (e.phase != TickEvent.Phase.END || shot == null) return;
         ticks++;
         if (shot instanceof KeyPath && done()) {   // a path's end: its field of view back, its recording stopped
-            if (fovWas >= 0) { mc.gameSettings.fovSetting = fovWas; fovWas = -1; }
+            if (!Float.isNaN(fovWas)) { mc.gameSettings.fovSetting = fovWas; fovWas = Float.NaN; }
             if (pathRec != null) { Recorder.stop(); Director.log("path: recorded " + pathRec); pathRec = null; }
             release();
         }

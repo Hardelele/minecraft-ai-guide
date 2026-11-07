@@ -15,7 +15,7 @@ from pathlib import Path
 import subprocess
 import sys
 from capture_impact import low_impact
-from capture_config import executable
+from capture_config import executable, existing_capture_artifacts
 
 ROOT = Path(os.environ.get("AIGUIDE_CAPTURE_ROOT", os.environ.get("AIGUIDE_MEDIA_ROOT", r"C:\Users\harde\Videos\aiguide-promo")))
 MEDIA = Path(os.environ.get("AIGUIDE_MEDIA_ROOT", r"\\192.168.1.9\c\Videos\aiguide-promo"))
@@ -125,14 +125,14 @@ for track in manifest["tracks"]:
 # Preflight every existing output before starting even one new client.
 for hero in range(1, 5):
     video = dest / f"hero_{hero}.mp4"
-    if hero not in known and (video.exists() or Path(str(video) + ".timeline.tsv").exists()):
+    if hero not in known and existing_capture_artifacts(video):
         ap.error(f"hero {hero}: existing untracked output; refusing to overwrite or delete it")
 interface = manifest.get("interface")
 interface_video = dest / "interface.mp4"
 if isinstance(interface, dict):
     if Path(interface.get("path", "")).resolve() != interface_video.resolve():
         ap.error("interface manifest points outside its expected destination")
-elif interface_video.exists() or Path(str(interface_video) + ".timeline.tsv").exists():
+elif existing_capture_artifacts(interface_video):
     ap.error("existing untracked interface output; refusing to overwrite or delete it")
 if isinstance(interface, dict) and a.ui and Path(interface.get("source", "")).resolve() != Path(a.ui).resolve():
     ap.error("existing interface uses a different live source")
@@ -199,7 +199,7 @@ quit
         except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as exc:
             attempt["failures"][str(hero)] = str(exc)
     manifest["tracks"].sort(key=lambda item: item["hero"])
-    manifest["status"] = "partial_failed" if attempt["failures"] else "partial_interface_pending"
+    manifest["status"] = "partial_failed" if result.returncode or attempt["failures"] else "partial_interface_pending"
     save_manifest(manifest_path, manifest)
     if result.returncode or attempt["failures"]:
         raise SystemExit("Coordinated capture incomplete; verified tracks retained in manifest; inspect unverified files before retry")

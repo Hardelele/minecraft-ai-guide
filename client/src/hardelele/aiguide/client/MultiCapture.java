@@ -48,7 +48,8 @@ public final class MultiCapture {
             if (heroes[i] < 1 || heroes[i] > 4) throw new IllegalArgumentException("hero must be 1..4");
             for (int j = 0; j < i; j++) if (heroes[i] == heroes[j]) throw new IllegalArgumentException("duplicate hero");
             File video = new File(dir, "hero_" + heroes[i] + ".mp4");
-            if (video.exists() || new File(video + ".timeline.tsv").exists()) throw new IllegalArgumentException("existing track: " + video);
+            File existing = CaptureArtifacts.firstExisting(video);
+            if (existing != null) throw new IllegalArgumentException("existing track artifact: " + existing);
             // Each hero has independent, reproducible shot planning, including resumed subsets.
             cam.rnd.setSeed(11 + heroes[i]);
             shots[i] = cam.planFollow(heroes[i], (count + 2) / 3 + 40);

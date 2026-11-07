@@ -69,7 +69,7 @@ public class WorldRec implements IWorldAccess {
     final Map<String, Integer> strings = new HashMap<String, Integer>();
     final Set<Long> changed = new LinkedHashSet<Long>();
     final List<Object[]> sounds = new ArrayList<Object[]>(), breaks = new ArrayList<Object[]>();
-    int ticks;
+    volatile int ticks;
     long bytesAtStart;
     final Map<String, String> snapshotChunks = new HashMap<String, String>();
     final Map<String, JsonObject> heroChunks = new HashMap<String, JsonObject>();

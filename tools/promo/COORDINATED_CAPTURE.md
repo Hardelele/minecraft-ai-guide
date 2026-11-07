@@ -51,6 +51,11 @@ a nearby but different UI state. Within the requested interval, adjacent live UI
 frames may be at most two world ticks (100 ms) apart. When `--ui` is supplied,
 these checks and an FFprobe count of actual MP4 frames against all sidecar rows
 run before any hero client or encoder is started.
+The preflight treats `.mp4`, `.timeline.tsv`, `.frames.txt` and `.ffmpeg.txt` as
+one output identity, preserving diagnostics left by a failed encoder. Scripted
+FOV values are degrees and are converted to Minecraft 1.7.10's option slider.
+An absent or ambiguous scripted UI pill, failed WorldRec close, or other script
+abort ends the take with a nonzero launcher exit after normal shutdown.
 Existing terrain-coverage limitations remain; a complete encoded track is not proof
 that distant terrain or an occluded hero was visible. Review the WorldRec coverage
 report and representative frames before editing.

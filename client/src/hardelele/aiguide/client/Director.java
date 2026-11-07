@@ -121,6 +121,15 @@ public class Director {
         typed = null; pchopBg = false; lookT = lookLen;
     }
 
+    /** Discard pending scripted clicks but still close recording and world through the normal quit path. */
+    void abortToQuit(String reason) {
+        event("script aborted: " + reason);
+        serverQueue.clear();
+        lines.clear();
+        lines.add("quit");
+        pc = -1; t = step = 0;
+    }
+
     @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent e) {
         if (e.phase != TickEvent.Phase.END) return;
@@ -223,14 +232,14 @@ public class Director {
         if (cmd.equals("worldrec")) {   // start <name> | stop | wait | waitstop
             final String[] a = arg.split(" ");
             if (a[0].equals("wait") || a[0].equals("waitstop")) {
-                if (a[0].equals("wait") ? WorldRec.active != null : WorldRec.stopped()) {
-                    if (a[0].equals("waitstop") && WorldRec.closeError != null)
-                        event("WorldRec closed with error: " + WorldRec.closeError);
+                boolean ready;
+                try { ready = a[0].equals("wait") ? WorldRec.active != null : CaptureStopGate.ready(WorldRec.stopped(), WorldRec.closeError); }
+                catch (IllegalStateException ex) { abortToQuit(ex.getMessage()); return true; }
+                if (ready) {
                     return true;
                 }
                 if (t >= 20 * 60) {
-                    if (stopRequested && a[0].equals("waitstop")) event("cooperative stop: WorldRec stop unconfirmed; proceeding to normal client shutdown");
-                    else { event("script aborted: WorldRec transition timed out"); pc = lines.size(); }
+                    abortToQuit("WorldRec transition timed out");
                     return true;
                 }
                 return false;
@@ -355,11 +364,15 @@ public class Director {
                             double d = Math.hypot(en.posX - c.px, en.posZ - c.pz);
                             if (d < bd) { bd = d; s = c.toScreen(en.posX, en.boundingBox.minY + en.height * 0.6, en.posZ); }
                         }
-                } else if (a[0].equals("pill") && mc.currentScreen instanceof Commander.Screen) {   // a pill of the panel by (a part of) its id: routine:Лесоруб, stop, ai, gather, inv
+                } else if (a[0].equals("pill")) {   // an exact, unique panel ID; never continue to a click if it is absent
+                    if (!(mc.currentScreen instanceof Commander.Screen)) { abortToQuit("Commander panel absent for " + arg); return true; }
                     int scale = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
-                    for (Object[] h : new ArrayList<Object[]>(((Commander.Screen) mc.currentScreen).hits))
-                        if ("pill".equals(h[0]) && String.valueOf(h[1]).contains(a[1]))
-                            s = new float[] { ((Integer) h[3] + (Integer) h[5]) / 2f * scale, mc.displayHeight - ((Integer) h[4] + (Integer) h[6]) / 2f * scale };
+                    String wanted = String.join(" ", java.util.Arrays.copyOfRange(a, 1, a.length - 1));
+                    Object[] hit;
+                    try { hit = CaptureHitTarget.unique(new ArrayList<Object[]>(((Commander.Screen) mc.currentScreen).hits), "pill", wanted); }
+                    catch (IllegalArgumentException ex) { abortToQuit(ex.getMessage()); return true; }
+                    s = new float[] { ((Integer) hit[3] + (Integer) hit[5]) / 2f * scale,
+                            mc.displayHeight - ((Integer) hit[4] + (Integer) hit[6]) / 2f * scale };
                 } else if (a[0].equals("button") && mc.currentScreen instanceof Commander.Screen) {
                     int scale = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
                     for (Object o : ((Commander.Screen) mc.currentScreen).buttons()) {
@@ -459,7 +472,7 @@ public class Director {
         if (cmd.equals("clearchat")) { mc.ingameGUI.getChatGUI().clearChatMessages(); return true; }
         if (cmd.equals("hud")) { mc.gameSettings.hideGUI = arg.equals("off"); return true; }
         if (cmd.equals("view")) { mc.gameSettings.thirdPersonView = num(arg, 0); return true; }
-        if (cmd.equals("fov")) { mc.gameSettings.fovSetting = Float.parseFloat(arg); return true; }
+        if (cmd.equals("fov")) { mc.gameSettings.fovSetting = CaptureFov.slider(Double.parseDouble(arg)); return true; }
         if (cmd.equals("cmd")) { mc.thePlayer.sendChatMessage(arg); return true; }
         if (cmd.equals("look")) {   // yaw pitch ticks (yaw relative to now when it starts with ~)
             if (t == 0) {

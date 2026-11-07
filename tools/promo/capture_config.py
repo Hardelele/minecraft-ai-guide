@@ -5,6 +5,13 @@ import shutil
 
 LEGACY_BIN = Path(r"C:\Users\harde\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin")
 
+CAPTURE_SUFFIXES = ("", ".timeline.tsv", ".frames.txt", ".ffmpeg.txt")
+
+
+def existing_capture_artifacts(video):
+    """An interrupted encoder may leave only diagnostics; preserve those on retry."""
+    return [p for suffix in CAPTURE_SUFFIXES if (p := Path(str(video) + suffix)).exists()]
+
 
 def executable(name, explicit=None, ffmpeg=None):
     """Explicit/env paths fail closed; a typo must not silently select a different binary."""
