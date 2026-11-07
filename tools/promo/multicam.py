@@ -8,14 +8,13 @@ import csv
 import json
 import math
 import os
-import hashlib
 import time
 from fractions import Fraction
 from pathlib import Path
 import subprocess
 import sys
 from capture_impact import low_impact
-from capture_config import executable, existing_capture_artifacts, fresh_attempt_prefix
+from capture_config import executable, existing_capture_artifacts, fresh_attempt_prefix, verified_runtime_jar
 
 ROOT = Path(os.environ.get("AIGUIDE_CAPTURE_ROOT", os.environ.get("AIGUIDE_MEDIA_ROOT", r"C:\Users\harde\Videos\aiguide-promo")))
 MEDIA = Path(os.environ.get("AIGUIDE_MEDIA_ROOT", r"\\192.168.1.9\c\Videos\aiguide-promo"))
@@ -63,12 +62,15 @@ ap.add_argument("--heroes", nargs="+", type=int, choices=range(1, 5), default=[1
 ap.add_argument("--resume", action="store_true", help="verify and reuse known tracks; never overwrite unknown existing video")
 ap.add_argument("--single-client", action="store_true", help="experimental coordinated cameras in one hidden replay client; requires matching runtime")
 ap.add_argument("--capture-source", help="exact source commit used to build the deployed multicapture runtime")
+ap.add_argument("--expected-jar-sha256", help="SHA256 of the approved client JAR installed in the selected game")
 ap.add_argument("--encoder", choices=("h264_nvenc", "libx264"), default="h264_nvenc", help="hero encoder; explicit choice, no automatic fallback")
 ap.add_argument("--ffmpeg", help="FFmpeg executable; otherwise AIGUIDE_FFMPEG, PATH, legacy fallback")
 ap.add_argument("--ffprobe", help="FFprobe executable; otherwise AIGUIDE_FFPROBE, FFmpeg sibling, PATH, legacy fallback")
 a = ap.parse_args()
 if a.single_client and not a.capture_source:
     ap.error("--single-client requires --capture-source; verify the deployed runtime before use")
+if a.single_client and not a.expected_jar_sha256:
+    ap.error("--single-client requires --expected-jar-sha256; verify the installed JAR before use")
 if a.single_client and not str(MEDIA).startswith("\\\\"):
     ap.error("single-client capture requires a UNC AIGUIDE_MEDIA_ROOT (the laptop's own share is allowed)")
 try:
@@ -82,6 +84,12 @@ if any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_
 if not math.isfinite(a.start) or not math.isfinite(a.seconds) or a.start < 0 or a.seconds <= 0 or round(a.seconds * 60) < 1:
     ap.error("invalid interval")
 frames = round(a.seconds * 60)
+runtime_jar = None
+if a.single_client:
+    try:
+        runtime_jar = verified_runtime_jar(ROOT / a.game, a.expected_jar_sha256)
+    except (OSError, ValueError) as exc:
+        ap.error(str(exc))
 if a.ui:
     # Reject an unusable fifth track before spending time rendering four hero videos.
     import align_interface
@@ -165,15 +173,9 @@ fov 70
 replaymulti {','.join(map(str, missing))} {frames} {dest}
 quit
 """, encoding="utf-8")
-    jars = []
-    for jar in sorted((ROOT / a.game / "mods").glob("*AIGuide*.jar")):
-        digest = hashlib.sha256()
-        with jar.open("rb") as data:
-            for chunk in iter(lambda: data.read(1024 * 1024), b""):
-                digest.update(chunk)
-        jars.append({"path": str(jar), "sha256": digest.hexdigest()})
     attempt = {"mode": "single_client_round_robin", "heroes": missing,
-               "source": a.capture_source, "runtime_jars": jars, "script": str(script),
+               "source": a.capture_source, "expected_jar_sha256": a.expected_jar_sha256.lower(),
+               "runtime_jars": [runtime_jar], "script": str(script),
                "encoder": a.encoder, "ffmpeg": capture_ffmpeg, "ffprobe": FP,
                "started_wall_ns": time.time_ns(), "validated_heroes": [], "failures": {}}
     manifest.setdefault("attempts", []).append(attempt)

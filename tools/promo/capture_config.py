@@ -3,10 +3,29 @@ import os
 from pathlib import Path
 import shutil
 import uuid
+import hashlib
+import re
 
 LEGACY_BIN = Path(r"C:\Users\harde\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin")
 
 CAPTURE_SUFFIXES = ("", ".timeline.tsv", ".frames.txt", ".ffmpeg.txt")
+
+
+def verified_runtime_jar(game_dir, expected_sha256):
+    """Fail before capture unless exactly one installed AI Guide JAR has the approved bytes."""
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256 or ""):
+        raise ValueError("--expected-jar-sha256 requires a 64-character SHA256 digest")
+    jars = sorted(jar for jar in (Path(game_dir) / "mods").glob("*AIGuide*.jar") if jar.is_file())
+    if len(jars) != 1:
+        raise ValueError(f"expected exactly one installed AIGuide JAR in {Path(game_dir) / 'mods'}; found {len(jars)}")
+    digest = hashlib.sha256()
+    with jars[0].open("rb") as data:
+        for chunk in iter(lambda: data.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if actual != expected_sha256.lower():
+        raise ValueError(f"installed AIGuide JAR SHA256 mismatch: {jars[0]}")
+    return {"path": str(jars[0]), "sha256": actual}
 
 
 def existing_capture_artifacts(video):
