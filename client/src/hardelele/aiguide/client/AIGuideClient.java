@@ -23,6 +23,7 @@ public class AIGuideClient {
     @Mod.EventHandler
     public void init(FMLInitializationEvent e) {
         EntityRegistry.registerModEntity(Agent.class, "agent", 0, this, 96, 1, true);
+        Exploration.start();
         if (e.getSide() != Side.CLIENT) return;   // nothing more to do on a server (the bench starts when the server has)
         ClientSetup.run();   // its own class: a dedicated server never loads the client's classes
     }

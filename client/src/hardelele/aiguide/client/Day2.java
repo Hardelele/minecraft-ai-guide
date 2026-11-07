@@ -24,9 +24,12 @@ import net.minecraft.world.WorldServer;
 class Day2 {
     static final Item IRON_ORE = Item.getItemFromBlock(Blocks.iron_ore);
 
-    /** a cluster of one ore: its blocks, the nearest first */
+    /** Join only observed blocks. Newly exposed vein neighbours are learned after a real harvest. */
     static List<int[]> cluster(WorldServer w, int x, int y, int z, Block ore, Set<Long> seen) {
+        java.util.Map<Long, int[]> known = new java.util.HashMap<Long, int[]>();
+        for (int[] p : Exploration.knownBlocks(w, ore)) known.put(Crew.key(p[0], p[1], p[2]), p);
         List<int[]> out = new ArrayList<int[]>();
+        if (!known.containsKey(Crew.key(x, y, z))) return out;
         ArrayDeque<int[]> q = new ArrayDeque<int[]>();
         q.add(new int[] { x, y, z });
         seen.add(Crew.key(x, y, z));
@@ -35,7 +38,7 @@ class Day2 {
             out.add(c);
             for (int[] d : Skills.SIDE) {
                 int nx = c[0] + d[0], ny = c[1] + d[1], nz = c[2] + d[2];
-                if (w.getBlock(nx, ny, nz) != ore || !seen.add(Crew.key(nx, ny, nz))) continue;
+                if (!known.containsKey(Crew.key(nx, ny, nz)) || !seen.add(Crew.key(nx, ny, nz))) continue;
                 q.add(new int[] { nx, ny, nz });
             }
         }
@@ -48,40 +51,18 @@ class Day2 {
         return false;
     }
 
-    /**
-     * The clusters of an ore around the base and the mine (within r, down to 40 below the base), each with its count;
-     * the ones that can be got at are first: open and in reach of a walk from the base, then buried ones by how far
-     * they are from the bottom of the mine (where digging to them starts); none in a protected zone.
-     */
+    /** Observed deposits, without a base-radius or hidden-volume scan. r remains for caller compatibility. */
     static List<List<int[]>> clusters(Crew c, WorldServer w, Block ore, int r) {
-        int bx = c.base[0], by = c.base[1], bz = c.base[2];
-        int[] m = Day1.mine;
-        double fx = m != null ? m[0] + m[3] * Math.max(8, Day1.mineDepth) : bx, fz = m != null ? m[2] + m[4] * Math.max(8, Day1.mineDepth) : bz;
-        double fy = m != null ? m[1] - Math.max(8, Day1.mineDepth) : by;
-        Ground.Flood f = Ground.baseFlood(c, w);
         Set<Long> seen = new HashSet<Long>();
         List<List<int[]>> found = new ArrayList<List<int[]>>();
-        final List<Double> score = new ArrayList<Double>();
-        for (int x = bx - r; x <= bx + r; x++)
-            for (int z = bz - r; z <= bz + r; z++)
-                for (int y = Math.max(2, by - 40); y <= by + 12; y++) {
-                    if (w.getBlock(x, y, z) != ore || seen.contains(Crew.key(x, y, z))) continue;
-                    List<int[]> cl = cluster(w, x, y, z, ore, seen);
-                    boolean free = true;
-                    for (int[] b : cl) if (!Ground.mayDig(c, b[0], b[1], b[2], "gather")) free = false;
-                    if (!free) continue;
-                    boolean reach = false;
-                    for (int[] b : cl) if (open(w, b[0], b[1], b[2]) && f != null && f.near(b[0], b[1], b[2], Crew.REACH) != null) reach = true;
-                    double d = Math.sqrt((x - fx) * (x - fx) + (y - fy) * (y - fy) * 2 + (z - fz) * (z - fz));
-                    found.add(cl);
-                    score.add((reach ? 0 : 100) + d - cl.size() * 0.5);
-                }
-        List<Integer> idx = new ArrayList<Integer>();
-        for (int i = 0; i < found.size(); i++) idx.add(i);
-        java.util.Collections.sort(idx, (a, b) -> Double.compare(score.get(a), score.get(b)));
-        List<List<int[]>> out = new ArrayList<List<int[]>>();
-        for (int i : idx) out.add(found.get(i));
-        return out;
+        for (int[] p : Exploration.knownBlocks(w, ore)) {
+            if (seen.contains(Crew.key(p[0], p[1], p[2]))) continue;
+            List<int[]> cl = cluster(w, p[0], p[1], p[2], ore, seen);
+            cl.removeIf(b -> !Ground.mayDig(c, b[0], b[1], b[2], "gather"));
+            if (!cl.isEmpty()) found.add(cl);
+        }
+        java.util.Collections.sort(found, (a, b) -> Double.compare(far(c, w, a), far(c, w, b)));
+        return found;
     }
 
     /** how far a cluster is from the base (the way there is at least that long) */
@@ -114,34 +95,11 @@ class Day2 {
             int dig = 0, got = 0;
             for (List<int[]> cl : all) { if (got >= n) break; got += cl.size(); walk += far(c, w, cl) * 2; dig += (int) far(c, w, cl) * 2 + cl.size(); }
             budget(walk, dig, 0, 0, 0, 0);   // there and back for every cluster, dug at worst
-            if (all.isEmpty()) return;   // none: the cards cannot be posted; the compiler is told by the failure below
-            final Set<Long> taken = new HashSet<Long>();
-            int planned = 0;
-            for (List<int[]> cl : all) {
-                if (planned >= n) break;
-                planned += cl.size();
-                c.board.post("ore", () -> new Crew.Task() {
-                    List<int[]> mine;
-                    Crew.Task t;
-                    public Result step(Agent a, WorldServer ww) {
-                        if (t == null) {   // the best cluster not taken by another card
-                            for (List<int[]> k : clusters(c, ww, ore, 40)) {
-                                if (taken.contains(Crew.key(k.get(0)[0], k.get(0)[1], k.get(0)[2]))) continue;
-                                taken.add(Crew.key(k.get(0)[0], k.get(0)[1], k.get(0)[2]));
-                                mine = k;
-                                break;
-                            }
-                            if (mine == null) return Result.GONE;
-                            int[] b = mine.get(0);
-                            Events.log("crew: " + a.getCustomNameTag() + " goes for " + mine.size() + " " + Ledger.name(new ItemStack(ore)) + " at " + b[0] + " " + b[1] + " " + b[2]);
-                            t = new TaskBoard.Seq(new Crew.GoTo(b[0] + 0.5, b[1], b[2] + 0.5, Crew.REACH - 0.6), new Crew.Mine(mine),
-                                    new Crew.Collect(b[0] + 0.5, b[1], b[2] + 0.5, 5), c.new Stash(null, 0));
-                        }
-                        return t.step(a, ww);
-                    }
-                }).need(a -> pickaxeFor(a, ore)).needs(java.util.Arrays.asList(new ItemStack(level >= 1 ? Items.stone_pickaxe : Items.wooden_pickaxe))).prio(3)
-                        .work(far(c, w, cl), (int) far(c, w, cl) * 2 + cl.size(), 0, 0, 0, 0);   // the way there (dug at worst) and the blocks to mine
-            }
+            max = Math.max(max, 20 * 1800); // unknown terrain needs a bounded exploration budget too
+            final Item drop = ore.getItemDropped(0, new java.util.Random(0), 0);
+            c.board.post("ore", () -> new TaskBoard.Seq(new Prospecting(c, drop, n), c.new Stash(null, 0)))
+                    .need(a -> pickaxeFor(a, ore)).needs(java.util.Arrays.asList(new ItemStack(level >= 1 ? Items.stone_pickaxe : Items.wooden_pickaxe))).prio(3)
+                    .lease(20 * 1800);
         }
     }
 

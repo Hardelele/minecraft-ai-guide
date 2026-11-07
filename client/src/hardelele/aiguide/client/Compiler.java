@@ -239,7 +239,7 @@ class Compiler {
             for (Agent a : c.agents) { if (Day1.hasPickaxe(a)) anyPick = true; if (Day2.pickaxeFor(a, Blocks.iron_ore)) ironPick = true; }
             if (!anyPick && (coal > 0 || ore > 0) && !has(ph, "tools")) ph.add(named(new Day1.Tools(), "tools"));
             if (!ironPick && ore > 0 && !has(ph, "upgrade")) ph.add(named(new Day1.Upgrade(0, true, false), "upgrade"));
-            if (coal > 0 && !Day2.clusters(c, w, Blocks.coal_ore, 40).isEmpty()) ph.add(named(new Day2.OreRun(Blocks.coal_ore, coal), "coal"));
+            if (coal > 0) ph.add(named(new Day2.OreRun(Blocks.coal_ore, coal), "coal"));
             if (darkTorches > 0) ph.add(named(new Day2.Make(new ArrayList<ItemStack>(java.util.Arrays.asList(new ItemStack(Day1.TORCH, darkTorches)))), "torches"));
             if (ore > 0) {
                 ph.add(named(new Day2.OreRun(Blocks.iron_ore, ore), "iron"));

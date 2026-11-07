@@ -251,10 +251,18 @@ class Orders {
         int start = -1, tries;
         Gather(net.minecraft.item.Item it, int n) { this.it = it; this.n = n; }
         public Result step(Agent a, WorldServer w) {
+            Exploration.observe(Crew.instance, a, w);
             int have = Skills.count(a.bag, it, -1) + (it == Day1.LOG ? Skills.count(a.bag, Day1.LOG2, -1) : 0);
             if (start < 0) start = have;
             if (have - start >= n) return Result.OK;
-            if (cur != null) { if (cur.step(a, w) == Result.RUNNING) return Result.RUNNING; cur = null; if (++tries > n + 6) return have > start ? Result.OK : Result.NO_ITEMS; }
+            if (cur != null) {
+                Result result = cur.step(a, w);
+                if (result == Result.RUNNING || result == Result.BUSY) return Result.RUNNING;
+                boolean expedition = cur instanceof Prospecting;
+                cur = null;
+                if (expedition) return result;
+                if (++tries > n + 6) return have > start ? Result.OK : Result.NO_ITEMS;
+            }
             int ax = (int) Math.floor(a.posX), ay = (int) Math.floor(a.posY), az = (int) Math.floor(a.posZ);
             if (it == Day1.LOG || it == Day1.LOG2) {
                 int[] best = null;
@@ -265,25 +273,38 @@ class Orders {
                 Events.log("crew: " + a.getCustomNameTag() + " goes for logs (a tree at " + best[0] + " " + best[1] + " " + best[2] + ")");
                 return Result.RUNNING;
             }
+            if (it == Day2.IRON_ORE || it == net.minecraft.init.Items.coal) {
+                cur = new Prospecting(Crew.instance, it, n - (have - start));
+                return Result.RUNNING;
+            }
             int[] best = null;
             double bd = 1e9;
-            java.util.Random rnd = new java.util.Random(0);
-            for (int x = ax - 24; x <= ax + 24; x++)
-                for (int z = az - 24; z <= az + 24; z++)
-                    for (int y = Math.max(2, ay - 16); y <= ay + 8; y++) {
-                        Block b = w.getBlock(x, y, z);
-                        if (b.getMaterial() == Material.air || b.getMaterial().isLiquid()) continue;
-                        if (b.getItemDropped(w.getBlockMetadata(x, y, z), rnd, 0) != it || !Day2.open(w, x, y, z)) continue;
-                        if (Crew.instance != null && !Ground.mayDig(Crew.instance, x, y, z, "gather")) continue;
-                        double d = Math.abs(x - ax) + Math.abs(z - az) + Math.abs(y - ay) * 1.5;
-                        if (d < bd) { bd = d; best = new int[] { x, y, z }; }
-                    }
+            for (int[] point : Exploration.knownResources(w, it)) {
+                if (Crew.instance != null && !Ground.mayDig(Crew.instance, point[0], point[1], point[2], "gather")) continue;
+                double d = Math.abs(point[0] - ax) + Math.abs(point[2] - az) + Math.abs(point[1] - ay) * 1.5;
+                if (d < bd) { bd = d; best = point; }
+            }
             if (best == null) { Events.log("crew: " + a.getCustomNameTag() + " finds no " + Ledger.name(new ItemStack(it)) + " to dig near"); return have > start ? Result.OK : Result.NO_ITEMS; }
-            Block b = w.getBlock(best[0], best[1], best[2]);
-            List<int[]> blocks = String.valueOf(Block.blockRegistry.getNameForObject(b)).contains("_ore") ? Day2.cluster(w, best[0], best[1], best[2], b, new HashSet<Long>())
-                    : new ArrayList<int[]>(java.util.Arrays.asList(best));
-            cur = new TaskBoard.Seq(new Crew.Mine(blocks), new Crew.Collect(best[0] + 0.5, best[1], best[2] + 0.5, 5)).lenient();
-            Events.log("crew: " + a.getCustomNameTag() + " goes for " + Ledger.name(new ItemStack(it)) + " (" + blocks.size() + " at " + best[0] + " " + best[1] + " " + best[2] + ")");
+            final int[] found = best.clone();
+            Crew.Task harvest = new Crew.Task() {
+                Crew.Task mine;
+                public Result step(Agent who, WorldServer world) {
+                    if (mine == null) {
+                        if (!Exploration.visible(who, world, found[0], found[1], found[2])) return Result.NO_PATH;
+                        boolean matches = false;
+                        for (int[] p : Exploration.knownResources(world, it))
+                            if (p[0] == found[0] && p[1] == found[1] && p[2] == found[2]) { matches = true; break; }
+                        if (!matches) return Result.GONE;
+                        mine = new Crew.Mine(new ArrayList<int[]>(java.util.Arrays.asList(found)));
+                    }
+                    Result result = mine.step(who, world);
+                    if (world.isAirBlock(found[0], found[1], found[2])) Exploration.invalidate(world, found[0], found[1], found[2]);
+                    return result;
+                }
+            };
+            cur = new TaskBoard.Seq(new Crew.GoTo(found[0] + 0.5, found[1], found[2] + 0.5, Crew.REACH - 0.6), harvest,
+                    new Crew.Collect(found[0] + 0.5, found[1], found[2] + 0.5, 5)).lenient();
+            Events.log("crew: " + a.getCustomNameTag() + " approaches observed " + Ledger.name(new ItemStack(it)) + " at " + found[0] + " " + found[1] + " " + found[2]);
             return Result.RUNNING;
         }
     }

@@ -231,6 +231,7 @@ public class Crew {
         }
         if (!loaded) load(w);
         if (w.getTotalWorldTime() % 40 == 0) adopt(w);
+        for (Agent a : agents) Exploration.observe(this, a, w);
         board.tick(w);
         for (Agent a : agents) {
             if (a.aside != null) {   // stepping out of a placement's way comes before anything else
@@ -311,6 +312,7 @@ public class Crew {
 
     /** what the crew knows of its base, kept in the world's folder (the next day goes on from it) */
     void save(WorldServer w) {
+        Exploration.save(w);
         try {
             com.google.gson.JsonObject o = new com.google.gson.JsonObject();
             com.google.gson.Gson g = new com.google.gson.Gson();
@@ -337,6 +339,7 @@ public class Crew {
 
     void load(WorldServer w) {
         loaded = true;
+        Exploration.load(w);
         Routines.loaded = false;   // this world's routines, read when first asked for
         try {
             java.io.File f = new java.io.File(w.getSaveHandler().getWorldDirectory(), "crew.json");
