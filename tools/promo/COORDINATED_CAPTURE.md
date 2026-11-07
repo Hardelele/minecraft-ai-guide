@@ -54,6 +54,8 @@ run before any hero client or encoder is started.
 The preflight treats `.mp4`, `.timeline.tsv`, `.frames.txt` and `.ffmpeg.txt` as
 one output identity, preserving diagnostics left by a failed encoder. Scripted
 FOV values are degrees and are converted to Minecraft 1.7.10's option slider.
+Each individual fallback attempt also gets a fresh script, runner log and launcher
+prefix, so an early failure with no MP4 cannot overwrite its previous evidence.
 An absent or ambiguous scripted UI pill, failed WorldRec close, or other script
 abort ends the take with a nonzero launcher exit after normal shutdown.
 Existing terrain-coverage limitations remain; a complete encoded track is not proof

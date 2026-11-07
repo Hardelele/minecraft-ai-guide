@@ -39,6 +39,7 @@ public class Cam {
 
     /** back to the player's own eyes */
     void release() {
+        mc.gameSettings.fovSetting = fovState.restore(mc.gameSettings.fovSetting);
         shot = null;
         if (mc.thePlayer != null) mc.renderViewEntity = mc.thePlayer;
     }
@@ -446,7 +447,7 @@ public class Cam {
     }
 
     final List<Key> keys = new ArrayList<Key>();
-    float fovWas = Float.NaN;
+    final CaptureFovState fovState = new CaptureFovState();
     String pathRec;   // a file the path is recorded to (the recorder stops when the path ends)
 
     /** a Catmull-Rom spline through the keys (the turn unwrapped), its time the keys' own */
@@ -571,6 +572,7 @@ public class Cam {
     int frames;
 
     void start(Shot s) {
+        mc.gameSettings.fovSetting = fovState.restore(mc.gameSettings.fovSetting);
         shot = s;
         ticks = 0;
         frames = 0;
@@ -607,8 +609,7 @@ public class Cam {
             double[] k = ((KeyPath) shot).at(t);
             shot.yaw = (float) k[3];
             shot.pitch = (float) k[4];
-            if (Float.isNaN(fovWas)) fovWas = mc.gameSettings.fovSetting;
-            mc.gameSettings.fovSetting = CaptureFov.slider(k[5]);
+            mc.gameSettings.fovSetting = fovState.key(mc.gameSettings.fovSetting, k[5]);
             shot.started = true;
             shot.pos = p;
             pose(p);
@@ -669,7 +670,6 @@ public class Cam {
         if (e.phase != TickEvent.Phase.END || shot == null) return;
         ticks++;
         if (shot instanceof KeyPath && done()) {   // a path's end: its field of view back, its recording stopped
-            if (!Float.isNaN(fovWas)) { mc.gameSettings.fovSetting = fovWas; fovWas = Float.NaN; }
             if (pathRec != null) { Recorder.stop(); Director.log("path: recorded " + pathRec); pathRec = null; }
             release();
         }

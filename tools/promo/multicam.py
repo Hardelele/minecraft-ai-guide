@@ -15,7 +15,7 @@ from pathlib import Path
 import subprocess
 import sys
 from capture_impact import low_impact
-from capture_config import executable, existing_capture_artifacts
+from capture_config import executable, existing_capture_artifacts, fresh_attempt_prefix
 
 ROOT = Path(os.environ.get("AIGUIDE_CAPTURE_ROOT", os.environ.get("AIGUIDE_MEDIA_ROOT", r"C:\Users\harde\Videos\aiguide-promo")))
 MEDIA = Path(os.environ.get("AIGUIDE_MEDIA_ROOT", r"\\192.168.1.9\c\Videos\aiguide-promo"))
@@ -208,8 +208,10 @@ for hero in dict.fromkeys(a.heroes):
     if hero in known:
         continue
     video = dest / f"hero_{hero}.mp4"
-    script = dest / f"hero_{hero}.txt"
-    script.write_text(f"""menu 40
+    attempt = fresh_attempt_prefix(dest, hero)
+    script = Path(str(attempt) + ".txt")
+    with script.open("x", encoding="utf-8") as script_file:
+        script_file.write(f"""menu 40
 replay {a.recording}
 inworld 70
 replaypause
@@ -219,11 +221,11 @@ cine on
 fov 70
 replaytake {hero} {frames} {video}
 quit
-""", encoding="utf-8")
+""")
     print(f"hero {hero}: hidden render", flush=True)
-    with (dest / f"hero_{hero}_runner.log").open("w", encoding="utf-8") as log:
+    with Path(str(attempt) + "_runner.log").open("x", encoding="utf-8") as log:
         subprocess.run([sys.executable, str(Path(__file__).with_name("take.py")),
-                        str(ROOT / a.game), str(script), str(dest / f"hero_{hero}_launch"),
+                        str(ROOT / a.game), str(script), str(attempt) + "_launch",
                         "--hidden", "--timeout", str(max(240, int(a.seconds * 8 + 120))),
                         "--encoder", a.encoder, "--ffmpeg", capture_ffmpeg,
                         "--size", "1920x1080"] + (["--recordings", a.recordings] if a.recordings else []), cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)
