@@ -638,9 +638,9 @@ public class Crew {
                     }
                     if (Math.abs(a.posX - (n[0] + 0.5)) < 0.45 && Math.abs(a.posZ - (n[2] + 0.5)) < 0.45 && Math.abs(a.posY - n[1]) < 1.1) { di++; return Result.RUNNING; }
                     a.getMoveHelper().setMoveTo(n[0] + 0.5, n[1], n[2] + 0.5, 1.0D);
-                    boolean doorDrop = ShelterRoute.descendThroughDoor(shelterEntry,
+                    boolean doorDropDig = ShelterRoute.descendThroughDoor(shelterEntry,
                             Roles.is(w, n[0], n[1], n[2], Roles.Role.DOOR), n[1], a.posY);
-                    if (up > 0 || a.isCollidedHorizontally && !doorDrop || a.isInWater()) a.getJumpHelper().setJumping();
+                    if (up > 0 || a.isCollidedHorizontally && !doorDropDig || a.isInWater()) a.getJumpHelper().setJumping();
                     if (since > 20 * 6) { dig = null; since = 0; }   // stuck on the way: the route again
                     return Result.RUNNING;
             }
