@@ -8,6 +8,7 @@ import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.client.renderer.entity.RenderManager;
 import net.minecraft.client.renderer.texture.TextureMap;
 import net.minecraft.entity.Entity;
+import net.minecraft.init.Blocks;
 import net.minecraft.util.IIcon;
 import net.minecraft.util.MathHelper;
 import net.minecraftforge.client.event.EntityViewRenderEvent;
@@ -66,8 +67,8 @@ public final class Slice {
         try {
             Class.forName("shadersmod.client.Shaders").getMethod("setShaderPack", String.class).invoke(null, savedShaderPack);
             Director.log("slice: shaders restored (" + savedShaderPack + ")");
+            savedShaderPack = null;
         } catch (Exception ex) { Director.log("slice: shader restore failed: " + ex); }
-        savedShaderPack = null;
     }
 
     static void updateFollow() {
@@ -145,7 +146,9 @@ public final class Slice {
             if (!mc.theWorld.blockExists(x, by, z)) continue;
             Block b = mc.theWorld.getBlock(x, by, z);
             if (!b.isOpaqueCube()) continue;
-            IIcon icon = b.getIcon(1, mc.theWorld.getBlockMetadata(x, by, z));
+            // The cut face is a neutral map of solid versus open space. Using b's own icon
+            // would expose a sealed ore block the agent has never observed.
+            IIcon icon = Blocks.stone.getIcon(1, 0);
             if (icon == null) continue;
             double y = level - 0.002;
             t.addVertexWithUV(x, y, z, icon.getMinU(), icon.getMinV());

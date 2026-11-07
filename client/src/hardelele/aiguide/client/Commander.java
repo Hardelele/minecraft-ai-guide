@@ -219,10 +219,12 @@ public class Commander {
     @SubscribeEvent
     public void frame(TickEvent.RenderTickEvent e) {
         if (e.phase != TickEvent.Phase.START || !on || mc.theWorld == null || mc.thePlayer == null) return;
-        if (Cam.instance != null && Cam.instance.shot != null) return;   // a camera of the film is on (a follow shot, the director, a path): it poses the view
+        if (Cam.instance != null && Cam.instance.shot != null) { Slice.exit(); viewedSkin = -1; return; }   // film camera owns this frame
 
         // One chosen hero is a camera target, including when rock hides it from the surface.
-        Agent viewed = selected.size() == 1 ? Cam.serverAgent(selected.iterator().next()) : null;
+        Agent viewed = selected.size() == 1 ? renderedAgent(selected.iterator().next()) : null;
+        double viewLimit = Math.max(8, mc.gameSettings.renderDistanceChunks * 16 - 28);
+        if (viewed != null && Math.hypot(viewed.posX - mc.thePlayer.posX, viewed.posZ - mc.thePlayer.posZ) > viewLimit) viewed = null;
         int skin = viewed == null || viewed.isDead ? -1 : viewed.skin();
         if (skin != viewedSkin) {
             viewedSkin = skin;
@@ -243,8 +245,9 @@ public class Commander {
                     dist = sdist = 22;
                     pitch = 56;
                 }
-            }
+            } else { Slice.exit(); viewedUnderground = false; }
         }
+        if (viewed == null && Slice.on) Slice.exit();
         if (viewed != null) {
             boolean underground = Slice.belowSurface(viewed);
             if (underground != viewedUnderground) {
@@ -288,8 +291,6 @@ public class Commander {
         }
         px += mxp * speed;
         pz += mzp * speed;
-        double far = Math.hypot(px - mc.thePlayer.posX, pz - mc.thePlayer.posZ), lim = mc.gameSettings.renderDistanceChunks * 16 - 24;   // within the world drawn around the player
-        if (far > lim) { px = mc.thePlayer.posX + (px - mc.thePlayer.posX) * lim / far; pz = mc.thePlayer.posZ + (pz - mc.thePlayer.posZ) * lim / far; }
         if (viewed != null && Slice.active()) {
             // Follow both horizontal movement and the current stair level.
             px = viewed.posX;
@@ -299,6 +300,8 @@ public class Commander {
             int gy = mc.theWorld.getHeightValue(MathHelper.floor_double(px), MathHelper.floor_double(pz));
             if (gy > 0) py = gy;
         }
+        double far = Math.hypot(px - mc.thePlayer.posX, pz - mc.thePlayer.posZ), lim = mc.gameSettings.renderDistanceChunks * 16 - 24;   // within the world drawn around the player
+        if (far > lim) { px = mc.thePlayer.posX + (px - mc.thePlayer.posX) * lim / far; pz = mc.thePlayer.posZ + (pz - mc.thePlayer.posZ) * lim / far; }
         double k = dt <= 0 ? 1 : 1 - Math.exp(-dt * 8);   // eased toward what is wanted, the same at any frame rate
         sx += (px - sx) * k; sy += (py - sy) * k; sz += (pz - sz) * k; sdist += (dist - sdist) * k; syaw += (yaw - syaw) * k;
         double cy = Math.cos(Math.toRadians(pitch)), sp = Math.sin(Math.toRadians(pitch));
@@ -372,6 +375,11 @@ public class Commander {
         if (mc.theWorld == null) return out;
         for (Object o : mc.theWorld.loadedEntityList) if (o instanceof Agent && !((Agent) o).isDead) out.add((Agent) o);
         return out;
+    }
+
+    Agent renderedAgent(int skin) {
+        for (Agent a : clientAgents()) if (a.skin() == skin) return a;
+        return null;
     }
 
     // ---- from the screen to the world and back ---------------------------------------------------------
@@ -985,7 +993,7 @@ public class Commander {
                 return;
             }
             if (code == Keyboard.KEY_Y) Fog.on = !Fog.on;
-            if (code == Keyboard.KEY_U) { if (Slice.on) Slice.exit(); else { Slice.follow = true; Slice.enter(); } }
+            if (code == Keyboard.KEY_U && viewedSkin > 0) { if (Slice.on) Slice.exit(); else { Slice.follow = true; Slice.enter(); } }
             if (Slice.on && code == Keyboard.KEY_HOME) { Slice.follow = true; Slice.updateFollow(); }
             if (Slice.on && code == Keyboard.KEY_PRIOR) Slice.adjust(1);
             if (Slice.on && code == Keyboard.KEY_NEXT) Slice.adjust(-1);
@@ -1086,7 +1094,8 @@ public class Commander {
             boolean ctrl = ctrlDown();
             boolean alt = altDown();
             if (wheel != 0) {
-                if (shift) depth = Math.max(1, Math.min(8, depth + (wheel > 0 ? 1 : -1)));
+                if (alt && Slice.active()) Slice.adjust(wheel > 0 ? 1 : -1);
+                else if (shift) depth = Math.max(1, Math.min(8, depth + (wheel > 0 ? 1 : -1)));
                 else if (ctrl) paintMat = (paintMat + (wheel > 0 ? 1 : PAINT_MATERIALS.length - 1)) % PAINT_MATERIALS.length;
                 else dist = Math.max(6, Math.min(70, dist * (wheel > 0 ? 0.88 : 1.14)));
             }
@@ -1097,7 +1106,6 @@ public class Commander {
                 if (downButton == 1 && dragging && eraseFrom != null) { int[] to = onLevel(mx, my, eraseFrom[1]); if (to != null) eraseTo = to; }
                 return;
             }
-            if (wheel != 0 && Slice.active() && altDown()) { Slice.adjust(wheel > 0 ? 1 : -1); return; }
             if (b < 0) return;
             if (state) {   // pressed
                 chat.setFocused(false);
@@ -1275,7 +1283,8 @@ public class Commander {
                 fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth("PgUp/PgDn: этаж · Home: следить · U: выкл", w - 8), x0 + 4, 45, 0xC6DEE0);
             } else {
                 Ui.round(x0, 28, x0 + w, 46, 4, 0xB01A2630);
-                fontRendererObj.drawStringWithShadow("Выбери агента · U: срез уровня", x0 + 4, 33, 0xC6DEE0);
+                String hint = selected.size() == 1 && viewedSkin < 0 ? "Агент вне прорисовки · подойди ближе" : "Выбери агента · U: срез уровня";
+                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(hint, w - 8), x0 + 4, 33, 0xC6DEE0);
             }
         }
 
