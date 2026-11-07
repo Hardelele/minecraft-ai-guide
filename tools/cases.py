@@ -196,6 +196,12 @@ def log_metrics(path):
                     continue
                 lines[k] += 1
                 episodes[k].add(m.groups()[:2] if k != "reflex" else m.group(1))
+                if k == "no_way":   # by where the target is from the feet (REFLEX-CASES.md groups 1, 3, 4)
+                    f = re.search(r"to -?\d+ (-?\d+) -?\d+ from -?\d+ (-?\d+) -?\d+", line)
+                    dy = int(f.group(1)) - int(f.group(2)) if f else None
+                    sub = "no_way_from?" if dy is None else "no_way_up2" if dy >= 2 else "no_way_down2" if dy <= -2 else "no_way_level"
+                    lines[sub] += 1
+                    episodes[sub].add(m.groups()[:2])
                 if k == "reflex":
                     reflexes["%s %s" % (m.group(2), "OK" if m.group(3) == "OK" else "failed")] += 1
     return {"lines": dict(lines), "episodes": {k: len(v) for k, v in episodes.items()}, "reflexes": dict(reflexes)}
@@ -203,6 +209,7 @@ def log_metrics(path):
 
 def print_logs(named):
     keys = list(LOG)
+    keys[1:1] = ["no_way_up2", "no_way_level", "no_way_down2", "no_way_from?"]
     print("\nlog metrics (episodes / lines):")
     print("  %-16s" % "" + "".join(" %22s" % os.path.basename(n)[-22:] for n, _ in named))
     for k in keys:
