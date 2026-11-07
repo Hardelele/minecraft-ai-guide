@@ -242,8 +242,47 @@ public class Routines {
     static class Loop implements Crew.Task {
         final Routine r;
         Crew.Task cur;
+        final java.util.Set<Long> tried = new java.util.HashSet<Long>();
         int rounds, empty;
         Loop(Routine r) { this.r = r; }
+
+        interface CandidatePolicy { boolean accepts(int x, int y, int z); }
+
+        /** Rank only coordinates already observed by an agent; never inspect a world volume for targets. */
+        static int[] nearestKnown(List<int[]> known, int ax, int ay, int az, int radius,
+                                  int below, int above, CandidatePolicy policy) {
+            int[] best = null;
+            double distance = Double.MAX_VALUE;
+            for (int[] p : known) {
+                int x = p[0], y = p[1], z = p[2];
+                if (Math.abs(x - ax) > radius || Math.abs(z - az) > radius
+                        || y < ay - below || y > ay + above || !policy.accepts(x, y, z)) continue;
+                double d = Math.abs(x - ax) + Math.abs(z - az) + Math.abs(y - ay) * 1.5;
+                if (d < distance) { distance = d; best = p.clone(); }
+            }
+            return best;
+        }
+
+        /** A remembered target may change while the agent walks toward it. Check it at action time. */
+        static class MineObserved implements Crew.Task {
+            final int[] p;
+            final Block want;
+            Crew.Mine mine;
+            MineObserved(int[] p, Block want) { this.p = p.clone(); this.want = want; }
+            public Result step(Agent a, WorldServer w) {
+                if (mine == null) {
+                    if (!Exploration.visible(a, w, p[0], p[1], p[2])) return Result.NO_PATH;
+                    if (w.getBlock(p[0], p[1], p[2]) != want) {
+                        Exploration.invalidate(w, p[0], p[1], p[2]);
+                        return Result.GONE;
+                    }
+                    mine = new Crew.Mine(new ArrayList<int[]>(java.util.Arrays.asList(p)));
+                }
+                Result result = mine.step(a, w);
+                if (w.isAirBlock(p[0], p[1], p[2])) Exploration.invalidate(w, p[0], p[1], p[2]);
+                return result;
+            }
+        }
         public Result step(Agent a, WorldServer w) {
             if (cur != null) {
                 Result res = cur.step(a, w);
@@ -264,38 +303,48 @@ public class Routines {
         }
 
         /** the nearest target not taken by another: a tree (all of it), a vein, a block */
-        Crew.Task find(Agent a, WorldServer w) {
+        Crew.Task find(final Agent a, final WorldServer w) {
             int ax = (int) Math.floor(a.posX), ay = (int) Math.floor(a.posY), az = (int) Math.floor(a.posZ);
-            Crew c = Crew.instance;
+            final Crew c = Crew.instance;
             if (r.target.equals("tree")) {
-                int[] best = null;
-                double bd = 1e9;
-                for (int[] t : Crew.trunks(w, ax, ay, az, r.radius)) {
-                    if (c != null && c.board.reserved(a, t[0], t[1], t[2])) continue;
-                    double d = Math.hypot(t[0] - ax, t[2] - az);
-                    if (d < bd && !Fell.tree(w, t[0], t[1], t[2]).isEmpty()) { bd = d; best = t; }
-                }
+                List<int[]> known = new ArrayList<int[]>(Exploration.knownBlocks(w, net.minecraft.init.Blocks.log));
+                known.addAll(Exploration.knownBlocks(w, net.minecraft.init.Blocks.log2));
+                int[] best = nearestKnown(known, ax, ay, az, r.radius, 128, 128, new CandidatePolicy() {
+                    public boolean accepts(int x, int y, int z) {
+                        if (tried.contains(Crew.key(x, y, z))) return false;
+                        if (c != null && c.board.reserved(a, x, y, z)) return false;
+                        if (!Exploration.visible(a, w, x, y, z)) return false;
+                        Block block = w.getBlock(x, y, z);
+                        if (block != net.minecraft.init.Blocks.log && block != net.minecraft.init.Blocks.log2) {
+                            Exploration.invalidate(w, x, y, z); return false;
+                        }
+                        return !Fell.tree(w, x, y, z).isEmpty();
+                    }
+                });
                 if (best == null) return null;
+                tried.add(Crew.key(best[0], best[1], best[2]));
                 if (c != null) c.board.reserve(a, best[0], best[1], best[2]);
                 List<int[]> logs = Fell.tree(w, best[0], best[1], best[2]);
                 return new TaskBoard.Seq(new Fell(logs), new Crew.Collect(best[0] + 0.5, best[1], best[2] + 0.5, 6)).lenient();
             }
-            Block want = Block.getBlockFromName(r.target.substring(r.target.indexOf(' ') + 1));
+            final Block want = Block.getBlockFromName(r.target.substring(r.target.indexOf(' ') + 1));
             if (want == null) return null;
-            int[] best = null;
-            double bd = 1e9;
-            for (int x = ax - r.radius; x <= ax + r.radius; x++)
-                for (int z = az - r.radius; z <= az + r.radius; z++)
-                    for (int y = Math.max(2, ay - 12); y <= ay + 8; y++) {
-                        if (w.getBlock(x, y, z) != want || !Day2.open(w, x, y, z)) continue;   // one that can be got at (a face open to the air)
-                        if (c != null && (!Ground.mayDig(c, x, y, z, "gather") || c.board.reserved(a, x, y, z))) continue;
-                        double d = Math.abs(x - ax) + Math.abs(z - az) + Math.abs(y - ay) * 1.5;
-                        if (d < bd) { bd = d; best = new int[] { x, y, z }; }
-                    }
+            int[] best = nearestKnown(Exploration.knownBlocks(w, want), ax, ay, az, r.radius, 12, 8,
+                    new CandidatePolicy() { public boolean accepts(int x, int y, int z) {
+                        if (tried.contains(Crew.key(x, y, z))) return false;
+                        if (!Exploration.visible(a, w, x, y, z)) return false;
+                        if (w.getBlock(x, y, z) != want) {
+                            Exploration.invalidate(w, x, y, z); return false;
+                        }
+                        if (c != null && (!Ground.mayDig(c, x, y, z, "gather") || c.board.reserved(a, x, y, z))) return false;
+                        return true;
+                    } });
             if (best == null) return null;
+            tried.add(Crew.key(best[0], best[1], best[2]));
             if (c != null) c.board.reserve(a, best[0], best[1], best[2]);
-            List<int[]> blocks = r.target.startsWith("ore ") ? Day2.cluster(w, best[0], best[1], best[2], want, new java.util.HashSet<Long>()) : new ArrayList<int[]>(java.util.Arrays.asList(best));
-            return new TaskBoard.Seq(new Crew.Mine(blocks), new Crew.Collect(best[0] + 0.5, best[1], best[2] + 0.5, 5)).lenient();
+            // Re-evaluate after each block; a freshly exposed neighbour must enter observation memory first.
+            return new TaskBoard.Seq(new MineObserved(best, want),
+                    new Crew.Collect(best[0] + 0.5, best[1], best[2] + 0.5, 5)).lenient();
         }
     }
 
