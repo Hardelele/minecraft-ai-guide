@@ -64,6 +64,26 @@ public final class ObservedOreMemoryTest {
         Set<Exploration.Pos> reached = new HashSet<Exploration.Pos>();
         for (int salt = 0; salt < 64; salt++) reached.add(Exploration.choose(frontiers, start, salt));
         if (reached.size() <= 24) throw new AssertionError("frontier enumeration stranded candidate 25");
+        Exploration.Memory wide = new Exploration.Memory();
+        Exploration.Pos centre = new Exploration.Pos(0, 64, 0);
+        for (int x = -16; x <= 16; x++) for (int z = -16; z <= 16; z++)
+            if (x * x + z * z <= 256) wide.ground.add(new Exploration.Pos(x, 64, z));
+        wide.trail.add(centre);
+        java.util.List<int[]> landing = new java.util.ArrayList<int[]>();
+        for (Exploration.Pos p : Exploration.ranked(wide, centre, 0, 0, null, false)) landing.add(p.array());
+        if (landing.size() < 65) throw new AssertionError("fixture needs 65 observed frontiers");
+        final int[] allowed = landing.get(64);
+        int[] legacyWindow = Prospecting.selectFrontier(landing.subList(0, 8), new int[] {0, 64, 0},
+                new HashSet<Long>(), false, new Prospecting.FrontierPolicy() {
+                    public boolean excavatable(int[] candidate) { return java.util.Arrays.equals(candidate, allowed); }
+                });
+        if (java.util.Arrays.equals(legacyWindow, allowed)) throw new AssertionError("eight-choice control did not fail");
+        int[] sixtyFifth = Prospecting.selectFrontier(landing, new int[] {0, 64, 0},
+                new HashSet<Long>(), false, new Prospecting.FrontierPolicy() {
+                    public boolean excavatable(int[] candidate) { return java.util.Arrays.equals(candidate, allowed); }
+                });
+        if (!java.util.Arrays.equals(sixtyFifth, allowed))
+            throw new AssertionError("first excavatable frontier at candidate 65 was stranded");
         java.util.List<int[]> sources = java.util.Arrays.asList(new int[] {1, 64, 0}, new int[] {2, 64, 0});
         HashSet<Long> tried = new HashSet<Long>();
         int[] first = Orders.Gather.nearestKnown(sources, tried, 0, 64, 0, 24, 16, 8, false);

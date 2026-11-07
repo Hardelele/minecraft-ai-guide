@@ -147,15 +147,25 @@ final class Prospecting implements Crew.Task {
                 && !tried.contains(Crew.key(candidate[0], candidate[1], candidate[2]));
     }
 
-    int[] relocationFrontier(Agent a, WorldServer w, boolean lowerOnly) {
+    interface FrontierPolicy { boolean excavatable(int[] candidate); }
+
+    static int[] selectFrontier(List<int[]> candidates, int[] from, Set<Long> tried,
+                                boolean lowerOnly, FrontierPolicy policy) {
         int[] intermediate = null;
-        for (int choice = 0; choice < 8; choice++) {
-            int[] candidate = Exploration.frontier(a, w, salt++);
-            if (!acceptFrontier(candidate, anchor, triedFrontier, lowerOnly)) continue;
-            if (canExcavateHere(crew, candidate)) return candidate;
+        for (int[] candidate : candidates) {
+            if (!acceptFrontier(candidate, from, tried, lowerOnly)) continue;
+            if (policy.excavatable(candidate)) return candidate;
             if (intermediate == null) intermediate = candidate;
         }
-        return intermediate; // a real observed landing advances knowledge even while still inside the base
+        return intermediate; // observed landing can advance knowledge inside a protected base
+    }
+
+    int[] relocationFrontier(Agent a, WorldServer w, boolean lowerOnly) {
+        salt++;
+        return selectFrontier(Exploration.frontiers(a, w), anchor, triedFrontier, lowerOnly,
+                new FrontierPolicy() { public boolean excavatable(int[] candidate) {
+                    return canExcavateHere(crew, candidate);
+                } });
     }
 
     int[] nearestKnown(Agent a, WorldServer w) {

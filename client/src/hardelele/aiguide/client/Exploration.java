@@ -233,6 +233,18 @@ public final class Exploration {
     }
     /** Expedition planning may cross remembered ground; sensing remains limited by RANGE. */
     static Pos choose(Memory m, Pos start, int salt, double headingX, double headingZ, Set<Long> excluded, boolean rememberedRegion) {
+        List<Pos> candidates = ranked(m, start, headingX, headingZ, excluded, rememberedRegion);
+        return candidates.isEmpty() ? null : candidates.get(Math.floorMod(salt, candidates.size()));
+    }
+    static synchronized List<int[]> frontiers(Agent a, WorldServer w) {
+        if (a == null || a.worldObj != w) return Collections.emptyList();
+        observe(Crew.instance, a, w);
+        Pos start = new Pos((int) Math.floor(a.posX), (int) Math.floor(a.boundingBox.minY), (int) Math.floor(a.posZ));
+        List<int[]> result = new ArrayList<int[]>();
+        for (Pos p : ranked(memory(w), start, 0, 0, null, false)) result.add(p.array());
+        return result;
+    }
+    static List<Pos> ranked(Memory m, Pos start, double headingX, double headingZ, Set<Long> excluded, boolean rememberedRegion) {
         ArrayDeque<Pos> q = new ArrayDeque<Pos>(); Set<Pos> visited = new HashSet<Pos>();
         q.add(start); visited.add(start);
         final Map<Pos, Double> scores = new HashMap<Pos, Double>();
@@ -278,8 +290,7 @@ public final class Exploration {
             if (a.y != b.y) return Integer.compare(a.y, b.y);
             return Integer.compare(a.z, b.z);
         } });
-        // Retry salts must reach every candidate; a fixed top-K can strand the first reachable one.
-        return candidates.isEmpty() ? null : candidates.get(Math.floorMod(salt, candidates.size()));
+        return candidates;
     }
     static long trailKey(int x, int z) { return ((long) x << 32) ^ (z & 0xffffffffL); }
     static double trailDistance(Map<Long, List<Pos>> trail, Pos p) {
