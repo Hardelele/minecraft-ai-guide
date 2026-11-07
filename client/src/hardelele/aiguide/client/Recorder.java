@@ -208,15 +208,24 @@ public class Recorder {
         finished = true;
         running = false;
         try {
-            if (writer != null) writer.join(detached ? 30000 : 5000);
-            if (ff != null) {
-                if (detached && !ff.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
-                    failure = "encoder did not finish within 30 seconds"; ff.destroy();
-                } else if (ff.waitFor() != 0) failure = "encoder exited unsuccessfully";
+            if (writer != null) {
+                writer.join(detached ? 30000 : 5000);
+                if (writer.isAlive()) {
+                    fail("encoder writer did not finish");
+                    if (ff != null) ff.destroyForcibly();
+                    writer.interrupt();
+                }
             }
-            if (sent != frames) failure = "encoder sent " + sent + " of " + frames + " frames";
+            if (ff != null) {
+                if (!ff.waitFor(detached ? 30 : 10, java.util.concurrent.TimeUnit.SECONDS)) {
+                    fail("encoder did not finish before timeout");
+                    ff.destroyForcibly();
+                    ff.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+                } else if (ff.exitValue() != 0) fail("encoder exited with code " + ff.exitValue());
+            }
+            if (sent != frames) fail("encoder sent " + sent + " of " + frames + " frames");
         } catch (Exception ex) {
-            failure = ex.toString();
+            fail(ex.toString());
         }
         Director.log("recorder: stop at " + System.currentTimeMillis() + ", " + frames + " frames read, " + sent + " sent");
         flushStamps();
@@ -229,4 +238,6 @@ public class Recorder {
         if (!detached) FMLCommonHandler.instance().bus().unregister(this);
         if (instance == this) instance = null;
     }
+
+    void fail(String reason) { if (failure == null) failure = reason; }
 }
