@@ -154,6 +154,8 @@ public class Commander {
 
     // the picked ones (by agent number) and the groups
     final Set<Integer> selected = new LinkedHashSet<Integer>();
+    int viewedSkin = -1;
+    boolean viewedUnderground;
     final Map<Integer, Set<Integer>> groups = new HashMap<Integer, Set<Integer>>();
     // the last frame's view (for picking from the mouse, and labels)
     final FloatBuffer model = BufferUtils.createFloatBuffer(16), proj = BufferUtils.createFloatBuffer(16);
@@ -197,6 +199,8 @@ public class Commander {
     void close() {
         if (!on) return;
         on = false;
+        Slice.exit();
+        viewedSkin = -1;
         mc.gameSettings.hideGUI = hideWas;
         if (mc.thePlayer != null) mc.renderViewEntity = mc.thePlayer;
         Director.log("commander: off");
@@ -216,6 +220,39 @@ public class Commander {
     public void frame(TickEvent.RenderTickEvent e) {
         if (e.phase != TickEvent.Phase.START || !on || mc.theWorld == null || mc.thePlayer == null) return;
         if (Cam.instance != null && Cam.instance.shot != null) return;   // a camera of the film is on (a follow shot, the director, a path): it poses the view
+
+        // One chosen hero is a camera target, including when rock hides it from the surface.
+        Agent viewed = selected.size() == 1 ? Cam.serverAgent(selected.iterator().next()) : null;
+        int skin = viewed == null || viewed.isDead ? -1 : viewed.skin();
+        if (skin != viewedSkin) {
+            viewedSkin = skin;
+            if (viewed != null) {
+                px = sx = viewed.posX;
+                pz = sz = viewed.posZ;
+                py = sy = viewed.boundingBox.minY + 0.6;
+                yaw = syaw = viewed.rotationYaw;
+                boolean underground = Slice.belowSurface(viewed);
+                viewedUnderground = underground;
+                if (underground) {
+                    Slice.follow = true;
+                    Slice.enter();
+                    dist = sdist = 11;
+                    pitch = 52;
+                } else {
+                    Slice.exit();
+                    dist = sdist = 22;
+                    pitch = 56;
+                }
+            }
+        }
+        if (viewed != null) {
+            boolean underground = Slice.belowSurface(viewed);
+            if (underground != viewedUnderground) {
+                viewedUnderground = underground;
+                if (underground) { Slice.follow = true; Slice.enter(); dist = 11; pitch = 52; }
+                else { Slice.exit(); dist = 22; pitch = 56; }
+            }
+        }
         long now = System.nanoTime();
         double dt = lastNanos == 0 ? 0 : Math.min(0.1, (now - lastNanos) / 1e9);
         if (Recorder.instance != null) dt = lastNanos == 0 ? 0 : 1 / 60.0;   // recording: by video frames
@@ -253,8 +290,15 @@ public class Commander {
         pz += mzp * speed;
         double far = Math.hypot(px - mc.thePlayer.posX, pz - mc.thePlayer.posZ), lim = mc.gameSettings.renderDistanceChunks * 16 - 24;   // within the world drawn around the player
         if (far > lim) { px = mc.thePlayer.posX + (px - mc.thePlayer.posX) * lim / far; pz = mc.thePlayer.posZ + (pz - mc.thePlayer.posZ) * lim / far; }
-        int gy = mc.theWorld.getHeightValue(MathHelper.floor_double(px), MathHelper.floor_double(pz));
-        if (gy > 0) py = gy;
+        if (viewed != null && Slice.active()) {
+            // Follow both horizontal movement and the current stair level.
+            px = viewed.posX;
+            pz = viewed.posZ;
+            py = Slice.follow ? viewed.boundingBox.minY + 0.6 : Slice.level - 1;
+        } else {
+            int gy = mc.theWorld.getHeightValue(MathHelper.floor_double(px), MathHelper.floor_double(pz));
+            if (gy > 0) py = gy;
+        }
         double k = dt <= 0 ? 1 : 1 - Math.exp(-dt * 8);   // eased toward what is wanted, the same at any frame rate
         sx += (px - sx) * k; sy += (py - sy) * k; sz += (pz - sz) * k; sdist += (dist - sdist) * k; syaw += (yaw - syaw) * k;
         double cy = Math.cos(Math.toRadians(pitch)), sp = Math.sin(Math.toRadians(pitch));
@@ -408,6 +452,15 @@ public class Commander {
     Object pick(int mx, int my) {
         Vec3[] r = ray(mx, my);
         if (r == null) return null;
+        if (Slice.active()) {
+            // Picking must start beneath the roof hidden by the observer's cut plane.
+            double dy = r[1].yCoord - r[0].yCoord;
+            if (r[0].yCoord >= Slice.level && dy < -1e-6) {
+                double t = (r[0].yCoord - Slice.level + 0.001) / -dy;
+                r[0] = Vec3.createVectorHelper(r[0].xCoord + (r[1].xCoord - r[0].xCoord) * t,
+                        Slice.level - 0.001, r[0].zCoord + (r[1].zCoord - r[0].zCoord) * t);
+            }
+        }
         MovingObjectPosition hit = mc.theWorld.rayTraceBlocks(Vec3.createVectorHelper(r[0].xCoord, r[0].yCoord, r[0].zCoord), Vec3.createVectorHelper(r[1].xCoord, r[1].yCoord, r[1].zCoord), false, true, false);
         double limit = hit == null ? 1e9 : hit.hitVec.distanceTo(r[0]);
         Entity best = null;
@@ -415,6 +468,7 @@ public class Commander {
         for (Object o : mc.theWorld.loadedEntityList) {
             if (!(o instanceof EntityLivingBase) || o == mc.thePlayer || o == eye) continue;
             Entity en = (Entity) o;
+            if (Slice.active() && en.boundingBox.minY >= Slice.level) continue;
             if (Fog.instance != null && Fog.instance.active() && !(en instanceof Agent) && Fog.instance.stateAt(en.posX, en.posZ) != 2) continue;   // hidden in the fog
             AxisAlignedBB bb = en.boundingBox.expand(0.35, 0.2, 0.35);
             MovingObjectPosition m = bb.calculateIntercept(r[0], r[1]);
@@ -931,6 +985,10 @@ public class Commander {
                 return;
             }
             if (code == Keyboard.KEY_Y) Fog.on = !Fog.on;
+            if (code == Keyboard.KEY_U) { if (Slice.on) Slice.exit(); else { Slice.follow = true; Slice.enter(); } }
+            if (Slice.on && code == Keyboard.KEY_HOME) { Slice.follow = true; Slice.updateFollow(); }
+            if (Slice.on && code == Keyboard.KEY_PRIOR) Slice.adjust(1);
+            if (Slice.on && code == Keyboard.KEY_NEXT) Slice.adjust(-1);
             if (code == Keyboard.KEY_M) arm(Armed.MOVE);
             if (code == Keyboard.KEY_B) arm(Armed.CHOP);
             if (code == Keyboard.KEY_X) arm(Armed.ATTACK);
@@ -974,6 +1032,7 @@ public class Commander {
             if (state) {
                 chat.setFocused(h != null && h[0].equals("chat"));
                 if (h == null) return true;
+                if (h[0].equals("view") && b == 0) { select((Integer) h[1], false); fullInv = false; return true; }
                 if (h[0].equals("item") && b == 0) { dragFrom = h; return true; }
                 if (h[0].equals("pill")) pill((String) h[1]);
                 return true;
@@ -1021,7 +1080,7 @@ public class Commander {
         void input(int b, boolean state, int mx, int my, int wheel, int dx) {
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             int gx = mx / scale, gy = (mc.displayHeight - my) / scale;
-            if (b >= 0 && downButton < 0 && onPanel(my, scale) && gx >= px0() && gx < px0() + bandW()) { panelInput(b, state, gx, gy); return; }
+            if (b >= 0 && downButton < 0 && gx >= px0() && gx < px0() + bandW() && (onPanel(my, scale) || gy < 65)) { panelInput(b, state, gx, gy); return; }
             if (b >= 0 && !state && dragFrom != null) { panelInput(b, false, gx, gy); return; }   // an item let go over the world: nothing
             boolean shift = shiftDown();
             boolean ctrl = ctrlDown();
@@ -1038,6 +1097,7 @@ public class Commander {
                 if (downButton == 1 && dragging && eraseFrom != null) { int[] to = onLevel(mx, my, eraseFrom[1]); if (to != null) eraseTo = to; }
                 return;
             }
+            if (wheel != 0 && Slice.active() && altDown()) { Slice.adjust(wheel > 0 ? 1 : -1); return; }
             if (b < 0) return;
             if (state) {   // pressed
                 chat.setFocused(false);
@@ -1130,6 +1190,7 @@ public class Commander {
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             if (vOn) { gmx = curX() / scale; gmy = (mc.displayHeight - curY()) / scale; }
             for (Agent a : clientAgents()) {   // names and health over every agent
+                if (Slice.active() && a.boundingBox.minY >= Slice.level) continue;
                 float[] s = toScreen(a.posX, a.boundingBox.maxY + 0.45, a.posZ);
                 if (s == null) continue;
                 int x = (int) (s[0] / scale), y = (int) ((mc.displayHeight - s[1]) / scale);
@@ -1159,6 +1220,7 @@ public class Commander {
             GL11.glTranslatef(0, (1 - anim) * 30, 0);   // the panel comes up when the commander opens
             panel(gmx, gmy);
             GL11.glPopMatrix();
+            viewBar(gmx, gmy);
             if (dragFrom != null) {   // the item being carried with the mouse
                 Agent a = Cam.serverAgent((Integer) dragFrom[1]);
                 int slot = (Integer) dragFrom[2];
@@ -1188,6 +1250,34 @@ public class Commander {
         }
 
         static final int GL12_RESCALE = 0x803A;   // GL_RESCALE_NORMAL
+
+        /** The roster stays clickable even when a miner is hidden under the surface. */
+        void viewBar(int gmx, int gmy) {
+            List<Agent> roster = new ArrayList<Agent>();
+            if (Crew.instance != null) for (Agent a : Crew.instance.agents) if (!a.isDead) roster.add(a);
+            if (roster.isEmpty()) roster = clientAgents();
+            if (roster.isEmpty()) return;
+            int x0 = px0() + 4, w = bandW() - 8;
+            int cell = w / roster.size();
+            for (int i = 0; i < roster.size(); i++) {
+                Agent a = roster.get(i);
+                int x = x0 + cell * i, right = i == roster.size() - 1 ? x0 + w : x + cell - 3;
+                boolean current = selected.size() == 1 && selected.contains(a.skin());
+                Ui.round(x, 5, right, 24, 4, current ? 0xE02A5C4A : 0xD01A2630);
+                String line = a.getCustomNameTag() + " Y" + MathHelper.floor_double(a.boundingBox.minY);
+                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(line, right - x - 8), x + 4, 10, current ? 0xB9FFCE : 0xFFFFFF);
+                hit("view", a.skin(), -1, x, 5, right, 24, null);
+            }
+            if (Slice.active()) {
+                String mode = "Только один слой: Y=" + Slice.level + (Slice.follow ? " · за агентом" : " · вручную");
+                Ui.round(x0, 28, x0 + w, 60, 4, 0xD01A2630);
+                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(mode, w - 8), x0 + 4, 32, 0xB8E9FF);
+                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth("PgUp/PgDn: этаж · Home: следить · U: выкл", w - 8), x0 + 4, 45, 0xC6DEE0);
+            } else {
+                Ui.round(x0, 28, x0 + w, 46, 4, 0xB01A2630);
+                fontRendererObj.drawStringWithShadow("Выбери агента · U: срез уровня", x0 + 4, 33, 0xC6DEE0);
+            }
+        }
 
         void hit(String kind, int agent, int slot, int x0, int y0, int x1, int y1, Object extra) {
             hits.add(new Object[] { kind, extra != null ? extra : agent, slot, x0, y0, x1, y1 });

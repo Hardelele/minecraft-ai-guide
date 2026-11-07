@@ -9,5 +9,6 @@ class ClientSetup {
         Pilot.start();
         Commander.start();
         Fog.start();
+        Slice.start();
     }
 }
