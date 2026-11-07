@@ -49,6 +49,8 @@ public class Director {
     volatile Thread quitServerThread;
     volatile boolean quitPrepared;
     String typed;
+    String pendingPill;
+    long pendingPillAtMs;
     Writer log;
     // an eased look: from, to, over ticks
     float lookYaw0, lookPitch0, lookYaw1, lookPitch1;
@@ -124,6 +126,7 @@ public class Director {
     /** Discard pending scripted clicks but still close recording and world through the normal quit path. */
     void abortToQuit(String reason) {
         event("script aborted: " + reason);
+        pendingPill = null;
         serverQueue.clear();
         lines.clear();
         lines.add("quit");
@@ -331,13 +334,15 @@ public class Director {
         }
         if (cmd.equals("vmove")) {   // fx fy ticks: to a point of the window (fractions, from the top left)
             String[] a = arg.split(" ");
-            if (t == 0) Commander.instance.vMove(Double.parseDouble(a[0]) * mc.displayWidth, (1 - Double.parseDouble(a[1])) * mc.displayHeight, Integer.parseInt(a[2]));
+            if (t == 0) { pendingPill = null; Commander.instance.vMove(Double.parseDouble(a[0]) * mc.displayWidth, (1 - Double.parseDouble(a[1])) * mc.displayHeight, Integer.parseInt(a[2])); }
             return t >= Integer.parseInt(a[2]);
         }
         if (cmd.equals("vmoveto")) {   // agent N ticks | tree ticks | block x y z ticks | mob ticks | button NAME ticks | ground dx dz ticks
             String[] a = arg.split(" ");
             int ticks = Integer.parseInt(a[a.length - 1]);
+            String pillId = a[0].equals("pill") ? String.join(" ", java.util.Arrays.copyOfRange(a, 1, a.length - 1)) : null;
             if (t == 0) {
+                pendingPill = null;
                 Commander c = Commander.instance;
                 float[] s = null;
                 if (a[0].equals("agent")) { c.vMoveToAgent(Integer.parseInt(a[1]), ticks); event("vmoveto " + arg); return false; }   // (the aim follows the agent)
@@ -367,12 +372,13 @@ public class Director {
                 } else if (a[0].equals("pill")) {   // an exact, unique panel ID; never continue to a click if it is absent
                     if (!(mc.currentScreen instanceof Commander.Screen)) { abortToQuit("Commander panel absent for " + arg); return true; }
                     int scale = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
-                    String wanted = String.join(" ", java.util.Arrays.copyOfRange(a, 1, a.length - 1));
                     Object[] hit;
-                    try { hit = CaptureHitTarget.unique(new ArrayList<Object[]>(((Commander.Screen) mc.currentScreen).hits), "pill", wanted); }
+                    try { hit = CaptureHitTarget.unique(new ArrayList<Object[]>(((Commander.Screen) mc.currentScreen).hits), "pill", pillId); }
                     catch (IllegalArgumentException ex) { abortToQuit(ex.getMessage()); return true; }
                     s = new float[] { ((Integer) hit[3] + (Integer) hit[5]) / 2f * scale,
                             mc.displayHeight - ((Integer) hit[4] + (Integer) hit[6]) / 2f * scale };
+                    pendingPill = pillId;
+                    pendingPillAtMs = System.currentTimeMillis();
                 } else if (a[0].equals("button") && mc.currentScreen instanceof Commander.Screen) {
                     int scale = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
                     for (Object o : ((Commander.Screen) mc.currentScreen).buttons()) {
@@ -383,13 +389,45 @@ public class Director {
                 event("vmoveto " + arg + ": " + (s == null ? "nothing on the screen" : (int) s[0] + " " + (int) s[1]));
                 if (s != null) c.vMove(s[0], s[1], ticks);
             }
+            if (pillId != null) {
+                if (!(mc.currentScreen instanceof Commander.Screen) || ((Commander.Screen) mc.currentScreen).routinesOpen) {
+                    abortToQuit("Commander pill changed before click: " + pillId); return true;
+                }
+                Commander c = Commander.instance;
+                int scale = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
+                boolean reached;
+                try { reached = CaptureHitTarget.reached(((Commander.Screen) mc.currentScreen).hits, "pill", pillId,
+                        c.curX(), c.curY(), scale, mc.displayHeight, c.vT, c.vLen); }
+                catch (RuntimeException ex) { abortToQuit(ex.getMessage()); return true; }
+                if (!reached && System.currentTimeMillis() - pendingPillAtMs > 5000) {
+                    abortToQuit("scripted cursor did not reach pill: " + pillId); return true;
+                }
+                return t >= ticks && reached;
+            }
             return t >= ticks;
         }
-        if (cmd.equals("vdown")) { Commander.instance.vButton(num(arg, 0), true); return true; }
+        if (cmd.equals("vdown")) {
+            if (pendingPill != null) { abortToQuit("scripted pill requires a verified vclick: " + pendingPill); return true; }
+            Commander.instance.vButton(num(arg, 0), true); return true;
+        }
         if (cmd.equals("vup")) { Commander.instance.vButton(num(arg, 0), false); return true; }
         if (cmd.equals("vclick")) {   // b: pressed, then let go two ticks later
-            if (t == 0) Commander.instance.vButton(num(arg, 0), true);
-            if (t == 2) { Commander.instance.vButton(num(arg, 0), false); return true; }
+            if (t == 0) {
+                if (pendingPill != null) {
+                    if (!(mc.currentScreen instanceof Commander.Screen) || ((Commander.Screen) mc.currentScreen).routinesOpen) {
+                        abortToQuit("Commander pill changed before click: " + pendingPill); return true;
+                    }
+                    Commander c = Commander.instance;
+                    int scale = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
+                    boolean reached;
+                    try { reached = CaptureHitTarget.reached(((Commander.Screen) mc.currentScreen).hits, "pill", pendingPill,
+                            c.curX(), c.curY(), scale, mc.displayHeight, c.vT, c.vLen); }
+                    catch (RuntimeException ex) { abortToQuit(ex.getMessage()); return true; }
+                    if (!reached || num(arg, 0) != 0) { abortToQuit("scripted click missed pill: " + pendingPill); return true; }
+                }
+                Commander.instance.vButton(num(arg, 0), true);
+            }
+            if (t == 2) { Commander.instance.vButton(num(arg, 0), false); pendingPill = null; return true; }
             return false;
         }
         if (cmd.equals("vmod")) {   // ctrl|shift|alt on|off
