@@ -510,7 +510,7 @@ public class Director {
         if (cmd.equals("clearchat")) { mc.ingameGUI.getChatGUI().clearChatMessages(); return true; }
         if (cmd.equals("hud")) { mc.gameSettings.hideGUI = arg.equals("off"); return true; }
         if (cmd.equals("view")) { mc.gameSettings.thirdPersonView = num(arg, 0); return true; }
-        if (cmd.equals("fov")) { mc.gameSettings.fovSetting = CaptureFov.slider(Double.parseDouble(arg)); return true; }
+        if (cmd.equals("fov")) { mc.gameSettings.fovSetting = CaptureFov.setting(Double.parseDouble(arg)); return true; }
         if (cmd.equals("cmd")) { mc.thePlayer.sendChatMessage(arg); return true; }
         if (cmd.equals("look")) {   // yaw pitch ticks (yaw relative to now when it starts with ~)
             if (t == 0) {

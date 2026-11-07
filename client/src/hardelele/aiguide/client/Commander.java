@@ -72,7 +72,7 @@ public class Commander {
         if (code == Keyboard.KEY_K && shift) { c.keys.clear(); c.release(); Director.log("path: keys cleared"); }
         else if (code == Keyboard.KEY_K && camAt != null) {
             double t = c.keys.isEmpty() ? 0 : c.keys.get(c.keys.size() - 1).t + 60;
-            c.keys.add(new Cam.Key(t, camAt[0], camAt[1], camAt[2], camAt[3], camAt[4], 70 + mc.gameSettings.fovSetting * 40));
+            c.keys.add(new Cam.Key(t, camAt[0], camAt[1], camAt[2], camAt[3], camAt[4], CaptureFov.degrees(mc.gameSettings.fovSetting)));
             Director.log("path: key " + c.keys.size() + " at " + (int) t + " ticks");
         } else if (code == Keyboard.KEY_P) {
             c.playPath(shift ? new java.io.File(mc.mcDataDir, "path-" + System.currentTimeMillis() + ".mp4").getAbsolutePath() : null);
