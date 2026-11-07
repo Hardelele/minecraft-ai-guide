@@ -205,11 +205,11 @@ class Day2 {
                 }
                 final boolean last = k == entering.size();
                 TaskBoard.Card entry = c.board.post("inside entry", () -> new ShelterEntry(sp, site, b.size, gate, door, insideDoor, entering, doorState, last))
-                        .pin(a).prio(3).at(sp[0], sp[1], sp[2]).work(60, 1, 0, 0, 0, 0);
+                        .pin(a).prio(3).work(60, 1, 0, 0, 0, 0);
                 if (previousEntry != null) entry.after(previousEntry); // one body at a time through the one-block door
                 previousEntry = entry;
                 c.board.post("inside at night", () -> new ShelterWait(site, b.size, door, doorState, look, wait))
-                        .pin(a).after(entry).prio(2).at(sp[0], sp[1], sp[2]).lease(max);
+                        .pin(a).after(entry).prio(2).lease(max);
             }
             if (outsideGuard != null) {   // the planned guard remains outside while the others shelter
                 final double[] post = b.doorAt == null ? new double[] { s[0] + 2.5, y0, s[2] - 1.5 }
