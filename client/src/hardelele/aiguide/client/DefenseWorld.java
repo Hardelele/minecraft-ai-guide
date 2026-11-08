@@ -1,13 +1,10 @@
 package hardelele.aiguide.client;
 
-import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLiving;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.monster.EntityCreeper;
@@ -17,8 +14,8 @@ import net.minecraft.world.WorldServer;
 
 /**
  * The defence in the world (the server thread's): the crew's planned walls (a ring round the base, lines) and the moat,
- * their holes now; the waves now (the waves mode's WaveInfo, its class by reflection, else the enemies the crew's eyes
- * see near the base); once a second the events the minds of defence hear (a wave began or is over, the wall breached, a
+ * their holes now; the waves now (a source given to Defense.connect, else the waves mode's run: Waves.state(),
+ * enemies(), its listener; else the enemies the crew's eyes see near the base); once a second the events the minds of defence hear (a wave began or is over, the wall breached, a
  * creeper at the wall, an ally hurt), the long fights interrupted by the ones that call for a decision; the defence's
  * part of the state a mind is shown (WAVE, PERIMETER, ALLIES). The plans live as long as the game runs (not saved).
  */
@@ -51,8 +48,9 @@ final class DefenseWorld {
 
     /** the base's middle (its anchor cell), or null when the crew has none */
     static int[] centre(Crew c, WorldServer w) {
-        if (c == null || c.base == null) return null;
-        return Ground.anchor(c, w);
+        if (c != null && c.base != null) return Ground.anchor(c, w);
+        int[] b = Waves.base();   // no crew base: where the waves go for (the player's place when the run began)
+        return b == null ? null : new int[] { b[0], Crew.ground(w, b[0], b[1], b[2]) < 0 ? b[1] : Crew.ground(w, b[0], b[1], b[2]), b[2] };
     }
 
     static List<Defense.Perimeter> walls() {
@@ -62,8 +60,9 @@ final class DefenseWorld {
         return l;
     }
 
+    /** a cell a block can be put in (air, plants): open in the wall (water is not, as the body cannot fill it) */
     static boolean open(WorldServer w, int x, int y, int z) {
-        return Crew.soft(w, x, y, z) || Ground.liquid(w, x, y, z) && w.getBlock(x, y, z).getMaterial() != net.minecraft.block.material.Material.lava;
+        return Crew.soft(w, x, y, z);
     }
 
     /** the planned cells of every wall that are open now (never built, or broken since) */
@@ -100,10 +99,7 @@ final class DefenseWorld {
 
     // ---- the waves -------------------------------------------------------------------------------------------
 
-    static Method[] reflected;   // the waves mode's static state(), next(), enemies(), if its class is there
-    static boolean looked;
-
-    /** the waves now: the mode's own (Defense.source), its class's static methods, else the enemies the crew sees */
+    /** the waves now: the source given to Defense.connect, else the waves mode (Waves) when a run is on, else the enemies the crew sees */
     static Defense.Wave wave(Crew c, WorldServer w) {
         Defense.WaveInfo src = Defense.source;
         if (src != null) {
@@ -111,60 +107,51 @@ final class DefenseWorld {
                 Defense.Wave v = src.now();
                 if (v != null) { v.known = true; return v; }
             } catch (Exception e) {
-                Events.log("defense: the waves mode did not answer: " + e);
+                Events.log("defense: the waves source did not answer: " + e);
             }
         }
-        Defense.Wave v = reflect();
-        return v != null ? v : seen(c, w);
+        if (Waves.active() || Waves.state().phase == WaveCycle.Phase.OVER) return fromWaves(Waves.state(), Waves.enemies());
+        return seen(c, w);
     }
 
-    /**
-     * The waves mode's class (hardelele.aiguide.client.Waves) by its static methods, as its branch names them: state()
-     * (a wave on when its words say so: active, running, wave, fight, attack; not pause, idle, wait, off), next() (seconds
-     * to the next wave), enemies() (a collection of entities, or their number). An assumption until the mode's own
-     * document says otherwise: Defense.connect(WaveInfo) is the way that needs no guessing.
-     */
-    static Defense.Wave reflect() {
-        if (!looked) {
-            looked = true;
-            for (String n : new String[] { "hardelele.aiguide.client.Waves", "hardelele.aiguide.Waves" })
-                try {
-                    Class<?> k = Class.forName(n);
-                    Method[] m = new Method[3];
-                    String[] names = { "state", "next", "enemies" };
-                    for (int i = 0; i < 3; i++) for (Method x : k.getDeclaredMethods()) if (x.getName().equals(names[i]) && x.getParameterTypes().length == 0) { x.setAccessible(true); m[i] = x; }
-                    if (m[0] != null) { reflected = m; Events.log("defense: the waves mode found (" + n + ")"); break; }
-                } catch (Throwable ignored) {
-                    // not this one
-                }
-        }
-        if (reflected == null) return null;
-        try {
-            Defense.Wave v = new Defense.Wave();
-            v.known = true;
-            Object st = reflected[0].invoke(null);
-            String s = String.valueOf(st).toLowerCase(java.util.Locale.ROOT);
-            v.on = st instanceof Boolean ? (Boolean) st : s.matches(".*(active|running|wave|fight|attack|on\\b).*") && !s.matches(".*(pause|idle|wait|off|none|over).*");
-            java.util.regex.Matcher num = java.util.regex.Pattern.compile("(\\d+)").matcher(s);
-            if (num.find()) v.number = Integer.parseInt(num.group(1));
-            if (reflected[1] != null) {
-                Object n = reflected[1].invoke(null);
-                if (n instanceof Number) v.nextIn = ((Number) n).intValue();
+    /** the waves mode's run as the defence reads it (its view and its mobs alive; the server's thread) */
+    static Defense.Wave fromWaves(WaveCycle.View s, List<EntityLiving> mobs) {
+        Defense.Wave v = new Defense.Wave();
+        v.known = true;
+        v.phase = s.phase.name().toLowerCase(java.util.Locale.ROOT);
+        v.paused = s.paused;
+        v.on = s.phase == WaveCycle.Phase.WAVE && !s.paused;
+        v.number = s.wave;
+        v.cleared = s.cleared;
+        v.enemies = s.enemies();
+        v.nextIn = s.secondsToNext > 0 ? s.secondsToNext : -1;
+        if (mobs != null) for (EntityLiving m : mobs) v.where.add(new double[] { m.posX, m.posY, m.posZ });
+        return v;
+    }
+
+    /** the waves mode tells its run's turns at once (start, end, timeout, pause, resume, over): the minds of defence hear them */
+    static boolean listening, lastFromWaves;
+
+    static void listen() {
+        if (listening) return;
+        listening = true;
+        Waves.listen(new Waves.Listener() {
+            public void wave(String what, WaveCycle.View v) {
+                if (!AgentMind.anyDefense()) return;
+                Crew c = Crew.instance;
+                if (what.equals("start")) {
+                    atWaveStart.clear();
+                    if (c != null) for (Agent a : c.agents) atWaveStart.put(a.who(), Defense.of(a.who()).copy());
+                    AgentMind.tell("wave " + v.wave + " began: " + v.enemies() + " enemies", true);
+                } else if (what.equals("end") || what.equals("timeout")) {
+                    StringBuilder b = new StringBuilder();
+                    if (c != null) for (Agent a : c.agents) b.append(b.length() > 0 ? "; " : "").append(a.who()).append(": ").append(Defense.of(a.who()).since(atWaveStart.get(a.who())).line());
+                    Events.log("defense: wave " + v.wave + " " + (what.equals("end") ? "cleared" : "timed out") + " [" + b + "]");
+                    AgentMind.tell("wave " + v.wave + (what.equals("end") ? " is beaten" : " ran out of time") + (v.secondsToNext > 0 ? ", the next in " + v.secondsToNext + " s" : ""), false);
+                } else if (what.equals("over")) AgentMind.tell("the waves are over (" + v.cleared + " cleared" + (v.reason != null ? ", " + v.reason : "") + ")", true);
+                else AgentMind.tell("the waves " + (what.equals("pause") ? "are paused" : "go on"), false);
             }
-            if (reflected[2] != null) {
-                Object e = reflected[2].invoke(null);
-                if (e instanceof Number) v.enemies = ((Number) e).intValue();
-                else if (e instanceof Collection) {
-                    for (Object o : (Collection<?>) e)
-                        if (o instanceof Entity && !((Entity) o).isDead) { Entity x = (Entity) o; v.enemies++; v.where.add(new double[] { x.posX, x.posY, x.posZ }); }
-                }
-            }
-            return v;
-        } catch (Throwable t) {
-            reflected = null;
-            Events.log("defense: the waves mode could not be read (" + t + "): the crew's own eyes from now on");
-            return null;
-        }
+        });
     }
 
     /** no waves mode: the hostile mobs the agents see now (their senses), a wave being on while there are any */
@@ -203,13 +190,16 @@ final class DefenseWorld {
         now = v;
         int[] o = centre(c, w);
         double cx = o != null ? o[0] + 0.5 : 0, cz = o != null ? o[2] + 0.5 : 0;
-        if (v.on && !lastOn) {
+        listen();
+        boolean told = Defense.source == null && (Waves.active() || lastFromWaves);   // the mode's own turns come by its listener
+        lastFromWaves = Defense.source == null && Waves.active();
+        if (!told && v.on && !lastOn) {
             atWaveStart.clear();
             for (Agent a : c.agents) atWaveStart.put(a.who(), Defense.of(a.who()).copy());
             String e = "a wave began: " + v.line(cx, cz);
             Events.log("waves: " + e);
             AgentMind.tell(e, true);
-        } else if (!v.on && lastOn) {
+        } else if (!told && !v.on && lastOn) {
             StringBuilder b = new StringBuilder();
             for (Agent a : c.agents) {
                 Defense.Tally d = Defense.of(a.who()).since(atWaveStart.get(a.who()));

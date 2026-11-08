@@ -52,6 +52,7 @@ final class UiLayout {
         boolean wideInventory;    // the card shows the whole bag
         boolean journalOpen;
         boolean mind;             // agents that choose their own steps (crew/agent-mind): the goal button
+        boolean waves;            // a run of the waves mode on (or just over): its strip under the top bar (WavesHud)
 
         Input(int w, int h) { this.w = w; this.h = h; }
     }
@@ -93,6 +94,7 @@ final class UiLayout {
         t.add(new Tool(UiIcon.SCENARIOS, 1, 3));
         t.add(new Tool(UiIcon.ADD_AGENT, 1, 4));
         if (in.player) t.add(new Tool(UiIcon.SELF_AI, 1, 5));
+        t.add(new Tool(UiIcon.WAVES, 1, 7));
         t.add(new Tool(UiIcon.RATE, 2, 6));
         t.add(new Tool(UiIcon.SHARE, 2, 8));
         t.add(new Tool(UiIcon.SETTINGS, 2, 9));
@@ -186,6 +188,7 @@ final class UiLayout {
         // (it is the same messages, kept): on a short screen with a card, one line of them
         boolean shortScreen = h < 300;
         int areaW = w - 2 * M, sw = Math.min(TOAST_MAX, areaW), sx = M + (areaW - sw) / 2, y = top;
+        if (in.waves) { l.add("waves", sx, y, sw, 16); y += 16 + 4; }
         if (in.stall) { l.add("state", sx, y, sw, 16); y += 16 + 4; }
         if (in.journalOpen) {
             int lines = shortScreen ? 3 : 5;
@@ -193,6 +196,7 @@ final class UiLayout {
             y += lines * LINE + 8 + 4;
         } else {
             int maxToasts = !shortScreen ? 3 : in.selected == 0 ? 2 : in.stall ? 0 : 1;
+            if (in.waves && shortScreen) maxToasts = Math.max(0, maxToasts - 1);   // (the strip took a line's room)
             for (int i = 0; i < Math.min(in.toasts, maxToasts); i++) { l.add("toast." + i, sx, y, sw, TOAST_H); y += TOAST_H + 2; }
             if (in.toasts > maxToasts && maxToasts > 0) { l.add("toast.more", sx, y, sw, 8); y += 10; }
         }

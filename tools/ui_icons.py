@@ -341,13 +341,26 @@ def mouse(p, left):
         p.r(9, 2, 11, 6, GOLD)
 
 
+def i_waves(p):
+    zombie, zombie_d = (96, 168, 82), (58, 112, 50)
+    p.r(2, 2, 13, 13, zombie)
+    p.r(2, 2, 13, 4, zombie_d)
+    p.r(2, 5, 2, 7, zombie_d)
+    p.r(13, 5, 13, 7, zombie_d)
+    p.r(4, 7, 6, 8, DARK)
+    p.r(9, 7, 11, 8, DARK)
+    p.r(7, 9, 8, 10, zombie_d)
+    p.r(5, 11, 10, 12, RED_D)
+
+
 ICONS = [("move", i_move), ("chop", i_chop), ("mine", i_mine), ("attack", i_attack), ("guard", i_guard), ("deposit", i_deposit),
          ("craft", i_craft), ("smelt", i_smelt), ("place", i_place), ("stop", i_stop), ("plan", i_plan), ("hold", i_hold),
          ("add_agent", i_add_agent), ("dismiss", i_dismiss), ("self_ai", i_self_ai), ("goal", i_goal), ("think", i_think),
          ("places", i_places), ("rate", i_rate), ("share", i_share), ("fog", i_fog), ("caves", i_caves), ("layer", i_layer),
          ("scenarios", i_scenarios), ("chat", i_chat), ("settings", i_settings), ("more", i_more), ("gather", i_gather),
          ("inventory", i_inventory), ("warning", i_warning), ("offline", i_offline), ("log", i_log), ("help", i_help),
-         ("close", i_close), ("health", i_health), ("lmb", lambda p: mouse(p, True)), ("rmb", lambda p: mouse(p, False))]
+         ("close", i_close), ("health", i_health), ("lmb", lambda p: mouse(p, True)), ("rmb", lambda p: mouse(p, False)),
+         ("waves", i_waves)]
 
 
 def outline(icon, width):

@@ -1059,6 +1059,7 @@ public class Commander {
             String[] goal = Mind.command(q);
             if (goal != null && CrewKeys.instance != null) { AgentMind.fromWindow(player, goal); return; }
             if (CrewCommand.parse(q) != null && CrewKeys.instance != null) { CrewKeys.instance.command(q, agentsPicked()); return; }
+            if (WaveCommand.parse(q) != null && CrewKeys.instance != null) { CrewKeys.instance.waves(q); return; }
             StringBuilder who = new StringBuilder();
             for (int s : selected) who.append(who.length() > 0 ? "," : "").append(s);
             final String ask = (who.length() > 0 ? "[из режима командира; выбраны агенты " + who + (selected.contains(1) && selfUnit() ? " (1 — это сам игрок, его персонаж ведёт автопилот: только идти, рубить, копать, сложить в сундук, бить, ставить)" : "")
@@ -1286,6 +1287,11 @@ public class Commander {
             if (what.equals("add")) { addAgent(false); return; }
             if (what.equals("dismiss")) { dismissPicked(); return; }
             if (what.equals("self")) { if (CrewKeys.instance != null) CrewKeys.instance.toggleSelf(); return; }
+            if (what.equals("waves")) {   // no run: one at the normal level; a run: a pause or on; Shift: stopped
+                if (CrewKeys.instance == null || !CrewKeys.instance.crewHere()) { toast(CrewKeys.tr("nocrew"), true); return; }
+                Waves.button(shiftDown());
+                return;
+            }
             if (selected.isEmpty()) return;   // the rest are the picked ones' orders
             if (what.equals("move")) arm(Armed.MOVE);
             else if (what.equals("chop")) arm(Armed.CHOP);
@@ -1645,9 +1651,11 @@ public class Commander {
             GL11.glPushMatrix();
             GL11.glTranslatef(ox, 0, 0);
             topBar(fresh);
+            WavesHud.strip(kit, lay.get("waves"), Waves.view);
             messages(fresh);
             if (lay.get("card") != null) card(fresh);
             bottomBar(fresh);
+            WavesHud.overlays(kit, bw, height);
             if (openMenu != null) {
                 UiLayout.Box m = lay.get(openMenu.equals("toggles") ? "toggle.more" : openMenu + ".more");
                 if (m == null && openMenu.equals("card")) m = lay.get("card.order.more");
@@ -1793,6 +1801,7 @@ public class Commander {
             in.wideInventory = fullInv;
             in.journalOpen = journalOpen;
             in.mind = true;
+            in.waves = WavesHud.shown(Waves.view);
             return in;
         }
 
@@ -1927,7 +1936,7 @@ public class Commander {
                 }
                 String key = ic == UiIcon.ADD_AGENT && CrewKeys.add != null ? Keyboard.getKeyName(CrewKeys.add.getKeyCode())
                         : ic == UiIcon.SELF_AI && CrewKeys.self != null ? Keyboard.getKeyName(CrewKeys.self.getKeyCode()) : null;
-                boolean on = ic == UiIcon.SELF_AI && PlayerAgent.givenToAI || ic == UiIcon.HELP && helpOpen;
+                boolean on = ic == UiIcon.SELF_AI && PlayerAgent.givenToAI || ic == UiIcon.HELP && helpOpen || ic == UiIcon.WAVES && Waves.view.active();
                 kit.button(pillOf(ic), ic, b.x, b.y, on, true, key, null);
             }
             UiLayout.Box c = lay.get("chat");

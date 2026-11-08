@@ -27,7 +27,7 @@ import net.minecraftforge.common.util.FakePlayerFactory;
  * -Daiguide.bench=goals:<a|b|c> (the goals straight); -Daiguide.bench.out=<report.json>. It picks a place with trees
  * near the spawn (the spawn's chunks stay loaded on a server without players), asks, waits for the crew to finish the
  * day (or the time limit), writes the report (the ledger's numbers, the phases with their times, how much of the base
- * stands) and stops the server.
+ * stands) and stops the server. -Daiguide.bench=waves[:LEVEL]: the waves mode instead (wavesTick).
  */
 public class Bench {
     static final String FALLBACK = "summon 4\nshelter auto\ntools stone\ntorches 16\ngift stone_pickaxe, torch 8\ngather";
@@ -52,6 +52,7 @@ public class Bench {
             public void log(String line) {
                 PrintWriter p = instance.events;
                 if (p != null) p.println("[" + (instance.ticks / 20) + " s] " + line);
+                if ((line.contains("failed") || line.contains("Exception")) && instance.failures.size() < 100) instance.failures.add("[" + (instance.ticks / 20) + " s] " + line);
             }
         };
         Events.log("bench: " + instance.mode);
@@ -65,6 +66,7 @@ public class Bench {
         WorldServer w = s.worldServers[0];
         w.resetUpdateEntityTick();   // a server with no player stops moving entities after a minute: the fake player counts as one
         try {
+            if (waves()) { wavesTick(s, w); return; }
             if (state == 0 && ticks > 60) {
                 setUp(w);
                 state = 1;
@@ -109,9 +111,165 @@ public class Bench {
         } catch (Exception ex) {
             Events.log("bench failed: " + ex);
             state = 3;
-            report(w, false);
+            if (waves()) {
+                if (Waves.cycle.active()) Waves.stop("bench_failed");
+                wavesReport(w);
+            } else report(w, false);
             s.initiateShutdown();
         }
+    }
+
+    // ---- -Daiguide.bench=waves[:LEVEL]: the waves mode without a window ---------------------------------------------
+
+    final List<String> failures = java.util.Collections.synchronizedList(new java.util.ArrayList<String>());   // the events' lines that say something failed
+    int wavesAt = -1;
+
+    boolean waves() { return mode.equals("waves") || mode.startsWith("waves:"); }
+
+    String wavesLevel() {
+        String lv = WavePlan.level(mode.startsWith("waves:") ? mode.substring(6) : null);
+        return lv == null ? "normal" : lv;
+    }
+
+    /** the run's time (game minutes, from its start): -Daiguide.bench.minutes, 20 by default for the waves */
+    int wavesLimit() { return Integer.getInteger("aiguide.bench.minutes", 20) * 60 * 20; }
+
+    /**
+     * The crew is called at the base (the crew's world's, else the world's spawn), armed (-Daiguide.bench.waves.kit,
+     * stone_sword by default), each agent ordered to guard its post around the base at every wave (the commander's
+     * guard order; -Daiguide.bench.waves.guard=none leaves the fighting to the crew's own guard and minds; =mind gives them all a
+     * goal of defence, -Daiguide.bench.waves.goal, so their minds build, take posts and fight by DefenseSkills), the run
+     * starts; it ends when a wave overruns the base or the time is up; the report: the run's (WaveReport) with the
+     * bench's fields.
+     */
+    void wavesTick(MinecraftServer s, WorldServer w) throws Exception {
+        if (state == 0 && ticks > 60) {
+            setUpWaves(w);
+            state = 20;
+            askedAt = ticks;
+        } else if (state == 20) {
+            Crew c = Crew.instance;
+            boolean summoned = Crew.finished.contains("summon") || c != null && c.agents.size() >= crewSize() && c.current == null && c.phases.isEmpty();
+            if (!summoned && ticks - askedAt < 20 * 60) return;
+            arm(w);
+            String guard = System.getProperty("aiguide.bench.waves.guard", "posts");
+            if (guard.equals("mind")) {   // each agent's own mind defends the base (a goal of defence: its skills, its posts, its fights; the model of the server mod's config)
+                Events.log("bench: " + AgentMind.setNow(c, name, "all", System.getProperty("aiguide.bench.waves.goal", "защищай базу от волн"), null, false));
+            } else if (!"none".equals(guard)) {
+                Waves.listen(new Waves.Listener() {
+                    public void wave(String what, WaveCycle.View v) { if (what.equals("start") && v.phase == WaveCycle.Phase.WAVE) posts(); }
+                });
+                posts();
+            }
+            Events.log("bench: waves " + wavesLevel() + ": " + Waves.start(wavesLevel(), "bench") + ", " + (c == null ? 0 : c.agents.size()) + " agents");
+            wavesAt = ticks;
+            state = 21;
+        } else if (state == 21) {
+            Crew c = Crew.instance;
+            if (ticks % 600 == 0) {
+                Events.log("bench: " + Waves.brief());
+                if (c != null) for (Agent a : c.agents) {
+                    TaskBoard.Card k = c.board.leased.get(a);
+                    Events.log("bench: " + a.getCustomNameTag() + " at " + (int) Math.floor(a.posX) + " " + (int) Math.floor(a.posY) + " " + (int) Math.floor(a.posZ)
+                            + ", health " + Math.round(a.getHealth()) + ", " + a.activity() + (k != null ? " on " + k : ""));
+                }
+            }
+            boolean over = Waves.cycle.phase == WaveCycle.Phase.OVER, late = ticks - wavesAt > wavesLimit();
+            if (!over && !late) return;
+            if (!over) Waves.stop("bench_time");
+            state = 3;
+            wavesReport(w);
+            s.initiateShutdown();
+        }
+    }
+
+    int crewSize() { return Math.max(1, Math.min(Crew.maxAgents(), Integer.getInteger("aiguide.bench.waves.crew", 4))); }
+
+    void setUpWaves(WorldServer w) throws Exception {
+        Crew.ensure();
+        Crew c = Crew.instance;
+        if (!c.loaded) c.load(w);
+        c.adopt(w);
+        ChunkCoordinates sp = w.getSpawnPoint();
+        int[] b = c.base != null ? c.base.clone() : null;
+        if (b == null) {
+            int top = w.getTopSolidOrLiquidBlock(sp.posX, sp.posZ), y = Crew.ground(w, sp.posX, top, sp.posZ);
+            b = new int[] { sp.posX, y < 0 ? top : y, sp.posZ };
+        }
+        at = b;
+        w.setSpawnLocation(b[0], b[1], b[2]);   // its chunks stay loaded without a player
+        for (int cx = (b[0] >> 4) - 4; cx <= (b[0] >> 4) + 4; cx++)
+            for (int cz = (b[2] >> 4) - 4; cz <= (b[2] >> 4) + 4; cz++) w.theChunkProviderServer.loadChunk(cx, cz);
+        FakePlayer p = FakePlayerFactory.get(w, new GameProfile(UUID.nameUUIDFromBytes("aiguide-bench-player".getBytes()), name));
+        p.setLocationAndAngles(b[0] + 0.5, b[1], b[2] + 0.5, 0, 0);
+        Crew.standIn = p;   // (not one of the world's players: the mobs go for the crew, not for a stand-in nothing can hurt)
+        w.getGameRules().setOrCreateGameRule("doDaylightCycle", "false");
+        w.setWorldTime(Long.getLong("aiguide.bench.waves.time", 14000L));   // night by default: the sun does not decide the run
+        int have = 0;
+        for (Agent a : c.agents) if (!a.isDead) have++;
+        if (have < crewSize()) Events.log("bench: " + Crew.order(name, "summon", crewSize(), Origin.SCRIPT));
+        Events.log("bench: waves at " + b[0] + " " + b[1] + " " + b[2] + ", world difficulty " + w.difficultySetting + ", time " + w.getWorldTime());
+    }
+
+    /** each agent gets the kit (items by name, in its bag, the first held) */
+    void arm(WorldServer w) {
+        String kit = System.getProperty("aiguide.bench.waves.kit", "stone_sword");
+        Crew c = Crew.instance;
+        if (c == null || kit.trim().isEmpty() || kit.equals("none")) return;
+        for (Agent a : c.agents) {
+            for (String n : kit.split(",")) {
+                Object it = net.minecraft.item.Item.itemRegistry.getObject(n.contains(":") ? n.trim() : "minecraft:" + n.trim());
+                if (!(it instanceof net.minecraft.item.Item)) { Events.log("bench: no item " + n); continue; }
+                net.minecraft.item.ItemStack st = new net.minecraft.item.ItemStack((net.minecraft.item.Item) it);
+                a.bag.add(st);
+                if (a.getHeldItem() == null) a.setCurrentItemOrArmor(0, st);
+            }
+        }
+        Events.log("bench: the crew armed with " + kit);
+    }
+
+    /** every agent to its post around the base (the commander's guard order: it stands there and fights what comes) */
+    void posts() {
+        Crew c = Crew.instance;
+        WorldServer w = MinecraftServer.getServer().worldServers[0];
+        int[] b = Waves.base() != null ? Waves.base() : at;
+        if (c == null || b == null) return;
+        int n = c.agents.size(), i = 0;
+        for (Agent a : c.agents) {
+            if (a.isDead) continue;
+            double ang = 2 * Math.PI * i++ / Math.max(1, n);
+            int x = b[0] + (int) Math.round(Math.cos(ang) * 4), z = b[2] + (int) Math.round(Math.sin(ang) * 4);
+            int y = Crew.ground(w, x, b[1], z);
+            if (y < 0) { x = b[0]; z = b[2]; y = b[1]; }
+            Orders.give(new int[] { a.skin() }, Orders.Kind.GUARD, x, y - 1, z, -1, false);
+        }
+        Events.log("bench: " + i + " agents to their posts");
+    }
+
+    /** the run's report with the bench's fields: -Daiguide.bench.out (bench-report.json) */
+    void wavesReport(WorldServer w) {
+        JsonObject o = Waves.lastReport != null ? Waves.lastReport : new JsonObject();
+        JsonObject b = new JsonObject();
+        b.addProperty("mode", mode);
+        b.addProperty("seed", String.valueOf(w.getSeed()));
+        if (at != null) b.addProperty("base_at", at[0] + " " + at[1] + " " + at[2]);
+        b.addProperty("seconds", ticks / 20);
+        b.addProperty("minutes_limit", wavesLimit() / 1200);
+        b.addProperty("crew", crewSize());
+        b.addProperty("guard", System.getProperty("aiguide.bench.waves.guard", "posts"));
+        b.addProperty("kit", System.getProperty("aiguide.bench.waves.kit", "stone_sword"));
+        b.addProperty("world_difficulty", String.valueOf(w.difficultySetting));
+        JsonArray f = new JsonArray();
+        synchronized (failures) { for (String l : failures) f.add(new com.google.gson.JsonPrimitive(l)); }
+        b.add("failures", f);
+        o.add("bench", b);
+        try {
+            java.nio.file.Files.write(out.toPath(), new GsonBuilder().setPrettyPrinting().create().toJson(o).getBytes("UTF-8"));
+        } catch (Exception e) {
+            System.out.println("[Bench] report not written: " + e);
+        }
+        Events.log("bench: waves report " + out + ": " + o.get("waves_cleared") + " waves cleared, " + o.get("kills_total") + " kills, " + o.get("losses_total") + " lost, ended by " + o.get("ended_by"));
+        if (events != null) events.close();
     }
 
     /** a place with trees around near the spawn; the fake player stands there and asks */

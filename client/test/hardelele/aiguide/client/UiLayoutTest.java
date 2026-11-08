@@ -32,6 +32,9 @@ public final class UiLayoutTest {
         i = in(w, h); i.units = 5; i.selected = 1; i.journalOpen = true; i.toasts = 2; i.stall = true; m.put("journal", i);
         i = in(w, h); i.units = 6; i.selected = 1; i.mind = true; i.wideInventory = true; i.underground = true; i.chatOpen = true;
         i.journalOpen = true; i.stall = true; i.toasts = 3; m.put("everything", i);
+        i = in(w, h); i.units = 5; i.toasts = 2; i.waves = true; m.put("waves", i);
+        i = in(w, h); i.units = 6; i.selected = 1; i.mind = true; i.wideInventory = true; i.underground = true; i.chatOpen = true;
+        i.stall = true; i.toasts = 3; i.waves = true; m.put("waves-everything", i);
         return m;
     }
 
@@ -77,6 +80,8 @@ public final class UiLayoutTest {
             if (l.get("card.head") == null) fail(at + "no card head");
         }
         if (in.stall && l.get("state") == null) fail(at + "the plan's state is not shown");
+        if (in.waves && l.get("waves") == null) fail(at + "the waves' strip is not shown");
+        if (l.get("bar.waves") == null && (l.get("bar.more") == null || !l.get("bar.more").menu.contains(UiIcon.WAVES))) fail(at + "no waves button, not even in the menu");
         // the world seen: between what hangs from the top and what stands on the bottom
         int topEnd = 0, bottomStart = in.h;
         for (UiLayout.Box b : bs) {

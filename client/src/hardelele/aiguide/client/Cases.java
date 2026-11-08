@@ -130,6 +130,13 @@ public final class Cases {
     private static final net.minecraft.item.Item torch = net.minecraft.item.Item.getItemFromBlock(Blocks.torch);
 
     static String name(EntityLivingBase e) {
+        if (e instanceof WaveMobs.Mob) {   // a wave's mob is the game's own kind under a class of its own: named as that kind (the reflexes and the fight know it so)
+            if (e instanceof net.minecraft.entity.monster.EntityCreeper) return "Creeper";
+            if (e instanceof net.minecraft.entity.monster.EntitySkeleton) return "Skeleton";
+            if (e instanceof net.minecraft.entity.monster.EntitySpider) return "Spider";
+            if (e instanceof net.minecraft.entity.monster.EntityZombie) return "Zombie";
+            if (e instanceof net.minecraft.entity.monster.EntityWitch) return "Witch";
+        }
         String n = EntityList.getEntityString(e);
         return n != null ? n : e.getClass().getSimpleName();
     }

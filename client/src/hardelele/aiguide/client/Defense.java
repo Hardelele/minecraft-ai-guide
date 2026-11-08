@@ -62,13 +62,18 @@ final class Defense {
         int number;                // the wave's number (0: none yet)
         int enemies;               // enemies alive now
         int nextIn = -1;           // seconds to the next wave (-1: not known)
+        String phase = "";         // the waves mode's: prep, wave, break, over ("" not told)
+        boolean paused;            // the run is paused (the player's)
+        int cleared;               // waves beaten in this run
         final List<double[]> where = new ArrayList<double[]>();   // enemies' x y z, as told or seen
 
         /** "on: wave 3, 5 enemies (north 3, east 2), nearest 9 m from the base" */
         String line(double cx, double cz) {
             StringBuilder b = new StringBuilder();
+            String rest = paused ? "paused" : phase.equals("prep") ? "preparation" : phase.equals("over") ? "over (the run has ended)" : known ? "pause" : "none seen";
             if (on) b.append("on: ").append(number > 0 ? "wave " + number + ", " : "").append(enemies).append(enemies == 1 ? " enemy" : " enemies");
-            else b.append(known ? "pause" : "none seen").append(number > 0 ? " after wave " + number : "").append(enemies > 0 ? ", " + enemies + " enemies still about" : "");
+            else b.append(rest).append(number > 0 ? " after wave " + number : "").append(enemies > 0 ? ", " + enemies + " enemies still about" : "");
+            if (cleared > 0) b.append(", ").append(cleared).append(" cleared");
             if (!where.isEmpty()) {
                 b.append(" (").append(sides(where, cx, cz)).append(')');
                 double near = 1e9;
