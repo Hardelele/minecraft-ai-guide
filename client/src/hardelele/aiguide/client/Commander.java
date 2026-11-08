@@ -169,6 +169,33 @@ public class Commander {
     int markColor;
     // the person's ratings: a recognised place's menu, what the agents did (L: the places' layer, J: the agents' episodes)
     final FeedbackUi fb = new FeedbackUi();
+    // every message to the person (the guide's answers, the crew's notes, a rating saved): one queue, its journal
+    final UiToasts toasts = new UiToasts();
+    // the guide in this game: its mod's classes are here (a singleplayer world with AI Guide); false after it failed to answer
+    static volatile Boolean guideThere;
+
+    /** the guide can be asked from here (a singleplayer world with the guide's mod, and it has not failed) */
+    boolean guideHere() {
+        if (guideThere == null) {
+            try { Class.forName("hardelele.aiguide.Tools"); guideThere = Boolean.TRUE; } catch (Throwable t) { guideThere = Boolean.FALSE; }
+        }
+        return guideThere && mc.isSingleplayer();
+    }
+
+    /** a button's id: what the panel's hits call it (a director's script clicks it by that: "vmoveto pill stop 20") */
+    static String pillOf(UiIcon i) {
+        switch (i) {
+            case PLAN: return "ai";
+            case ADD_AGENT: return "add";
+            case SELF_AI: return "self";
+            case SCENARIOS: return "routines";
+            case RATE: return "actions";
+            case CLOSE: return "chatclose";
+            case LOG: return "journal";
+            case INVENTORY: return "inv";
+            default: return i.name().toLowerCase(java.util.Locale.ROOT);
+        }
+    }
 
     static void start() {
         instance = new Commander();
@@ -756,6 +783,7 @@ public class Commander {
     Object hover;
     List<int[]> hoverBlocks = new ArrayList<int[]>();
     String hoverLabel = "";
+    String hoverL, hoverR;   // what the left and the right button would do (drawn by the mouse's icons)
 
     /** the blocks of a vein: the same block touching, up to 32 */
     List<int[]> vein(int x, int y, int z) {
@@ -820,10 +848,13 @@ public class Commander {
         if (lmb != null) l.append("ЛКМ: ").append(lmb);
         if (rmb != null && !selected.isEmpty() && armed == Armed.NONE) l.append(l.length() > 0 ? "   " : "").append("ПКМ: ").append(rmb);
         hoverLabel = l.toString();
+        hoverL = lmb;
+        hoverR = rmb != null && !selected.isEmpty() && armed == Armed.NONE ? rmb : null;
         PlaceLayer.hovered = null;
         if (PlaceLayer.shown() && armed == Armed.NONE && !(hover instanceof Agent) && curIn()) {   // a place under the mouse: the left click rates it
             PlaceView p = PlaceLayer.hit(ray(curX(), curY()));
             PlaceLayer.hovered = p;
+            if (p != null) hoverL = hoverR = null;
             if (p != null) hoverLabel = FeedbackUi.t("place.hover", FeedbackUi.className(p.cls()), Math.round(p.confidence() * 100));
         }
     }
@@ -952,8 +983,6 @@ public class Commander {
     static final String[][] CRAFTS = { { "wooden_pickaxe", "1" }, { "stone_pickaxe", "1" }, { "iron_pickaxe", "1" }, { "iron_sword", "1" }, { "torch", "8" },
             { "furnace", "1" }, { "crafting_table", "1" }, { "chest", "1" } };
     static final String[][] SMELTS = { { "iron_ore", "1" }, { "iron_ore", "4" }, { "iron_ore", "8" } };
-    // the command card: name, key (shown), id
-    static final String[][] CARD = { { "Идти", "M" }, { "Рубить", "B" }, { "Атака", "X" }, { "Охрана", "G" }, { "Стоп", "H" }, { "ИИ", "R" }, { "Крафт", "" }, { "Плавка", "" }, { "Чертёж", "" } };
 
     static final class RoutineLayout {
         static boolean compact(int h) { return h < 294; }
@@ -969,17 +998,13 @@ public class Commander {
         boolean dragging, selecting;
         long lastClick;
         int lastClickSkin = -1;
-        int menu;   // (kept for the narrow-band arithmetic: no menus now)
         static final int ROW = 22;
         net.minecraft.client.gui.GuiTextField chat;
-        int sentAt = -1;          // the guide's history size when the player last wrote
         String sentText = "";
         boolean fullInv;          // the one picked agent's whole inventory, large
         // what the panel drew last frame, for clicks: kind, agent, slot, box
         final List<Object[]> hits = new ArrayList<Object[]>();
         Object[] dragFrom;        // an item picked up from an agent's inventory (to hand it to another)
-        float anim;               // the panel's ease in
-        float shownH = 40;        // the panel's height as shown (eased toward the wanted one)
         final int[] chatAt = new int[3];
         boolean routinesOpen, routineEditing, routineDeleting, draftDeposit;
         String routineSelected, routineOriginal, routineError;
@@ -992,17 +1017,6 @@ public class Commander {
         int bandX1() { return safeAspect <= 0 ? width : Math.min(width, (int) (width + height * safeAspect) / 2); }
         int bandW() { return Math.min(bandX1() - bandX0(), 420); }
         int px0() { return (bandX0() + bandX1()) / 2 - bandW() / 2; }
-
-        /** the panel's height for what is shown now */
-        int panelH() {
-            int h = 8 + 16 + (reply() != null ? 22 : 0) + 6 + 18;   // chat, reply, scenario manager
-            if (selected.contains(1) && selfUnit()) h += 18;   // the player's own line
-            List<Agent> sel = selAgents();
-            if (sel.size() == 1) h += 14 + (fullInv ? 4 * 20 : 2 * 20) + 18;
-            else if (sel.size() > 1) h += sel.size() * 20 + 18;
-            else h += selected.contains(1) && selfUnit() ? 18 : 12;
-            return h;
-        }
 
         List<Agent> selAgents() {
             List<Agent> out = new ArrayList<Agent>();
@@ -1027,48 +1041,58 @@ public class Commander {
             chat.setFocused(focus);
         }
 
-        volatile String localReply;   // an answer made here (a known routine run), not by the guide
+        final UiKit kit = new UiKit();
+        UiLayout lay;              // this frame's layout (UiLayout), in the band
+        int ox;                    // the band's left edge (a phone's 9:16 band for a video; else 0)
+        String openMenu;           // a "..." menu open: "bar", "card", "toggles"
+        String popup;              // the craft's or the smelt's list open
+        boolean helpOpen, journalOpen;
+        int guideSeen = GuiGuide.history.size();   // the guide's words up to here are shown already
+        boolean waitingGuide;      // a question is out, no answer yet
+        long sentAtMs;
 
-        /** the guide's last answer since the player wrote (shown for half a minute) */
-        String reply() {
-            if (localReply != null) return localReply;
-            if (sentAt < 0) return null;
-            String r = null;
-            for (int i = sentAt; i < GuiGuide.history.size(); i++) { String[] h = GuiGuide.history.get(i); if (h[0] == null) r = h[1]; }
-            return r;
-        }
-
-        /** to the guide: what was written, and who it is for (the picked agents, or the whole crew) */
+        /** to the guide: what was written, and who it is for (the picked agents, or the whole crew); a goal (/цель) or a crew command (/агент) is done here */
         void send(final String text) {
             if (text.trim().isEmpty()) return;
+            final String q = text.trim();
+            final String player = mc.thePlayer == null ? "Player" : mc.thePlayer.getCommandSenderName();
+            String[] goal = Mind.command(q);
+            if (goal != null && CrewKeys.instance != null) { AgentMind.fromWindow(player, goal); return; }
+            if (CrewCommand.parse(q) != null && CrewKeys.instance != null) { CrewKeys.instance.command(q, agentsPicked()); return; }
             StringBuilder who = new StringBuilder();
             for (int s : selected) who.append(who.length() > 0 ? "," : "").append(s);
             final String ask = (who.length() > 0 ? "[из режима командира; выбраны агенты " + who + (selected.contains(1) && selfUnit() ? " (1 — это сам игрок, его персонаж ведёт автопилот: только идти, рубить, копать, сложить в сундук, бить, ставить)" : "")
                     + " — приказы только им: crew_order с agents=" + who + " (действие в месте) или цель crew_goal с agents=" + who + " (чего добиться: агент сам решает шаги)] "
                     : "[из режима командира; вся команда] ")
                     + "[ответ игроку — коротко и его словами: без названий инструментов, параметров и координат; остановить — кнопка «Стоп» на панели или клавиша H; вернуть под план — «По плану» или R] "
-                    + text.trim();
-            sentAt = GuiGuide.history.size();
-            localReply = null;
-            sentText = text.trim();
-            final String player = mc.thePlayer == null ? "Player" : mc.thePlayer.getCommandSenderName();
+                    + q;
+            sentText = q;
+            sentAtMs = System.currentTimeMillis();
+            guideSeen = GuiGuide.history.size();
+            final boolean here = guideHere();
+            waitingGuide = here;
             final int[] who2 = picked();
             new Thread(new Runnable() {
                 public void run() {
                     try {
-                        Routines.Routine known = RoutineIntent.quickRun(text) ? Routines.match(text.trim(), 0.80) : null;
+                        Routines.Routine known = RoutineIntent.quickRun(text) ? Routines.match(q, 0.80) : null;
                         if (known != null) {
                             int[] ws = who2;
                             if (ws.length == 0) { List<Integer> all = new ArrayList<Integer>(); for (Agent g : clientAgents()) all.add(g.skin()); ws = new int[all.size()]; for (int i = 0; i < ws.length; i++) ws[i] = all.get(i); }
                             Routines.run(ws, known.name);
-                            localReply = "Рутина «" + known.name + "»: " + known.description;
+                            waitingGuide = false;
+                            toast("Рутина «" + known.name + "»: " + known.description, false);
                             return;
                         }
+                        if (!here) { toast(UiKit.ui("state.noguide"), true); return; }
                         java.lang.reflect.Method m = Class.forName("hardelele.aiguide.Tools").getDeclaredMethod("crewAsk", String.class, String.class);
                         m.setAccessible(true);
-                        Director.log("commander: asked the guide: " + text.trim() + " -> " + m.invoke(null, player, ask));
-                    } catch (Exception ex) {
+                        Director.log("commander: asked the guide: " + q + " -> " + m.invoke(null, player, ask));
+                    } catch (Throwable ex) {
                         Director.log("commander: the guide is not there: " + ex);
+                        guideThere = Boolean.FALSE;
+                        waitingGuide = false;
+                        toast(UiKit.ui("state.noguide"), true);
                     }
                 }
             }, "commander-ask").start();
@@ -1092,7 +1116,7 @@ public class Commander {
             return k != null ? doingRu(k.kind) : a.commanded ? "ждёт приказа" : "по плану";
         }
 
-        /** the armed-order keys stay (M go, B chop, X attack, G guard), with no buttons for them */
+        /** an armed order (M go, B chop, X attack, G guard, or its button on the card): the next left click is it */
         void arm(Armed a) { armed = armed == a ? Armed.NONE : a; blueprint = -1; }
 
         @Override
@@ -1106,6 +1130,8 @@ public class Commander {
                 else chat.textboxKeyTyped(c, code);
                 return;
             }
+            if (code == Keyboard.KEY_F1) { helpOpen = !helpOpen; return; }
+            if (code == Keyboard.KEY_ESCAPE && (helpOpen || openMenu != null || popup != null)) { helpOpen = false; openMenu = null; popup = null; return; }
             if (code == Keyboard.KEY_RETURN || code == Keyboard.KEY_T) { chat.setFocused(true); return; }
             if (code == Keyboard.KEY_ESCAPE && (blueprint >= 0 || armed != Armed.NONE || painting || fullInv)) { blueprint = -1; armed = Armed.NONE; painting = false; fullInv = false; return; }
             if (code == Keyboard.KEY_ESCAPE || code == key.getKeyCode()) { mc.displayGuiScreen(null); return; }
@@ -1181,26 +1207,26 @@ public class Commander {
             input(Mouse.getEventButton(), Mouse.getEventButtonState(), Mouse.getEventX(), Mouse.getEventY(), Mouse.getEventDWheel(), Mouse.getEventDX());
         }
 
-        boolean onPanel(int my, int scale) {
-            int guiY = (mc.displayHeight - my) / scale;
-            return guiY >= height - panelH() - 4;
-        }
-
-        /** a click on the panel: the chat field, an item, a pill; an item dragged onto another agent: handed over */
+        /** a click on the interface: a button, a menu's line, a chip, the chat, an item; an item dragged onto another agent: handed over */
         boolean panelInput(int b, boolean state, int gx, int gy) {
             Object[] h = null;
             for (Object[] x : hits) if (gx >= (Integer) x[3] && gx < (Integer) x[5] && gy >= (Integer) x[4] && gy < (Integer) x[6]) h = x;
             if (state) {
                 chat.setFocused(h != null && h[0].equals("chat"));
-                if (h == null) return true;
-                if (h[0].equals("view") && b == 0) { select((Integer) h[1], false); fullInv = false; return true; }
-                if (h[0].equals("item") && b == 0) { dragFrom = h; return true; }
-                if (h[0].equals("pill")) pill((String) h[1]);
+                if (helpOpen) { helpOpen = false; return true; }
+                String id = h == null ? "" : String.valueOf(h[1]);
+                if (!(h != null && (h[0].equals("menu") || id.startsWith("more:")))) openMenu = null;
+                if (!(h != null && (id.equals("craft") || id.equals("smelt") || popup != null && id.startsWith(popup + ":")))) popup = null;
+                if (h == null || b != 0) return true;
+                if (h[0].equals("view")) { select((Integer) h[1], shiftDown()); fullInv = false; return true; }
+                if (h[0].equals("item")) { dragFrom = h; return true; }
+                if (h[0].equals("menu")) { openMenu = null; pill(pillOf(UiIcon.valueOf(id.toUpperCase(java.util.Locale.ROOT)))); return true; }
+                if (h[0].equals("pill")) pill(id);
                 return true;
             }
             if (b == 0 && dragFrom != null) {   // let go: on the same agent: work with it; on another agent: hand it over
                 int from = (Integer) dragFrom[1], slot = (Integer) dragFrom[2];
-                if (h != null && (h[0].equals("item") || h[0].equals("agent")) && (Integer) h[1] != from) {
+                if (h != null && (h[0].equals("item") || h[0].equals("agent") || h[0].equals("view")) && (Integer) h[1] != from) {
                     Agent a = Cam.serverAgent(from);
                     if (a != null && slot < a.bag.size()) {
                         ItemStack s = a.bag.get(slot);
@@ -1216,25 +1242,71 @@ public class Commander {
 
         void togglePlaces() {
             PlaceLayer.on = !PlaceLayer.on;
-            if (PlaceLayer.on && PlaceSource.current == null) fb.say(FeedbackUi.t("places.nosource"));
-            else if (PlaceLayer.on && PlaceSource.places().isEmpty()) fb.say(FeedbackUi.t("places.none"));
+            if (PlaceLayer.on && PlaceSource.current == null) toast(FeedbackUi.t("places.nosource"), true);
+            else if (PlaceLayer.on && PlaceSource.places().isEmpty()) toast(FeedbackUi.t("places.none"), false);
         }
 
+        /** a button by its id (the same for a click, a menu's line and a director's script) */
         void pill(String what) {
+            if (what.startsWith("more:")) { String m = what.substring(5); openMenu = m.equals(openMenu) ? null : m; return; }
+            if (what.startsWith("craft:") || what.startsWith("smelt:")) {   // a line of the craft's or the smelt's list
+                String[] p = what.split(":");
+                popup = null;
+                if (selected.isEmpty()) return;
+                boolean craft = p[0].equals("craft");
+                Orders.give(craft ? picked() : new int[] { picked()[0] }, craft ? Orders.Kind.CRAFT : Orders.Kind.SMELT, 0, 0, 0, -1, false, p[1], Integer.parseInt(p[2]));
+                return;
+            }
             if (what.equals("routines")) { openRoutines(); return; }
             if (what.equals("places")) { togglePlaces(); return; }
             if (what.equals("actions")) { fb.openActions(); return; }
             if (what.equals("share")) { GuiShare.open(null, true); return; }
+            if (what.equals("chat")) { chat.setFocused(true); return; }
+            if (what.equals("chatclose")) { chat.setFocused(false); return; }
+            if (what.equals("help")) { helpOpen = !helpOpen; return; }
+            if (what.equals("helpclose")) { helpOpen = false; return; }
+            if (what.equals("journal") || what.equals("journal-more")) { journalOpen = !journalOpen; return; }
+            if (what.equals("settings")) { mc.displayGuiScreen(new net.minecraft.client.gui.GuiControls(null, mc.gameSettings)); return; }
+            if (what.equals("fog")) { Fog.on = !Fog.on; return; }
+            if (what.equals("caves")) { typed(Keyboard.KEY_C); return; }
+            if (what.equals("layer")) { typed(Keyboard.KEY_U); return; }
+            if (what.equals("stall-ai")) {   // the plan stands: everyone back under the plan
+                List<Integer> all = units();
+                int[] who = new int[all.size()];
+                for (int i = 0; i < who.length; i++) who[i] = all.get(i);
+                if (who.length > 0) Orders.give(who, Orders.Kind.RELEASE, 0, 0, 0, -1, false);
+                return;
+            }
             if (what.startsWith("routine:")) {
-                if (selected.isEmpty()) { localReply = "Сначала выбери агентов для сценария."; return; }
+                if (selected.isEmpty()) { toast("Сначала выбери агентов для сценария.", true); return; }
                 Routines.run(picked(), what.substring(8));
-                localReply = "Сценарий «" + what.substring(8) + "» запущен для выбранных агентов.";
+                toast("Сценарий «" + what.substring(8) + "» запущен для выбранных агентов.", false);
                 return;
             }
             if (what.equals("add")) { addAgent(false); return; }
             if (what.equals("dismiss")) { dismissPicked(); return; }
             if (what.equals("self")) { if (CrewKeys.instance != null) CrewKeys.instance.toggleSelf(); return; }
-            if (what.equals("inv")) fullInv = !fullInv;
+            if (selected.isEmpty()) return;   // the rest are the picked ones' orders
+            if (what.equals("move")) arm(Armed.MOVE);
+            else if (what.equals("chop")) arm(Armed.CHOP);
+            else if (what.equals("attack")) arm(Armed.ATTACK);
+            else if (what.equals("guard")) arm(Armed.GUARD);
+            else if (what.equals("mine")) toast(UiKit.ui("hint.mine"), false);
+            else if (what.equals("place")) toast(UiKit.ui("hint.place", materialName()), false);
+            else if (what.equals("deposit")) {
+                int[] ch = Crew.instance == null ? null : Crew.instance.chest;
+                if (ch == null) { toast(UiKit.ui("card.nochest"), true); return; }
+                Orders.give(picked(), Orders.Kind.DEPOSIT, ch[0], ch[1], ch[2], -1, shiftDown());
+                mark(ch[0] + 0.5, ch[1] + 1, ch[2] + 0.5, 0x40A0FF);
+            }
+            else if (what.equals("craft") || what.equals("smelt")) popup = what.equals(popup) ? null : what;
+            else if (what.equals("goal")) {   // the chat with "/цель N ": the person writes what to reach
+                StringBuilder n = new StringBuilder();
+                for (int s : agentsPicked()) n.append(s).append(' ');
+                chat.setFocused(true);
+                chat.setText("/цель " + n);
+            }
+            else if (what.equals("inv")) fullInv = !fullInv;
             else if (what.equals("stop")) Orders.give(picked(), Orders.Kind.STOP, 0, 0, 0, -1, false);
             else if (what.equals("ai")) Orders.give(picked(), Orders.Kind.RELEASE, 0, 0, 0, -1, false);
             else if (what.equals("gather")) {   // the others to the first picked
@@ -1354,12 +1426,7 @@ public class Commander {
         }
 
         int routineButton(String title, String id, int x, int y, int mx, int my) {
-            int w = fontRendererObj.getStringWidth(title) + 12;
-            boolean over = mx >= x && mx < x + w && my >= y && my < y + 15;
-            Ui.round(x, y, x + w, y + 15, 5, over ? 0xFF4B6172 : 0xEE2B3B48);
-            fontRendererObj.drawStringWithShadow(title, x + 6, y + 3, 0xFFFFFF);
-            routineHits.add(new Object[] { id, x, y, x + w, y + 15 });
-            return x + w + 5;
+            return UiKit.textButton(fontRendererObj, routineHits, title, id, x, y, mx, my, false, 5);
         }
 
         void routineDialog(int mx, int my) {
@@ -1368,7 +1435,8 @@ public class Commander {
             Ui.round(x, y, x + w, y + routineH(), 8, 0xF015222E);
             routineHits.clear();
             fontRendererObj.drawStringWithShadow(routineEditing ? (routineOriginal == null ? "Новый сценарий" : "Правка сценария") : "Сценарии мира", x + 12, y + 10, 0xFFFFFF);
-            routineButton("Закрыть", "close", x + w - 67, y + 7, mx, my);
+            kit.begin(fontRendererObj, width, height, mx, my);
+            kit.closeCross(routineHits, "close", x + w, y);
             if (routineEditing) {
                 String[] labels = { "Имя", "Описание", "Цель", "До запаса", "Радиус" };
                 for (int i = 0; i < labels.length; i++) {
@@ -1429,7 +1497,7 @@ public class Commander {
                 return;
             }
             if (routinesOpen) { routineInput(b, state, gx, gy, wheel); return; }
-            if (b >= 0 && downButton < 0 && gx >= px0() && gx < px0() + bandW() && (onPanel(my, scale) || gy < 65)) { panelInput(b, state, gx, gy); return; }
+            if (b >= 0 && downButton < 0 && overUi(gx, gy)) { panelInput(b, state, gx, gy); return; }
             // The floating cave geometry is for observation. Vanilla block picking still sees
             // the uncut world, so world clicks must not turn its apparent faces into orders.
             if (CaveView.active() && b >= 0) {
@@ -1545,35 +1613,12 @@ public class Commander {
         @Override
         public void drawScreen(int gmx, int gmy, float pt) {
             drawn++;
-            if (CaveView.active()) hoverLabel = null; else hoverNow();
+            if (CaveView.active()) { hoverLabel = null; hoverL = hoverR = null; } else hoverNow();
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             if (vOn) { gmx = curX() / scale; gmy = (mc.displayHeight - curY()) / scale; }
-            for (Agent a : clientAgents()) {   // names and health over every agent
-                if (Slice.active() && a.boundingBox.minY >= Slice.level) continue;
-                if (CaveView.active() && !CaveView.containsEntity(a)) continue;
-                float[] s = toScreen(a.posX, a.boundingBox.maxY + 0.45, a.posZ);
-                if (s == null) continue;
-                int x = (int) (s[0] / scale), y = (int) ((mc.displayHeight - s[1]) / scale);
-                boolean sel = selected.contains(a.skin());
-                float hp = a.getHealth() / a.getMaxHealth();
-                Ui.round(x - 14, y - 1, x + 14, y + 4, 2, 0xA0000000);
-                Gui.drawRect(x - 12, y + 1, x - 12 + (int) (24 * hp), y + 2, hp > 0.5 ? 0xFF50E070 : hp > 0.25 ? 0xFFE0C040 : 0xFFE04040);
-                String n = a.getCustomNameTag();
-                int nw = fontRendererObj.getStringWidth(n);
-                Ui.round(x - nw / 2 - 4, y - 12, x + nw / 2 + 4, y - 1, 4, sel ? 0xB0204828 : 0x90101418);   // a chip under the name
-                fontRendererObj.drawStringWithShadow(n, x - nw / 2, y - 10, sel ? 0x90FF90 : 0xFFFFFF);
-            }
-            if (selfUnit() && !(Slice.active() && mc.thePlayer.boundingBox.minY >= Slice.level) && !CaveView.active()) {   // the player himself: number 1
-                float[] s = toScreen(mc.thePlayer.posX, mc.thePlayer.boundingBox.maxY + 0.45, mc.thePlayer.posZ);
-                if (s != null) {
-                    int x = (int) (s[0] / scale), y = (int) ((mc.displayHeight - s[1]) / scale);
-                    boolean sel = selected.contains(1);
-                    String n = selfLabel() + (PlayerAgent.givenToAI ? " · " + CrewKeys.tr("self.ai.short") : "");
-                    int nw = fontRendererObj.getStringWidth(n);
-                    Ui.round(x - nw / 2 - 4, y - 12, x + nw / 2 + 4, y - 1, 4, sel ? 0xB0204828 : 0x90183048);
-                    fontRendererObj.drawStringWithShadow(n, x - nw / 2, y - 10, sel ? 0x90FF90 : 0xBFE0FF);
-                }
-            }
+            pollGuide();
+            kit.begin(fontRendererObj, width, height, gmx, gmy);
+            worldLabels(scale);
             PlaceLayer.labels(Commander.this, fontRendererObj, scale, mc.displayHeight);
             if (CaveView.active() && !CaveView.focused() && CaveView.liveExit()) {
                 CaveGeometry.Result g = CaveView.volume;
@@ -1582,7 +1627,7 @@ public class Commander {
                     String text = "ОТКРЫТЫЙ ВЕРХ Y" + g.exitY;
                     int tw = fontRendererObj.getStringWidth(text);
                     int x = Math.max(2, Math.min(width - tw - 8, (int) (s[0] / scale) - tw / 2));
-                    int y = Math.max(63, Math.min(height - 42, (int) ((mc.displayHeight - s[1]) / scale) + 4));
+                    int y = Math.max(32, Math.min(height - 42, (int) ((mc.displayHeight - s[1]) / scale) + 4));
                     Ui.round(x - 4, y - 3, x + tw + 4, y + 10, 4, 0xD0203020);
                     fontRendererObj.drawStringWithShadow(text, x, y, 0xBFFF8B);
                 }
@@ -1591,48 +1636,470 @@ public class Commander {
                 int x0 = downX / scale, y0 = (mc.displayHeight - downY) / scale, x1 = curX() / scale, y1 = (mc.displayHeight - curY()) / scale;
                 Ui.round(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1), 2, 0x3050FF70);
             }
-            String label = CaveView.active() ? null : painting ? (paintBuild ? "Строить: " + shownName(buildMaterial()) : "Копать") + " ×" + strokeCells(paintFrom, paintTo, paintBuild).size() + (depth > 1 ? "  глубина " + depth : "")
-                    : armed != Armed.NONE ? "ЛКМ: " + (armed == Armed.MOVE ? "идти сюда" : armed == Armed.CHOP ? "рубить" : armed == Armed.ATTACK ? "атаковать" : "охранять") : hoverLabel;
-            int top = height - panelH() - 4;
-            if (label != null && !label.isEmpty() && gmy < top && dragFrom == null) {
-                int lw = fontRendererObj.getStringWidth(label);
-                int lx = Math.max(bandX0() + 2, Math.min(bandX1() - lw - 6, gmx + 14)), ly = gmy + 14;   // clear of the arrow
-                Ui.round(lx - 4, ly - 3, lx + lw + 4, ly + 10, 3, 0xC0101418);
-                fontRendererObj.drawStringWithShadow(label, lx, ly, 0xFFFFE8);
+            // the interface: laid out by UiLayout in the band (the whole width, or a phone's 9:16 band for a video)
+            ox = bandX0();
+            int bw = bandX1() - bandX0();
+            List<Object[]> fresh = new ArrayList<Object[]>();
+            kit.begin(fontRendererObj, bw, height, gmx - ox, gmy);
+            lay = UiLayout.commander(layoutInput(bw));
+            GL11.glPushMatrix();
+            GL11.glTranslatef(ox, 0, 0);
+            topBar(fresh);
+            messages(fresh);
+            if (lay.get("card") != null) card(fresh);
+            bottomBar(fresh);
+            if (openMenu != null) {
+                UiLayout.Box m = lay.get(openMenu.equals("toggles") ? "toggle.more" : openMenu + ".more");
+                if (m == null && openMenu.equals("card")) m = lay.get("card.order.more");
+                if (m != null && !m.menu.isEmpty()) kit.menu(m); else openMenu = null;
             }
-            if (CaveView.active() && !routinesOpen) cavePanel();
-            else {
-                GL11.glPushMatrix();
-                GL11.glTranslatef(0, (1 - anim) * 30, 0);   // the panel comes up when the commander opens
-                panel(gmx, gmy);
-                GL11.glPopMatrix();
+            if (popup != null) popup();
+            if (helpOpen) help();
+            GL11.glPopMatrix();
+            for (Object[] o : kit.hits) {   // the kit's buttons as the panel's hits: {"pill", id, ...} (the director clicks them by id)
+                String id = (String) o[0];
+                boolean menu = id.startsWith("menu:");
+                fresh.add(new Object[] { menu ? "menu" : "pill", menu ? id.substring(5) : id, 0, (Integer) o[1] + ox, (Integer) o[2], (Integer) o[3] + ox, (Integer) o[4] });
             }
-            viewBar(gmx, gmy);
+            hits.clear();
+            hits.addAll(fresh);
+            cursorLabel(gmx, gmy);
             if (routinesOpen) routineDialog(gmx, gmy);
             if (fb.open()) fb.draw(fontRendererObj, px0(), bandW(), height, gmx, gmy);
-            fb.drawNote(fontRendererObj, px0(), bandW(), height);
             if (dragFrom != null) {   // the item being carried with the mouse
                 Agent a = Cam.serverAgent((Integer) dragFrom[1]);
                 int slot = (Integer) dragFrom[2];
                 if (a != null && slot < a.bag.size()) icon(a.bag.get(slot), gmx - 8, gmy - 8);
             }
+            GL11.glPushMatrix();
+            GL11.glTranslatef(ox, 0, 0);
+            if (!routinesOpen && !fb.open()) kit.flush();
+            GL11.glPopMatrix();
             if (vOn || Recorder.instance != null) cursor(gmx, gmy, scale);
         }
 
-        /** Read-only cave overview: leave the lower passages visible without hiding the Commander identity. */
-        void cavePanel() {
-            hits.clear();
-            int x0 = px0() + 4, x1 = x0 + bandW() - 8, y = height - 31;
-            Ui.round(x0, y, x1, height - 4, 7, 0xD0101820);
-            Agent a = selected.size() == 1 ? renderedAgent(selected.iterator().next()) : null;
-            ItemStack hand = a == null ? null : a.getHeldItem();
-            int textW = x1 - x0 - (hand == null ? 12 : 35);
-            String title = a == null ? "Пещера · агент не загружен"
-                    : a.getCustomNameTag() + " Y" + MathHelper.floor_double(a.boundingBox.minY) + " · " + doing(a);
-            fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(title, textW), x0 + 6, y + 4, 0xD8F3E2);
-            String detail = "C/U: закрыть · " + (hand == null ? "рука пуста" : "в руке: " + hand.getDisplayName());
-            fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(detail, textW), x0 + 6, y + 15, 0xA9CADB);
-            if (hand != null) icon(hand, x1 - 22, y + 5);
+        // ---- what the interface shows: the crew, the plan's state, the guide --------------------------------
+
+        /** the crew's numbers in the order of their chips: the player (1) first, then the agents */
+        List<Integer> units() {
+            List<Integer> out = new ArrayList<Integer>();
+            if (selfUnit()) out.add(1);
+            List<Agent> roster = new ArrayList<Agent>();
+            if (Crew.instance != null) for (Agent a : Crew.instance.agents) if (!a.isDead) roster.add(a);
+            if (roster.isEmpty()) roster = clientAgents();
+            for (Agent a : roster) if (!out.contains(a.skin())) out.add(a.skin());
+            return out;
+        }
+
+        boolean me(int n) { return n == 1 && selfUnit(); }
+
+        float health(int n) {
+            EntityLivingBase e = me(n) ? mc.thePlayer : Cam.serverAgent(n);
+            if (e == null) e = renderedAgent(n);
+            return e == null || e.getMaxHealth() <= 0 ? 0 : e.getHealth() / e.getMaxHealth();
+        }
+
+        String name(int n) {
+            if (me(n)) return selfLabel();
+            Agent a = Cam.serverAgent(n);
+            return a == null ? "Агент " + n : a.getCustomNameTag();
+        }
+
+        String doingOf(int n) {
+            if (me(n)) return selfDoing();
+            Agent a = Cam.serverAgent(n);
+            return a == null ? "" : doing(a);
+        }
+
+        boolean thinking(int n) {
+            String[] s = AgentMind.shown.get(n);
+            return s != null && "thinking".equals(s[0]);
+        }
+
+        String goal(int n) {
+            String[] s = AgentMind.shown.get(n);
+            return s == null || s.length < 2 ? null : s[1];
+        }
+
+        /** what it does, as an icon: its mind's step, else its board card's kind */
+        UiIcon doingIcon(int n) {
+            String[] s = AgentMind.shown.get(n);
+            if (s != null) {
+                String k = s[0];
+                if (k.equals("thinking")) return UiIcon.THINK;
+                if (k.equals("chop_tree")) return UiIcon.CHOP;
+                if (k.equals("mine")) return UiIcon.MINE;
+                if (k.equals("craft")) return UiIcon.CRAFT;
+                if (k.equals("smelt")) return UiIcon.SMELT;
+                if (k.equals("place")) return UiIcon.PLACE;
+                if (k.equals("put") || k.equals("take")) return UiIcon.DEPOSIT;
+                if (k.equals("go_to") || k.equals("look_around")) return UiIcon.MOVE;
+                if (k.equals("give")) return UiIcon.GATHER;
+                return UiIcon.GOAL;
+            }
+            if (me(n)) return PlayerAgent.givenToAI ? UiIcon.SELF_AI : null;
+            Agent a = Cam.serverAgent(n);
+            TaskBoard.Card c = a == null || Crew.instance == null ? null : Crew.instance.board.leased.get(a);
+            if (c == null) return a != null && a.commanded ? UiIcon.STOP : UiIcon.PLAN;
+            if (c.kind.startsWith("routine ")) return UiIcon.SCENARIOS;
+            String k = c.kind.replace("order ", "").replace("paint ", "");
+            if (k.equals("chop")) return UiIcon.CHOP;
+            if (k.equals("mine") || k.equals("ore") || k.equals("dig")) return UiIcon.MINE;
+            if (k.equals("attack")) return UiIcon.ATTACK;
+            if (k.equals("guard")) return UiIcon.GUARD;
+            if (k.equals("deposit") || k.equals("carry")) return UiIcon.DEPOSIT;
+            if (k.equals("craft") || k.equals("make")) return UiIcon.CRAFT;
+            if (k.equals("smelt")) return UiIcon.SMELT;
+            if (k.equals("place") || k.equals("build") || k.equals("light") || k.equals("torches")) return UiIcon.PLACE;
+            if (k.equals("give")) return UiIcon.GATHER;
+            return UiIcon.MOVE;
+        }
+
+        /** a picked agent too far to be drawn (the camera cannot go to it) */
+        boolean away(int n) {
+            if (me(n)) return false;
+            Agent a = renderedAgent(n);
+            if (a == null) return true;
+            double lim = Math.max(8, mc.gameSettings.renderDistanceChunks * 16 - 28);
+            return Math.hypot(a.posX - mc.thePlayer.posX, a.posZ - mc.thePlayer.posZ) > lim;
+        }
+
+        boolean stalled() { return Crew.instance != null && Crew.instance.board.stalled; }
+
+        /** the view's mode in a line (the cave's map, the one layer), or null */
+        String mode() {
+            if (CaveView.active()) {
+                CaveGeometry.Result g = CaveView.volume;
+                boolean exitLive = CaveView.liveExit();
+                String top = exitLive ? " · открытый верх ↑" : g != null && g.exit ? " · верх не подтверждён" : " · верх не проверен";
+                return CaveView.holdingLast() ? "ЧАСТЬ: прежняя карта; обновление ждёт"
+                        : g == null || CaveView.scanning() ? "Пещера: обновляю карту…" : g.cells == 0 ? "Пещера: нет доступной полости"
+                        : g.limited() ? "ЧАСТЬ: Y" + g.minLevel + "–" + g.maxLevel + top
+                        : "Полость Y" + g.minLevel + "–" + g.maxLevel + (g.exit ? top : " · верх не найден");
+            }
+            if (Slice.active()) return "Только один слой: Y=" + Slice.level + (Slice.follow ? " · за агентом" : " · вручную");
+            return null;
+        }
+
+        UiLayout.Input layoutInput(int w) {
+            UiLayout.Input in = new UiLayout.Input(w, height);
+            in.units = units().size();
+            in.selected = selected.size();
+            in.player = selfUnit();
+            in.chatOpen = chat.isFocused();
+            in.toasts = toasts.live(System.currentTimeMillis());
+            in.stall = stalled() || mode() != null;
+            in.underground = viewedSkin > 0 && (viewedUnderground || CaveView.on || Slice.on);
+            in.wideInventory = fullInv;
+            in.journalOpen = journalOpen;
+            in.mind = true;
+            return in;
+        }
+
+        /** a message to the person: the commander's one place for them (the journal keeps it) */
+        void toast(String text, boolean warn) {
+            toasts.add(text, warn ? UiToasts.Kind.WARN : UiToasts.Kind.INFO, warn ? UiIcon.WARNING : UiIcon.LOG, System.currentTimeMillis());
+        }
+
+        /** the guide's new words since the last frame: a message each (30 s, then the journal) */
+        void pollGuide() {
+            int n = GuiGuide.history.size();
+            if (guideSeen > n) guideSeen = n;
+            for (int i = guideSeen; i < n; i++) {
+                String[] h = GuiGuide.history.get(i);
+                if (h[0] != null) continue;
+                toasts.add(h[1].replace('\n', ' ').replaceAll("§.", ""), UiToasts.Kind.GUIDE, UiIcon.CHAT, System.currentTimeMillis());
+                waitingGuide = false;
+            }
+            guideSeen = n;
+            if (waitingGuide && System.currentTimeMillis() - sentAtMs > 120000) waitingGuide = false;
+        }
+
+        // ---- the pieces --------------------------------------------------------------------------------
+
+        /** over each unit: its number and its health; its mind thinking: a small cloud over the number */
+        void worldLabels(int scale) {
+            List<EntityLivingBase> units = new ArrayList<EntityLivingBase>(clientAgents());
+            if (selfUnit() && !CaveView.active()) units.add(mc.thePlayer);
+            for (EntityLivingBase a : units) {
+                if (Slice.active() && a.boundingBox.minY >= Slice.level) continue;
+                if (CaveView.active() && !CaveView.containsEntity(a)) continue;
+                float[] s = toScreen(a.posX, a.boundingBox.maxY + 0.45, a.posZ);
+                if (s == null) continue;
+                int n = unitOf(a);
+                int x = (int) (s[0] / scale), y = (int) ((mc.displayHeight - s[1]) / scale);
+                boolean sel = selected.contains(n);
+                String t = String.valueOf(n);
+                int tw = fontRendererObj.getStringWidth(t);
+                Ui.round(x - tw / 2 - 4, y - 12, x + tw / 2 + 5, y - 1, 3, me(n) ? 0xE02F6FA8 : sel ? 0xE0204828 : 0xC0181C24);
+                fontRendererObj.drawStringWithShadow(t, x - tw / 2 + 1, y - 10, sel ? 0x90FF90 : 0xFFFFFF);
+                float hp = a.getMaxHealth() <= 0 ? 0 : a.getHealth() / a.getMaxHealth();
+                Ui.round(x - 8, y, x + 8, y + 2, 0, 0xFF202020);
+                Ui.round(x - 8, y, x - 8 + Math.round(16 * hp), y + 2, 0, hp > 0.5 ? 0xFF50E070 : hp > 0.25 ? 0xFFE0C040 : 0xFFE04040);
+                if (thinking(n)) kit.icon(UiIcon.THINK, x - 4, y - 22, 8, 0.6f + 0.4f * (float) Math.abs(Math.sin(System.currentTimeMillis() / 300.0)));
+            }
+        }
+
+        void topBar(List<Object[]> fresh) {
+            UiLayout.Box tg = lay.get("toggles");
+            if (tg != null) kit.panel(tg);
+            List<Integer> units = units();
+            List<UiLayout.Box> chips = lay.starting("roster.");
+            for (UiLayout.Box b : chips) {
+                if (b.id.equals("roster.more")) {
+                    kit.panel(b.x, b.y, b.w, b.h, UiKit.PANEL);
+                    String t = "+" + (units.size() - chips.size() + 1);
+                    fontRendererObj.drawStringWithShadow(t, b.x + b.w / 2 - fontRendererObj.getStringWidth(t) / 2, b.y + 6, UiKit.TEXT);
+                    continue;
+                }
+                int i = Integer.parseInt(b.id.substring(7)) - 1;
+                if (i >= units.size()) continue;
+                int n = units.get(i);
+                boolean away = away(n);
+                kit.chip(b, "chip:" + n, n, health(n), doingIcon(n), selected.contains(n), me(n), away);
+                kit.hits.remove(kit.hits.size() - 1);   // (a chip is a "view" hit, not a pill)
+                fresh.add(new Object[] { "view", n, -1, b.x + ox, b.y, b.x1() + ox, b.y1() });
+                if (kit.over(b.x, b.y, b.w, b.h)) kit.tip(name(n) + " · " + (away ? UiKit.ui("state.away") : doingOf(n)), null, b.x, b.y, b.w, b.h);
+            }
+            for (UiLayout.Box b : lay.starting("toggle.")) {
+                String name = b.id.substring(7);
+                if (name.equals("more")) { kit.button("more:toggles", UiIcon.MORE, b.x, b.y, "toggles".equals(openMenu), true, null, null); continue; }
+                UiIcon ic = UiIcon.valueOf(name.toUpperCase(java.util.Locale.ROOT));
+                boolean on = ic == UiIcon.FOG ? Fog.on : ic == UiIcon.PLACES ? PlaceLayer.on : ic == UiIcon.CAVES ? CaveView.on : ic == UiIcon.LAYER ? Slice.on : ic == UiIcon.LOG && journalOpen;
+                String why = ic == UiIcon.PLACES && placesMissing() ? UiKit.ui("state.noplaces") : null;
+                kit.button(pillOf(ic), ic, b.x, b.y, on, why == null, null, why);
+            }
+        }
+
+        boolean placesMissing() { return PlaceSource.current == null || PlaceSource.places().isEmpty(); }
+
+        void messages(List<Object[]> fresh) {
+            UiLayout.Box st = lay.get("state");
+            if (st != null) {
+                if (stalled()) kit.state(st, UiIcon.WARNING, UiKit.ui("state.stall"), "stall-ai", UiIcon.PLAN, true);
+                else if (mode() != null) kit.state(st, CaveView.active() ? UiIcon.CAVES : UiIcon.LAYER, mode(), null, null, false);
+            }
+            long now = System.currentTimeMillis();
+            List<UiLayout.Box> boxes = lay.starting("toast.");
+            List<UiToasts.Toast> shown = toasts.shown(now, boxes.size());
+            int k = 0;
+            for (UiLayout.Box b : boxes) {
+                if (b.id.equals("toast.more")) {
+                    String t = UiKit.ui("toast.more", Math.max(1, toasts.live(now) - shown.size()));
+                    fontRendererObj.drawStringWithShadow(t, b.x + b.w / 2 - fontRendererObj.getStringWidth(t) / 2, b.y, UiKit.TEXT_DIM);
+                    kit.hits.add(new Object[] { "journal-more", b.x, b.y, b.x1(), b.y1() });
+                } else if (k < shown.size()) kit.toast(b, shown.get(k++));
+            }
+            UiLayout.Box j = lay.get("journal");
+            if (j != null) {
+                Ui.round(j.x, j.y, j.x1(), j.y1(), 5, UiKit.PANEL_HI);
+                List<UiToasts.Toast> all;
+                synchronized (toasts) { all = new ArrayList<UiToasts.Toast>(toasts.all); }
+                int rows = (j.h - 8) / 10;
+                if (all.isEmpty()) fontRendererObj.drawString(UiKit.ui("journal.empty"), j.x + 6, j.y + 5, UiKit.TEXT_DIM);
+                for (int i = 0; i < Math.min(rows, all.size()); i++) {
+                    UiToasts.Toast t = all.get(i);
+                    int y = j.y + 4 + i * 10;
+                    if (t.icon != null) kit.icon(t.icon, j.x + 4, y, 8, 1f);
+                    String when = new java.text.SimpleDateFormat("HH:mm").format(new java.util.Date(t.at)) + "  ";
+                    fontRendererObj.drawString(when, j.x + 15, y + 1, UiKit.TEXT_DIM);
+                    int tx = j.x + 15 + fontRendererObj.getStringWidth(when);
+                    fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(t.text, j.x1() - tx - 4), tx, y + 1, t.kind == UiToasts.Kind.WARN ? UiKit.WARN_TEXT : UiKit.TEXT);
+                }
+                fresh.add(new Object[] { "journalBox", 0, 0, j.x + ox, j.y, j.x1() + ox, j.y1() });
+            }
+        }
+
+        void bottomBar(List<Object[]> fresh) {
+            UiLayout.Box bar = lay.get("bar");
+            kit.panel(bar);
+            boolean here = guideHere();
+            for (UiLayout.Box b : lay.starting("bar.")) {
+                String name = b.id.substring(4);
+                if (name.equals("more")) { kit.button("more:bar", UiIcon.MORE, b.x, b.y, "bar".equals(openMenu), true, null, null); continue; }
+                UiIcon ic = UiIcon.valueOf(name.toUpperCase(java.util.Locale.ROOT));
+                if (ic == UiIcon.CHAT) {   // no guide: crossed out, and why; a question out: the cloud
+                    UiIcon shown = !here ? UiIcon.OFFLINE : waitingGuide ? UiIcon.THINK : UiIcon.CHAT;
+                    kit.button("chat", shown, b.x, b.y, false, true, "T", null);
+                    if (!here && kit.over(b.x, b.y, b.w, b.h)) kit.tip(UiKit.ui("state.noguide"), null, b.x, b.y, b.w, b.h);
+                    else if (waitingGuide && kit.over(b.x, b.y, b.w, b.h)) kit.tip(UiKit.ui("guide.waiting"), "T", b.x, b.y, b.w, b.h);
+                    continue;
+                }
+                String key = ic == UiIcon.ADD_AGENT && CrewKeys.add != null ? Keyboard.getKeyName(CrewKeys.add.getKeyCode())
+                        : ic == UiIcon.SELF_AI && CrewKeys.self != null ? Keyboard.getKeyName(CrewKeys.self.getKeyCode()) : null;
+                boolean on = ic == UiIcon.SELF_AI && PlayerAgent.givenToAI || ic == UiIcon.HELP && helpOpen;
+                kit.button(pillOf(ic), ic, b.x, b.y, on, true, key, null);
+            }
+            UiLayout.Box c = lay.get("chat");
+            if (c != null) {
+                Ui.round(c.x, c.y, c.x1(), c.y1(), 7, 0xF0202C3A);
+                kit.icon(here ? UiIcon.CHAT : UiIcon.OFFLINE, c.x + 4, c.y + 4, 8, 1f);
+                if (chatAt[0] != c.x + 15 + ox || chatAt[1] != c.y + 4 || chatAt[2] != c.w - 19) {   // the field made again where it is now (its text kept)
+                    String keep = chat.getText();
+                    boolean focus = chat.isFocused();
+                    chat = new net.minecraft.client.gui.GuiTextField(fontRendererObj, c.x + 15 + ox, c.y + 4, c.w - 19, 12);
+                    chat.setMaxStringLength(240);
+                    chat.setEnableBackgroundDrawing(false);
+                    chat.setText(keep);
+                    chat.setFocused(focus);
+                    chatAt[0] = c.x + 15 + ox; chatAt[1] = c.y + 4; chatAt[2] = c.w - 19;
+                }
+                GL11.glPushMatrix();
+                GL11.glTranslatef(-ox, 0, 0);   // (the field keeps screen coordinates)
+                if (chat.getText().isEmpty()) fontRendererObj.drawString(here ? UiKit.ui("chat.hint") : UiKit.ui("state.noguide"), c.x + 15 + ox, c.y + 4, 0x708090);
+                else chat.drawTextBox();
+                GL11.glPopMatrix();
+                fresh.add(new Object[] { "chat", 0, 0, c.x + ox, c.y, c.x1() + ox, c.y1() });
+            }
+        }
+
+        void card(List<Object[]> fresh) {
+            UiLayout.Box card = lay.get("card"), head = lay.get("card.head");
+            List<Integer> sel = new ArrayList<Integer>(selected);
+            int n = sel.get(0);
+            boolean body = lay.get("card.doing") != null || lay.get("card.rows") != null;
+            if (sel.size() == 1) {
+                Agent a = me(n) ? null : Cam.serverAgent(n);
+                kit.cardHead(card, head, n, name(n), health(n), thinking(n), body ? null : doingIcon(n), body ? null : doingOf(n), a != null ? 16 : 0);
+                if (a != null) {   // the whole bag (I)
+                    int bx = head.x1() - 13, by = head.y - 1;
+                    boolean over = kit.over(bx, by, 13, 13);
+                    Ui.round(bx, by, bx + 13, by + 13, 3, fullInv ? UiKit.BUTTON_ON : over ? UiKit.BUTTON_OVER : UiKit.BUTTON);
+                    kit.icon(UiIcon.INVENTORY, bx + 2, by + 2, 8, 1f);
+                    kit.hits.add(new Object[] { "inv", bx, by, bx + 13, by + 13 });
+                    if (over) kit.tip(net.minecraft.client.resources.I18n.format(UiIcon.INVENTORY.words()), "I", bx, by, 13, 13);
+                }
+                UiLayout.Box d = lay.get("card.doing");
+                if (d != null) {
+                    boolean far = away(n);
+                    kit.line(d, far ? UiIcon.WARNING : doingIcon(n), far ? UiKit.ui("state.away") : UiKit.ui("card.doing", doingOf(n)), far ? UiKit.WARN_TEXT : UiKit.TEXT);
+                }
+                UiLayout.Box g = lay.get("card.goal");
+                if (g != null) {
+                    String goal = goal(n);
+                    kit.line(g, UiIcon.GOAL, goal == null ? UiKit.ui("card.nogoal") : UiKit.ui("card.goal", goal), goal == null ? UiKit.TEXT_DIM : 0xB8E0FF);
+                }
+                UiLayout.Box bag = lay.get("card.bag");
+                if (bag != null && a != null) bag(a, bag, fresh);
+            } else {
+                kit.cardHead(card, head, sel.size(), UiKit.ui("card.picked", sel.size()), 1f, false);
+                UiLayout.Box rows = lay.get("card.rows");
+                if (rows != null) {
+                    int fit = rows.h / UiLayout.ROW;
+                    if (sel.size() > fit) fit = Math.max(1, (rows.h - 8) / UiLayout.ROW);
+                    for (int i = 0; i < Math.min(fit, sel.size()); i++) {
+                        int u = sel.get(i), y = rows.y + i * UiLayout.ROW;
+                        boolean over = kit.over(rows.x - 2, y - 1, rows.w + 4, UiLayout.ROW);
+                        if (over && dragFrom != null) Ui.round(rows.x - 2, y - 1, rows.x1() + 2, y + UiLayout.ROW - 1, 3, 0x6040A0FF);
+                        Ui.round(rows.x, y, rows.x + 9, y + 9, 2, me(u) ? 0xFF2F6FA8 : 0xFF3A4450);
+                        String t = String.valueOf(u);
+                        fontRendererObj.drawStringWithShadow(t, rows.x + 5 - fontRendererObj.getStringWidth(t) / 2, y + 1, UiKit.TEXT);
+                        float hp = health(u);
+                        Ui.round(rows.x + 12, y + 3, rows.x + 36, y + 6, 0, 0xFF202020);
+                        Ui.round(rows.x + 12, y + 3, rows.x + 12 + Math.round(24 * hp), y + 6, 0, hp > 0.5f ? 0xFF50E070 : hp > 0.25f ? 0xFFE0C040 : 0xFFE04040);
+                        UiIcon ic = doingIcon(u);
+                        if (ic != null) kit.icon(ic, rows.x + 40, y, 8, 1f);
+                        String d = (me(u) ? name(u) + ": " : "") + doingOf(u);
+                        fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(d, rows.w - 52), rows.x + 51, y + 1, UiKit.TEXT);
+                        fresh.add(new Object[] { "agent", u, -1, rows.x - 2 + ox, y - 1, rows.x1() + 2 + ox, y + UiLayout.ROW - 1 });
+                    }
+                    if (sel.size() > fit) fontRendererObj.drawString(UiKit.ui("card.more", sel.size() - fit), rows.x + 51, rows.y1() - 8, UiKit.TEXT_DIM);
+                }
+            }
+            for (UiLayout.Box b : lay.starting("card.order.")) {
+                String name = b.id.substring(11);
+                if (name.equals("more")) { kit.button("more:card", UiIcon.MORE, b.x, b.y, "card".equals(openMenu), true, null, null); continue; }
+                UiIcon ic = UiIcon.valueOf(name.toUpperCase(java.util.Locale.ROOT));
+                boolean on = ic == UiIcon.MOVE && armed == Armed.MOVE || ic == UiIcon.CHOP && armed == Armed.CHOP || ic == UiIcon.ATTACK && armed == Armed.ATTACK
+                        || ic == UiIcon.GUARD && armed == Armed.GUARD || ic == UiIcon.CRAFT && "craft".equals(popup) || ic == UiIcon.SMELT && "smelt".equals(popup);
+                String why = ic == UiIcon.DEPOSIT && (Crew.instance == null || Crew.instance.chest == null) ? UiKit.ui("card.nochest") : null;
+                kit.button(pillOf(ic), ic, b.x, b.y, on, why == null, null, why);
+            }
+        }
+
+        /** the one picked agent's bag: a click on an item: it works with it; dragged onto another agent: handed over */
+        void bag(Agent a, UiLayout.Box box, List<Object[]> fresh) {
+            List<ItemStack> bag;
+            try { bag = new ArrayList<ItemStack>(a.bag); } catch (Exception ex) { bag = new ArrayList<ItemStack>(); }
+            int per = Math.max(1, box.w / UiLayout.SLOT), rows = box.h / UiLayout.SLOT;
+            for (int i = 0; i < per * rows; i++) {
+                int cx = box.x + (i % per) * UiLayout.SLOT, cy = box.y + (i / per) * UiLayout.SLOT;
+                ItemStack s = i < bag.size() ? bag.get(i) : null;
+                boolean held = s != null && (s == a.getHeldItem() || s == a.preferred);
+                boolean over = kit.over(cx, cy, 17, 17);
+                Ui.round(cx, cy, cx + 17, cy + 17, 3, held ? 0xE0607830 : over ? 0xC0405060 : 0x90283038);
+                if (s == null) continue;
+                icon(s, cx + 1, cy + 1);
+                fresh.add(new Object[] { "item", a.skin(), i, cx + ox, cy, cx + 17 + ox, cy + 17 });
+                if (over && dragFrom == null) kit.tip(s.getDisplayName() + (held ? "  " + UiKit.ui("bag.held") : "  " + UiKit.ui("bag.hint")), null, cx, cy, 17, 17);
+            }
+        }
+
+        /** the craft's or the smelt's list over its button */
+        void popup() {
+            UiLayout.Box anchor = lay.get("card.order." + popup);
+            if (anchor == null) anchor = lay.get("card.order.more");
+            if (anchor == null || selected.isEmpty()) { popup = null; return; }
+            String[][] list = popup.equals("craft") ? CRAFTS : SMELTS;
+            int mw = 0;
+            for (String[] e : list) mw = Math.max(mw, fontRendererObj.getStringWidth(shownName(e[0]) + " ×" + e[1]));
+            mw += 16;
+            int mh = list.length * 12 + 4;
+            int[] at = UiLayout.tooltip(anchor.x, anchor.y, anchor.w, anchor.h, mw, mh, lay.sw, lay.sh);
+            Ui.round(at[0], at[1], at[0] + mw, at[1] + mh, 5, UiKit.PANEL_HI);
+            for (int i = 0; i < list.length; i++) {
+                int y = at[1] + 2 + i * 12;
+                if (kit.over(at[0], y, mw, 12)) Ui.round(at[0] + 2, y, at[0] + mw - 2, y + 12, 3, UiKit.BUTTON_OVER);
+                fontRendererObj.drawStringWithShadow(shownName(list[i][0]) + " ×" + list[i][1], at[0] + 8, y + 2, UiKit.TEXT);
+                kit.hits.add(new Object[] { popup + ":" + list[i][0] + ":" + list[i][1], at[0], y, at[0] + mw, y + 12 });
+            }
+        }
+
+        /** F1: every key of the commander, by what it is for */
+        void help() {
+            String[] lines = { UiKit.ui("help.camera"), UiKit.ui("help.select"), UiKit.ui("help.groups"), UiKit.ui("help.orders"), UiKit.ui("help.queue"),
+                    UiKit.ui("help.dig"), UiKit.ui("help.wheel"), UiKit.ui("help.stop"), UiKit.ui("help.bag"), UiKit.ui("help.crew"), UiKit.ui("help.view"),
+                    UiKit.ui("help.cave"), UiKit.ui("help.chat"), UiKit.ui("help.film"), UiKit.ui("help.close") };
+            int w = Math.min(lay.sw - 16, 380), h = Math.min(lay.sh - 16, 24 + lines.length * 11), x = (lay.sw - w) / 2, y = (lay.sh - h) / 2;
+            GL11.glPushMatrix();
+            GL11.glTranslatef(0, 0, 200);
+            Ui.round(x, y, x + w, y + h, 8, 0xF815222E);
+            kit.icon(UiIcon.HELP, x + 8, y + 7, 8, 1f);
+            fontRendererObj.drawStringWithShadow(UiKit.ui("help.title"), x + 20, y + 8, UiKit.TEXT);
+            kit.closeCross(kit.hits, "helpclose", x + w, y);
+            for (int i = 0; i < lines.length && 24 + (i + 1) * 11 <= h; i++)
+                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(lines[i], w - 16), x + 8, y + 24 + i * 11, 0xDFE8EF);
+            GL11.glPopMatrix();
+        }
+
+        /** what a click would do, by the cursor: the mouse's buttons as icons */
+        void cursorLabel(int gmx, int gmy) {
+            if (CaveView.active() || dragFrom != null || overUi(gmx, gmy)) return;
+            String l = null, r = null, plain = null;
+            if (painting) plain = (paintBuild ? "Строить: " + shownName(buildMaterial()) : "Копать") + " ×" + strokeCells(paintFrom, paintTo, paintBuild).size() + (depth > 1 ? "  глубина " + depth : "");
+            else if (armed != Armed.NONE) l = armed == Armed.MOVE ? "идти сюда" : armed == Armed.CHOP ? "рубить" : armed == Armed.ATTACK ? "атаковать" : "охранять";
+            else if (hoverL != null || hoverR != null) { l = hoverL; r = hoverR; }
+            else plain = hoverLabel;
+            if (l == null && r == null && (plain == null || plain.isEmpty())) return;
+            int w = plain != null ? fontRendererObj.getStringWidth(plain)
+                    : (l != null ? 11 + fontRendererObj.getStringWidth(l) : 0) + (r != null ? (l != null ? 8 : 0) + 11 + fontRendererObj.getStringWidth(r) : 0);
+            int lx = Math.max(bandX0() + 2, Math.min(bandX1() - w - 6, gmx + 14)), ly = gmy + 14;   // clear of the arrow
+            Ui.round(lx - 4, ly - 3, lx + w + 4, ly + 10, 3, 0xC0101418);
+            if (plain != null) { fontRendererObj.drawStringWithShadow(plain, lx, ly, 0xFFFFE8); return; }
+            int x = lx;
+            if (l != null) { kit.icon(UiIcon.LMB, x, ly - 1, 8, 1f); fontRendererObj.drawStringWithShadow(l, x + 11, ly, 0xFFFFE8); x += 11 + fontRendererObj.getStringWidth(l) + 8; }
+            if (r != null) { kit.icon(UiIcon.RMB, x, ly - 1, 8, 1f); fontRendererObj.drawStringWithShadow(r, x + 11, ly, 0xFFFFE8); }
+        }
+
+        /** the mouse over the interface (last frame's boxes, an open menu or the help) */
+        boolean overUi(int gx, int gy) {
+            if (helpOpen || openMenu != null || popup != null) return true;
+            for (Object[] x : hits) if (gx >= (Integer) x[3] && gx < (Integer) x[5] && gy >= (Integer) x[4] && gy < (Integer) x[6]) return true;
+            if (lay == null) return false;
+            for (UiLayout.Box b : lay.boxes)
+                if ((b.id.equals("bar") || b.id.equals("card") || b.id.equals("toggles") || b.id.equals("state") || b.id.equals("chat") || b.id.equals("journal")
+                        || b.id.startsWith("toast.") || b.id.startsWith("roster.")) && gx >= b.x + ox && gx < b.x1() + ox && gy >= b.y && gy < b.y1()) return true;
+            return false;
         }
 
         String shownName(String item) {
@@ -1656,186 +2123,6 @@ public class Commander {
         }
 
         static final int GL12_RESCALE = 0x803A;   // GL_RESCALE_NORMAL
-
-        /** The roster stays clickable even when a miner is hidden under the surface. */
-        void viewBar(int gmx, int gmy) {
-            List<Agent> roster = new ArrayList<Agent>();
-            if (Crew.instance != null) for (Agent a : Crew.instance.agents) if (!a.isDead) roster.add(a);
-            if (roster.isEmpty()) roster = clientAgents();
-            boolean me = selfUnit();
-            if (roster.isEmpty() && !me) return;
-            int x0 = px0() + 4, w = bandW() - 8;
-            int cells = roster.size() + (me ? 1 : 0), cell = w / cells;
-            if (me) {   // the player first: number 1
-                int right = cells == 1 ? x0 + w : x0 + cell - 3;
-                boolean current = selected.size() == 1 && selected.contains(1);
-                Ui.round(x0, 5, right, 24, 4, current ? 0xE02A5C4A : 0xD01A2A3A);
-                String line = selfLabel() + " Y" + MathHelper.floor_double(mc.thePlayer.boundingBox.minY);
-                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(line, right - x0 - 8), x0 + 4, 10, current ? 0xB9FFCE : 0xBFE0FF);
-                hit("view", 1, -1, x0, 5, right, 24, null);
-            }
-            int bx = x0 + (me ? cell : 0);
-            for (int i = 0; i < roster.size(); i++) {
-                Agent a = roster.get(i);
-                int x = bx + cell * i, right = i == roster.size() - 1 ? x0 + w : x + cell - 3;
-                boolean current = selected.size() == 1 && selected.contains(a.skin());
-                Ui.round(x, 5, right, 24, 4, current ? 0xE02A5C4A : 0xD01A2630);
-                String line = a.getCustomNameTag() + " Y" + MathHelper.floor_double(a.boundingBox.minY);
-                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(line, right - x - 8), x + 4, 10, current ? 0xB9FFCE : 0xFFFFFF);
-                hit("view", a.skin(), -1, x, 5, right, 24, null);
-            }
-            if (CaveView.active()) {
-                CaveGeometry.Result g = CaveView.volume;
-                boolean exitLive = CaveView.liveExit();
-                String top = exitLive ? " · открытый верх ↑" : g != null && g.exit ? " · верх не подтверждён" : " · верх не проверен";
-                String mode = CaveView.holdingLast() ? "ЧАСТЬ: прежняя карта; обновление ждёт"
-                        : g == null || CaveView.scanning() ? "Пещера: обновляю карту…" : g.cells == 0 ? "Пещера: нет доступной полости"
-                        : g.limited() ? "ЧАСТЬ: Y" + g.minLevel + "–" + g.maxLevel + top
-                        : "Полость Y" + g.minLevel + "–" + g.maxLevel + (g.exit ? top : " · верх не найден");
-                Ui.round(x0, 28, x0 + w, 60, 4, 0xD01A2630);
-                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(mode, w - 8), x0 + 4, 32, 0xB8E9FF);
-                String keys = !viewedUnderground ? "Агент вышел; C закрыть · Q/E: поворот"
-                        : CaveView.agentOutside() ? "Агент вне карты · C дважды: новая карта"
-                        : CaveView.focused() ? "F: вся карта · Q/E: поворот · колесо: масштаб"
-                        : "F: к агенту · Q/E: поворот · колесо: масштаб";
-                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(keys, w - 8), x0 + 4, 45, 0xC6DEE0);
-            } else if (Slice.active()) {
-                String mode = "Только один слой: Y=" + Slice.level + (Slice.follow ? " · за агентом" : " · вручную");
-                Ui.round(x0, 28, x0 + w, 60, 4, 0xD01A2630);
-                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(mode, w - 8), x0 + 4, 32, 0xB8E9FF);
-                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth("PgUp/PgDn: этаж · Home: следить · U: выкл", w - 8), x0 + 4, 45, 0xC6DEE0);
-            } else {
-                Ui.round(x0, 28, x0 + w, 46, 4, 0xB01A2630);
-                String hint = selected.size() == 1 && viewedSkin < 0 && !(selected.contains(1) && selfUnit()) ?"Агент вне прорисовки · подойди ближе" : viewedUnderground ? "C: 3D пещера · U: слой" : "Выбери подземного агента · U: слой";
-                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(hint, w - 8), x0 + 4, 33, 0xC6DEE0);
-            }
-        }
-
-        void hit(String kind, int agent, int slot, int x0, int y0, int x1, int y1, Object extra) {
-            hits.add(new Object[] { kind, extra != null ? extra : agent, slot, x0, y0, x1, y1 });
-        }
-
-        /** a pill: a small rounded button of the panel */
-        int pill(String text, String id, int x, int y, int gmx, int gmy) {
-            int w = fontRendererObj.getStringWidth(text) + 12;
-            boolean over = gmx >= x && gmx < x + w && gmy >= y && gmy < y + 14;
-            Ui.round(x, y, x + w, y + 14, 6, over ? 0xE0405060 : 0xC0283038);
-            fontRendererObj.drawStringWithShadow(text, x + 6, y + 3, over ? 0xFFFFFF : 0xD8E0E8);
-            hits.add(new Object[] { "pill", id, 0, x, y, x + w, y + 14 });
-            return x + w + 4;
-        }
-
-        /** the bottom: the chat with the guide; the picked agents (one: its inventory to choose what it works with; several: each one's line, items carried between them) */
-        void panel(int gmx, int gmy) {
-            hits.clear();
-            int x0 = px0(), x1 = x0 + bandW(), h = panelH();
-            anim += (1 - anim) * 0.25f;
-            shownH += (h - shownH) * 0.3f;   // a height that changes is eased, not jumped
-            int y0 = height - (int) shownH - 4;
-            Ui.round(x0 + 4, y0, x1 - 4, height - 4, 8, 0xD0101820);
-            int y = y0 + 6;
-            // the chat
-            Ui.round(x0 + 8, y, x1 - 8, y + 16, 7, chat.isFocused() ? 0xF0202C3A : 0xC0182028);
-            if (chatAt[0] != x0 + 14 || chatAt[1] != y + 4 || chatAt[2] != x1 - x0 - 28) {   // the panel moved: the field made again where it is (its text kept)
-                String keep = chat.getText();
-                boolean focus = chat.isFocused();
-                chat = new net.minecraft.client.gui.GuiTextField(fontRendererObj, x0 + 14, y + 4, x1 - x0 - 28, 12);
-                chat.setMaxStringLength(240);
-                chat.setEnableBackgroundDrawing(false);
-                chat.setText(keep);
-                chat.setFocused(focus);
-                chatAt[0] = x0 + 14; chatAt[1] = y + 4; chatAt[2] = x1 - x0 - 28;
-            }
-            if (chat.getText().isEmpty() && !chat.isFocused()) fontRendererObj.drawString("Скажи команде (Enter)…", x0 + 14, y + 4, 0x708090);
-            else chat.drawTextBox();
-            hits.add(new Object[] { "chat", 0, 0, x0 + 8, y, x1 - 8, y + 16 });
-            y += 20;
-            String r = reply();
-            if (r != null) {
-                List<?> lines = fontRendererObj.listFormattedStringToWidth(r.replace('\n', ' '), x1 - x0 - 24);
-                for (int i = 0; i < Math.min(2, lines.size()); i++) fontRendererObj.drawStringWithShadow((String) lines.get(i) + (i == 1 && lines.size() > 2 ? "…" : ""), x0 + 12, y + i * 10, 0xB8E0FF);
-                y += 22;
-            } else if (sentAt >= 0 && sentText.length() > 0) { fontRendererObj.drawStringWithShadow("…", x0 + 12, y, 0x708090); }
-            y += 2;
-            int rx = pill("Сценарии", "routines", x0 + 12, y, gmx, gmy);
-            rx = pill(CrewKeys.tr("pill.add"), "add", rx, y, gmx, gmy);   // one more agent (where the camera looks; the key: at the cursor)
-            if (selfUnit()) rx = pill((PlayerAgent.givenToAI ? "● " : "") + CrewKeys.tr("pill.self"), "self", rx, y, gmx, gmy);
-            // the ratings and the share: as many of them as the band has room for (L, J are the keys anyway)
-            String[][] more = { { (PlaceLayer.on ? "● " : "") + FeedbackUi.t("pill.places"), "places" }, { FeedbackUi.t("pill.actions"), "actions" }, { FeedbackUi.t("pill.share"), "share" } };
-            for (String[] m : more) if (rx + fontRendererObj.getStringWidth(m[0]) + 12 <= x1 - 8) rx = pill(m[0], m[1], rx, y, gmx, gmy);
-            y += 18;
-            List<Agent> sel = selAgents();
-            boolean self = selected.contains(1) && selfUnit();
-            if (self) {   // the player himself, number 1: what his character does for the crew, health
-                String n = selfLabel() + "  " + Math.round(mc.thePlayer.getHealth()) + "♥  " + selfDoing();
-                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(n, x1 - x0 - 24), x0 + 12, y + 3, 0xBFE0FF);
-                y += 18;
-            }
-            if (sel.isEmpty()) {
-                if (!self) fontRendererObj.drawStringWithShadow("ЛКМ — копать, Ctrl — строить, клик по агенту — выбрать", x0 + 12, y, 0x9AA8B8);
-                else {
-                    int px = pill("Стоп", "stop", x0 + 12, y, gmx, gmy);
-                    pill("По плану", "ai", px, y, gmx, gmy);
-                }
-                return;
-            }
-            if (sel.size() == 1) {   // one agent: its inventory; a click on an item: it works with it; drag onto someone: hand it over
-                Agent a = sel.get(0);
-                fontRendererObj.drawStringWithShadow(a.getCustomNameTag() + "  " + Math.round(a.getHealth()) + "♥  " + doing(a), x0 + 12, y, 0xFFFFFF);
-                y += 12;
-                List<ItemStack> bag;
-                try { bag = new ArrayList<ItemStack>(a.bag); } catch (Exception ex) { bag = new ArrayList<ItemStack>(); }
-                int per = Math.max(4, (x1 - x0 - 24) / 20), rows = fullInv ? 4 : 2;
-                for (int i = 0; i < per * rows; i++) {
-                    int cx = x0 + 12 + (i % per) * 20, cy = y + (i / per) * 20;
-                    ItemStack s = i < bag.size() ? bag.get(i) : null;
-                    boolean held = s != null && (s == a.getHeldItem() || s == a.preferred);
-                    boolean over = gmx >= cx && gmx < cx + 18 && gmy >= cy && gmy < cy + 18;
-                    Ui.round(cx, cy, cx + 18, cy + 18, 3, held ? 0xE0607830 : over ? 0xC0405060 : 0x90283038);
-                    if (s != null) { icon(s, cx + 1, cy + 1); hit("item", a.skin(), i, cx, cy, cx + 18, cy + 18, null); }
-                    if (s != null && over && dragFrom == null) tip(s.getDisplayName() + (held ? "  (в руке)" : "  — клик: работать этим"), gmx, gmy);
-                }
-                y += rows * 20 + 2;
-                int px = x0 + 12;
-                px = pill(fullInv ? "Свернуть" : "Весь инвентарь", "inv", px, y, gmx, gmy);
-                px = pill("Стоп", "stop", px, y, gmx, gmy);
-                px = pill("По плану", "ai", px, y, gmx, gmy);
-                pill(CrewKeys.tr("pill.dismiss"), "dismiss", px, y, gmx, gmy);
-                return;
-            }
-            for (Agent a : sel) {   // several: a line each (name, health, what it does, what it carries); drag an item onto another's line: handed over
-                boolean over = gmx >= x0 + 8 && gmx < x1 - 8 && gmy >= y && gmy < y + 18;
-                if (over && dragFrom != null) Ui.round(x0 + 8, y - 1, x1 - 8, y + 19, 4, 0x6040A0FF);
-                String n = a.getCustomNameTag().replace("Агент ", "А") + " " + Math.round(a.getHealth()) + "♥ " + doing(a);
-                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(n, 108), x0 + 12, y + 5, 0xFFFFFF);
-                hit("agent", a.skin(), -1, x0 + 8, y, x1 - 8, y + 18, null);
-                List<ItemStack> bag;
-                try { bag = new ArrayList<ItemStack>(a.bag); } catch (Exception ex) { bag = new ArrayList<ItemStack>(); }
-                int ix = x0 + 124;
-                for (int i = 0; i < bag.size() && ix < x1 - 26; i++) {
-                    ItemStack s = bag.get(i);
-                    boolean held = s == a.getHeldItem() || s == a.preferred;
-                    if (held) Ui.round(ix - 1, y - 1, ix + 17, y + 17, 3, 0xC0607830);
-                    icon(s, ix, y);
-                    hit("item", a.skin(), i, ix, y, ix + 18, y + 18, null);
-                    if (gmx >= ix && gmx < ix + 18 && gmy >= y && gmy < y + 18 && dragFrom == null) tip(s.getDisplayName() + " — перетащи к другому: передать", gmx, gmy);
-                    ix += 19;
-                }
-                y += 20;
-            }
-            int px = x0 + 12;
-            px = pill("Собраться", "gather", px, y, gmx, gmy);
-            px = pill("Стоп", "stop", px, y, gmx, gmy);
-            px = pill("По плану", "ai", px, y, gmx, gmy);
-            pill(CrewKeys.tr("pill.dismiss"), "dismiss", px, y, gmx, gmy);
-        }
-
-        void tip(String t, int gmx, int gmy) {
-            int w = fontRendererObj.getStringWidth(t);
-            int tx = Math.max(bandX0() + 2, Math.min(bandX1() - w - 6, gmx - w / 2)), ty = gmy - 16;
-            Ui.round(tx - 4, ty - 3, tx + w + 4, ty + 10, 3, 0xF0101418);
-            fontRendererObj.drawStringWithShadow(t, tx, ty, 0xFFFFFF);
-        }
 
         /** the mouse's arrow drawn into the picture (the system's own is not in a recording), and a ring when it clicks */
         void cursor(int gx, int gy, int scale) {

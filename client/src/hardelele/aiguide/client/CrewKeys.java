@@ -49,12 +49,20 @@ public class CrewKeys {
             if (self.isPressed()) toggleSelf();
             if (add.isPressed()) addAgents(1, null);
         }
-        for (String[] n; (n = Crew.notes.poll()) != null; ) say(tr(n[0], (Object[]) java.util.Arrays.copyOfRange(n, 1, n.length)));
+        for (String[] n; (n = Crew.notes.poll()) != null; ) {
+            if (n[0].equals("stall") && mc.currentScreen instanceof Commander.Screen) continue;   // the commander shows the plan's state itself, as long as it lasts
+            say(tr(n[0], (Object[]) java.util.Arrays.copyOfRange(n, 1, n.length)), WARN.contains(n[0]) || n[0].startsWith("remove."));
+        }
     }
 
-    /** a word to the player: on the commander's panel when it is open, in the guide's window when that is, else in the chat */
-    void say(String text) {
-        if (mc.currentScreen instanceof Commander.Screen) ((Commander.Screen) mc.currentScreen).localReply = text;
+    /** the notes said as warnings (yellow, longer) on the commander's screen */
+    static final java.util.Set<String> WARN = new java.util.HashSet<String>(java.util.Arrays.asList("full", "nospot", "stall", "nocrew", "mind.none", "mind.self", "mind.gaveup", "self.danger", "self.cannot"));
+
+    void say(String text) { say(text, false); }
+
+    /** a word to the player: a message on the commander's screen when it is open, in the guide's window when that is, else in the chat */
+    void say(String text, boolean warn) {
+        if (mc.currentScreen instanceof Commander.Screen) ((Commander.Screen) mc.currentScreen).toast(text, warn);
         else if (mc.currentScreen instanceof GuiGuide) GuiGuide.add(null, "§7" + text);
         else if (mc.thePlayer != null) mc.thePlayer.addChatMessage(new ChatComponentText("§b[" + tr("tag") + "]§r " + text));
     }

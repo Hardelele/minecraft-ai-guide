@@ -20,8 +20,7 @@ final class FeedbackUi {
 
     View view = View.NONE;
     final List<Object[]> hits = new ArrayList<Object[]>();   // id, x0, y0, x1, y1
-    String note;                                              // a line under the dialog: what was written
-    long noteAt;
+    final UiKit kit = new UiKit();                            // the commander's pieces (the dialog's close)
 
     // the place's menu
     PlaceView place;
@@ -65,17 +64,15 @@ final class FeedbackUi {
 
     void refresh() { eps = tab == 0 ? Episodes.cases(Feedback.recentCases(200), 200) : Episodes.cards(200); }
 
-    void say(String s) { note = s; noteAt = System.currentTimeMillis(); }
+    /** what was written: a message of the commander's (its one place for them) */
+    void say(String s) {
+        if (Commander.instance != null) Commander.instance.toasts.add(s, UiToasts.Kind.INFO, UiIcon.RATE, System.currentTimeMillis());
+    }
 
     // ---- drawing ------------------------------------------------------------------------------------
 
     int button(FontRenderer fr, String title, String id, int x, int y, int mx, int my, boolean lit) {
-        int w = fr.getStringWidth(title) + 12;
-        boolean over = mx >= x && mx < x + w && my >= y && my < y + 15;
-        Ui.round(x, y, x + w, y + 15, 5, lit ? 0xF0407A50 : over ? 0xFF4B6172 : 0xEE2B3B48);
-        fr.drawStringWithShadow(title, x + 6, y + 4, 0xFFFFFF);
-        hits.add(new Object[] { id, x, y, x + w, y + 15 });
-        return x + w + 4;
+        return UiKit.textButton(fr, hits, title, id, x, y, mx, my, lit, 4);
     }
 
     final int[] fieldAt = new int[3];   // where the comment's field was made (it is made again when the dialog moves)
@@ -96,18 +93,11 @@ final class FeedbackUi {
     /** the open dialog, in the band x0..x0+w of a screen this high */
     void draw(FontRenderer fr, int x0, int w, int height, int mx, int my) {
         hits.clear();
+        kit.begin(fr, x0 + w, height, mx, my);
         Gui.drawRect(0, 0, 4000, height, 0x70000000);
         if (view == View.PLACE) drawPlace(fr, x0 + 4, w - 8, height, mx, my);
         else if (view == View.ACTIONS) drawActions(fr, x0 + 4, w - 8, height, mx, my);
-    }
-
-    /** the last word of a rating (shown a few seconds, a dialog open or not) */
-    void drawNote(FontRenderer fr, int x0, int w, int height) {
-        if (note != null && System.currentTimeMillis() - noteAt < 4000) {
-            int nw = fr.getStringWidth(note);
-            Ui.round(x0 + w / 2 - nw / 2 - 6, 64, x0 + w / 2 + nw / 2 + 6, 78, 5, 0xE0204030);
-            fr.drawStringWithShadow(note, x0 + w / 2 - nw / 2, 67, 0xC8FFD0);
-        }
+        kit.flush();
     }
 
     void drawPlace(FontRenderer fr, int x, int w, int height, int mx, int my) {
@@ -118,7 +108,7 @@ final class FeedbackUi {
         int[] b = place.box();
         fr.drawStringWithShadow(fr.trimStringToWidth(t("place.title", className(place.cls()), Math.round(place.confidence() * 100)), w - 100), x + 22, y + 9, 0xFFFFFF);
         fr.drawString(fr.trimStringToWidth(t("place.box", b[0], b[1], b[2], b[3], b[4], b[5], b[3] - b[0] + 1, b[4] - b[1] + 1, b[5] - b[2] + 1), w - 24), x + 12, y + 22, 0x9EB0BD);
-        button(fr, t("close"), "close", x + w - fr.getStringWidth(t("close")) - 22, y + 6, mx, my, false);
+        kit.closeCross(hits, "close", x + w, y);
         int yy = y + 36;
         int bx = button(fr, t("place.correct"), "correct", x + 12, yy, mx, my, Labels.CORRECT.equals(answer));
         button(fr, t("place.not"), "not", bx, yy, mx, my, Labels.NOT_PLACE.equals(answer));
@@ -146,7 +136,7 @@ final class FeedbackUi {
         int rowH = 16, h = 52 + ROWS * rowH + (picked != null ? 62 : 0), y = Math.max(8, (height - h) / 2);
         Ui.round(x, y, x + w, y + h, 8, 0xF015222E);
         fr.drawStringWithShadow(t("actions.title"), x + 12, y + 9, 0xFFFFFF);
-        button(fr, t("close"), "close", x + w - fr.getStringWidth(t("close")) - 22, y + 6, mx, my, false);
+        kit.closeCross(hits, "close", x + w, y);
         int bx = button(fr, t("actions.reflexes"), "tab:0", x + 12, y + 22, mx, my, tab == 0);
         button(fr, t("actions.cards"), "tab:1", bx, y + 22, mx, my, tab == 1);
         int yy = y + 42;

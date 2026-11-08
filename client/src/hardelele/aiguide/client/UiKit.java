@@ -51,6 +51,29 @@ final class UiKit {
 
     // ---- pieces --------------------------------------------------------------------------------------
 
+    /**
+     * a word button of a dialog (the scenarios, the ratings, the share): 15 high, lit when chosen; its hit {id, x0, y0,
+     * x1, y1} goes into the dialog's list. Returns where the next one goes (gap after it).
+     */
+    static int textButton(FontRenderer fr, List<Object[]> hits, String title, String id, int x, int y, int mx, int my, boolean lit, int gap) {
+        int w = fr.getStringWidth(title) + 12;
+        boolean over = mx >= x && mx < x + w && my >= y && my < y + 15;
+        Ui.round(x, y, x + w, y + 15, 5, lit ? BUTTON_ON : over ? 0xFF4B6172 : 0xEE2B3B48);
+        fr.drawStringWithShadow(title, x + 6, y + 4, TEXT);
+        hits.add(new Object[] { id, x, y, x + w, y + 15 });
+        return x + w + gap;
+    }
+
+    /** a dialog's close: the cross at its top right corner (14 square), its hit "id" in the dialog's list */
+    void closeCross(List<Object[]> dialogHits, String id, int right, int top) {
+        int x = right - 18, y = top + 4;
+        boolean over = over(x, y, 14, 14);
+        Ui.round(x, y, x + 14, y + 14, 3, over ? BUTTON_OVER : BUTTON);
+        icon(UiIcon.CLOSE, x + 3, y + 3, 8, 1f);
+        dialogHits.add(new Object[] { id, x, y, x + 14, y + 14 });
+        if (over) tip(I18n.format(UiIcon.CLOSE.words()), UiIcon.CLOSE.key, x, y, 14, 14);
+    }
+
     void panel(UiLayout.Box b) { panel(b.x, b.y, b.w, b.h, PANEL); }
 
     void panel(int x, int y, int bw, int bh, int argb) { Ui.round(x, y, x + bw, y + bh, 6, argb); }
@@ -142,6 +165,11 @@ final class UiKit {
 
     /** the card's frame and head: number badge, name, health, and "thinking..." when the agent is choosing its step */
     void cardHead(UiLayout.Box card, UiLayout.Box head, int number, String name, float health, boolean thinking) {
+        cardHead(card, head, number, name, health, thinking, null, null, 0);
+    }
+
+    /** the same; after: what it does, written after the health (a card with no room for its lines); right: room kept at the right */
+    void cardHead(UiLayout.Box card, UiLayout.Box head, int number, String name, float health, boolean thinking, UiIcon afterIcon, String after, int right) {
         Ui.round(card.x, card.y, card.x1(), card.y1(), 7, PANEL);
         Ui.round(head.x, head.y, head.x + 11, head.y + 11, 3, 0xFF3A4450);
         String n = String.valueOf(number);
@@ -151,11 +179,18 @@ final class UiKit {
         icon(UiIcon.HEALTH, hx, head.y + 1, 8, 1f);   // (a 16 texel icon at half size)
         Ui.round(hx + 10, head.y + 4, hx + 42, head.y + 7, 0, 0xFF202020);
         Ui.round(hx + 10, head.y + 4, hx + 10 + Math.round(32 * Math.max(0, Math.min(1, health))), head.y + 7, 0, health > 0.5f ? 0xFF50E070 : health > 0.25f ? 0xFFE0C040 : 0xFFE04040);
+        int end = head.x1() - right;
         if (thinking) {
             String t = ui("thinking") + "...".substring(0, 1 + (int) (System.currentTimeMillis() / 400 % 3));
-            int tx = head.x1() - fr.getStringWidth(ui("thinking") + "...") - 12;
+            int tx = end - fr.getStringWidth(ui("thinking") + "...") - 12;
+            end = tx - 4;
             icon(UiIcon.THINK, tx, head.y + 1, 8, 1f);
             fr.drawStringWithShadow(t, tx + 10, head.y + 2, 0xB8E0FF);
+        }
+        if (after != null && hx + 48 < end) {
+            int ax = hx + 48;
+            if (afterIcon != null) { icon(afterIcon, ax, head.y + 1, 8, 1f); ax += 11; }
+            fr.drawStringWithShadow(fr.trimStringToWidth(after, Math.max(0, end - ax)), ax, head.y + 2, TEXT_DIM);
         }
     }
 
@@ -176,11 +211,14 @@ final class UiKit {
     }
 
     /** the plan's state line (the plan stands, no places, no guide): an icon, the words and, maybe, its button */
-    void state(UiLayout.Box b, UiIcon icon, String text, String buttonId, UiIcon buttonIcon) {
-        Ui.round(b.x, b.y, b.x1(), b.y1(), 5, WARN);
+    void state(UiLayout.Box b, UiIcon icon, String text, String buttonId, UiIcon buttonIcon) { state(b, icon, text, buttonId, buttonIcon, true); }
+
+    /** a state line; warn: the plan's trouble (yellow), else a mode the view is in (blue) */
+    void state(UiLayout.Box b, UiIcon icon, String text, String buttonId, UiIcon buttonIcon, boolean warn) {
+        Ui.round(b.x, b.y, b.x1(), b.y1(), 5, warn ? WARN : 0xE0183448);
         icon(icon, b.x + 4, b.y + 4, 8, 1f);
         int right = buttonId == null ? b.x1() - 4 : b.x1() - 22;
-        fr.drawStringWithShadow(fr.trimStringToWidth(text, right - b.x - 16), b.x + 15, b.y + 4, WARN_TEXT);
+        fr.drawStringWithShadow(fr.trimStringToWidth(text, right - b.x - 16), b.x + 15, b.y + 4, warn ? WARN_TEXT : 0xB8E9FF);
         if (buttonId != null) {
             boolean over = over(b.x1() - 18, b.y + 1, 14, 14);
             Ui.round(b.x1() - 18, b.y + 1, b.x1() - 4, b.y + 15, 3, over ? BUTTON_OVER : BUTTON);

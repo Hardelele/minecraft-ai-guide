@@ -68,16 +68,13 @@ public class GuiShare extends GuiScreen {
         }
     }
 
+    final UiKit kit = new UiKit();   // the commander's pieces: the icon, the close
+
     int x0() { return Math.max(8, (width - 420) / 2); }
     int w() { return Math.min(420, width - 16); }
 
     int button(String title, String id, int x, int y, int mx, int my, boolean lit) {
-        int w = fontRendererObj.getStringWidth(title) + 12;
-        boolean over = mx >= x && mx < x + w && my >= y && my < y + 15;
-        Ui.round(x, y, x + w, y + 15, 5, lit ? 0xF0407A50 : over ? 0xFF4B6172 : 0xEE2B3B48);
-        fontRendererObj.drawStringWithShadow(title, x + 6, y + 4, 0xFFFFFF);
-        hits.add(new Object[] { id, x, y, x + w, y + 15 });
-        return x + w + 5;
+        return UiKit.textButton(fontRendererObj, hits, title, id, x, y, mx, my, lit, 5);
     }
 
     @Override
@@ -86,7 +83,10 @@ public class GuiShare extends GuiScreen {
         Gui.drawRect(0, 0, width, height, 0xB0000000);
         int x = x0(), w = w(), y = 10;
         Ui.round(x, y - 4, x + w, height - 6, 8, 0xF015222E);
-        fontRendererObj.drawStringWithShadow(t("share.title"), x + 12, y + 4, 0xFFFFFF);
+        kit.begin(fontRendererObj, width, height, mx, my);
+        kit.icon(UiIcon.SHARE, x + 10, y + 3, 8, 1f);
+        fontRendererObj.drawStringWithShadow(t("share.title"), x + 22, y + 4, 0xFFFFFF);
+        kit.closeCross(hits, "back", x + w, y - 4);
         y += 18;
         for (Object l : fontRendererObj.listFormattedStringToWidth(t("share.intro"), w - 24)) { fontRendererObj.drawString((String) l, x + 12, y, 0xB9CBD8); y += 10; }
         y += 4;
@@ -174,6 +174,7 @@ public class GuiShare extends GuiScreen {
             bx = ShareUpload.host(config) != null ? button(t("share.send"), "send", bx, y, mx, my, false) : bx;
         }
         button(t("close"), "back", bx, y, mx, my, false);
+        kit.flush();
     }
 
     /** the words for a failed send: a quota, a size, the service not ready, the storage's refusal; else the error itself */

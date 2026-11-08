@@ -24,6 +24,7 @@ public class GuiGuide extends GuiScreen {
     static String draft = "";
 
     GuiTextField input;
+    final UiKit kit = new UiKit();   // the commander's look: the panel, the icons
     int scroll;   // lines from the bottom
 
     static boolean ru() {
@@ -154,10 +155,13 @@ public class GuiGuide extends GuiScreen {
     @SuppressWarnings("unchecked")
     public void drawScreen(int mx, int my, float f) {
         int l = left(), r = width - l, top = 22, bottom = height - 32;
-        drawRect(l, 4, r, height - 6, 0xC0101418);
-        String title = ru() ? "Гид — пиши вопрос, Enter — отправить, колесо — листать, Esc — закрыть"
-                : "Guide — type a question, Enter sends, wheel scrolls, Esc closes";
-        drawString(fontRendererObj, "§b" + title, l + 6, 9, 0xFFFFFF);
+        kit.begin(fontRendererObj, width, height, mx, my);
+        Ui.round(l, 4, r, height - 6, 8, UiKit.PANEL_HI);
+        boolean here = Pilot.instance == null || Pilot.instance.server >= 2;
+        kit.icon(here ? UiIcon.CHAT : UiIcon.OFFLINE, l + 6, 8, 8, 1f);
+        drawString(fontRendererObj, "§b" + UiKit.ui("guide.title"), l + 18, 9, 0xFFFFFF);
+        String keys = UiKit.ui("guide.keys");
+        drawString(fontRendererObj, "§7" + keys, r - 6 - fontRendererObj.getStringWidth(keys), 9, 0xA0A0A0);
         // the conversation, wrapped, from the bottom up
         List<String> lines = new ArrayList<String>();
         List<Integer> colors = new ArrayList<Integer>();
@@ -178,7 +182,7 @@ public class GuiGuide extends GuiScreen {
             colors.add(0);
         }
         if (waiting) {
-            lines.add("§7" + (ru() ? "Гид думает" : "The guide is thinking") + "...".substring(0, 1 + (int) (System.currentTimeMillis() / 400 % 3)));
+            lines.add("§7    " + (ru() ? "Гид думает" : "The guide is thinking") + "...".substring(0, 1 + (int) (System.currentTimeMillis() / 400 % 3)));
             colors.add(0xA0A0A0);
         }
         if (history.isEmpty() && !waiting) {
@@ -192,7 +196,10 @@ public class GuiGuide extends GuiScreen {
         if (scroll > max) scroll = max;
         int end = lines.size() - scroll, start = Math.max(0, end - rows);
         int y = bottom - (end - start) * 10;
-        for (int i = start; i < end; i++, y += 10) drawString(fontRendererObj, lines.get(i), l + 7, y, colors.get(i));
+        for (int i = start; i < end; i++, y += 10) {
+            drawString(fontRendererObj, lines.get(i), l + 7, y, colors.get(i));
+            if (waiting && i == lines.size() - 1) kit.icon(UiIcon.THINK, l + 7, y - 1, 8, 1f);   // the cloud before "thinking..."
+        }
         if (scroll > 0) drawString(fontRendererObj, "§7▼ " + scroll, r - 40, bottom - 10, 0xA0A0A0);
         input.drawTextBox();
         String n = input.getText().length() + "/" + MAX_INPUT;

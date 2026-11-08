@@ -22,6 +22,7 @@ public class RenderAgent extends RenderBiped {
     @Override
     protected void passSpecialRender(net.minecraft.entity.EntityLivingBase e, double x, double y, double z) {
         super.passSpecialRender(e, x, y, z);
+        if (Commander.instance != null && Commander.instance.on) return;   // the commander shows it on the agent's chip and card (over it: only its number)
         String l = e instanceof Agent ? MindUi.label(((Agent) e).skin()) : null;
         if (l != null) renderLivingLabel(e, l, x, y - 0.27, z, 32);
     }

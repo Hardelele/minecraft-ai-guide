@@ -22,7 +22,7 @@ TESTS = ["hardelele.aiguide.client.SightTest", "hardelele.aiguide.client.CaseTes
          "hardelele.aiguide.client.CrewCommandTest", "hardelele.aiguide.client.UiLayoutTest", "hardelele.aiguide.client.MindTest"]
 GAME_TESTS = ["CaveGeometryTest", "CaveRetentionTest", "RoutineIntentTest", "RoutineLayoutTest", "RoutineSnapshotTest", "ShelterRouteTest", "PlacesInputTest", "BoardOrdersTest", "MindGameTest"]   # against the built client
 HELPERS = ["ShareProbe.java"]   # compiled with the pure tests, run by tools/share-service's tests
-PY_TESTS = ["tests/test_labels.py", "tests/test_feedback_lang.py", "tests/test_crew_lang.py", "tests/test_ui_icons.py",   # the ratings' offline tool, the words, the commander's icons
+PY_TESTS = ["tests/test_labels.py", "tests/test_feedback_lang.py", "tests/test_crew_lang.py", "tests/test_ui_icons.py", "tests/test_commander_ui_wiring.py",   # the ratings' offline tool, the words, the commander's icons
             "share-service/tests/test_sigv4.py", "share-service/tests/test_service.py"]   # the share service (and the mod's sending through it)
 GSON = os.path.join(ROOT, "lib", "gson-2.2.4.jar")
 GAME_OUT = os.path.join(ROOT, "build", "test-game")

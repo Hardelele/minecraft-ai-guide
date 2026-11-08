@@ -223,6 +223,8 @@ def agent(c, x, y, n, picked, player=False):
     d.rectangle([(x - 2) * k, (y - 5) * k, (x + 2) * k, (y - 1) * k], fill=(222, 168, 128))
     c.round(x - 6, y - 17, 12, 10, 3, (47, 111, 168, 230) if player else (24, 28, 36, 200) if not picked else (32, 72, 40, 230))
     c.text(x - c.font.width(str(n)) / 2, y - 16, str(n), (144, 255, 144) if picked else TEXT)
+    if n == 3:   # its mind is choosing a step: a small cloud over the number (the words are on its chip and card)
+        c.icon("think", x - 4, y - 27, 8)
     c.round(x - 6, y - 6, 12, 2, 0, (32, 32, 32, 255))
     c.round(x - 6, y - 6, 10 if n != 3 else 5, 2, 0, (80, 224, 112, 255) if n != 3 else (224, 192, 64, 255))
 
