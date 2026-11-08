@@ -23,6 +23,9 @@ public class AIGuideClient {
     @Mod.EventHandler
     public void init(FMLInitializationEvent e) {
         EntityRegistry.registerModEntity(Agent.class, "agent", 0, this, 96, 1, true);
+        for (int i = 0; i < WaveMobs.TYPES.length; i++)   // the waves mode's mobs (the game's looks: their renderers are found by the class they extend)
+            EntityRegistry.registerModEntity((Class<? extends net.minecraft.entity.Entity>) WaveMobs.TYPES[i][0], (String) WaveMobs.TYPES[i][1], 10 + i, this, 80, 3, true);
+        Waves.init();
         Exploration.start();
         Places.start();   // an observer: what places the crew has seen (off with -Daiguide.places=false)
         if (e.getSide() != Side.CLIENT) return;   // nothing more to do on a server (the bench starts when the server has)
@@ -55,6 +58,7 @@ public class AIGuideClient {
 
     @Mod.EventHandler
     public void serverStopping(cpw.mods.fml.common.event.FMLServerStoppingEvent e) {
+        Waves.serverStopping();   // a run on is written before the world goes
         if (recording) {
             recording = false;
             WorldRec.stop();

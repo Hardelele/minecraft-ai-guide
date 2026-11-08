@@ -51,12 +51,27 @@ public class CrewKeys {
         }
         for (String[] n; (n = Crew.notes.poll()) != null; ) {
             if (n[0].equals("stall") && mc.currentScreen instanceof Commander.Screen) continue;   // the commander shows the plan's state itself, as long as it lasts
-            say(tr(n[0], (Object[]) java.util.Arrays.copyOfRange(n, 1, n.length)), WARN.contains(n[0]) || n[0].startsWith("remove."));
+            Object[] args = new Object[n.length - 1];
+            for (int i = 1; i < n.length; i++) args[i - 1] = words(n[i]);
+            String text = tr(n[0], args);
+            boolean warn = WARN.contains(n[0]) || n[0].startsWith("remove.");
+            if (n[0].startsWith("waves.") && mc.currentScreen instanceof Commander.Screen && Commander.instance != null)   // the waves' own icon on the commander's messages
+                Commander.instance.toasts.add(text, warn ? UiToasts.Kind.WARN : UiToasts.Kind.INFO, UiIcon.WAVES, System.currentTimeMillis());
+            else say(text, warn);
         }
     }
 
+    /** a note's argument: "@key,key" is words of the lang files (the server sends keys, the client says them), else as it is */
+    static String words(String a) {
+        if (a == null || !a.startsWith("@")) return a;
+        StringBuilder s = new StringBuilder();
+        for (String k : a.substring(1).split(",")) s.append(s.length() > 0 ? ", " : "").append(I18n.format(k));
+        return s.toString();
+    }
+
     /** the notes said as warnings (yellow, longer) on the commander's screen */
-    static final java.util.Set<String> WARN = new java.util.HashSet<String>(java.util.Arrays.asList("full", "nospot", "stall", "nocrew", "mind.none", "mind.self", "mind.gaveup", "self.danger", "self.cannot"));
+    static final java.util.Set<String> WARN = new java.util.HashSet<String>(java.util.Arrays.asList("full", "nospot", "stall", "nocrew", "mind.none", "mind.self", "mind.gaveup", "self.danger", "self.cannot",
+            "waves.start", "waves.boss", "waves.loss", "waves.over"));
 
     void say(String text) { say(text, false); }
 
@@ -90,6 +105,16 @@ public class CrewKeys {
         else if (c.n > 0) Crew.dismiss(new int[] { c.n });
         else if (picked != null && picked.length > 0) Crew.dismiss(picked);
         else say(tr("remove.which"));
+        return true;
+    }
+
+    /** a line of the guide's window that is the waves mode's command (true: done here, not asked) */
+    boolean waves(String line) {
+        WaveCommand c = WaveCommand.parse(line);
+        if (c == null) return false;
+        if (c.kind == WaveCommand.USAGE) { say(tr("waves.usage")); return true; }
+        if (!crewHere()) { say(tr("nocrew")); return true; }
+        Waves.command(c);
         return true;
     }
 

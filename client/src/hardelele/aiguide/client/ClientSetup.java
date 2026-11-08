@@ -13,5 +13,6 @@ class ClientSetup {
         Slice.start();
         CaveView.start();
         Feedback.start();
+        WavesHud.start();
     }
 }
