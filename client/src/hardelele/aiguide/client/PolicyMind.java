@@ -11,9 +11,9 @@ import net.minecraft.world.WorldServer;
 /**
  * The minds' own brain: the crew's policy net (PolicyNet, trained by tools/rl/train.py) decides an agent's next skill
  * at its fork instead of a language model. The default; -Daiguide.mind=llm brings the model back (DeepSeek through the
- * server mod). The agent's raw facts (PolicyFacts, RlSpec's names) become the observation and the mask (RlSpec.vector,
- * RlSpec.mask: the same code as the learning environment's), the net picks an allowed action, RlSpec.call makes it a
- * mind's call, AgentMind does it as any other. In the game noop is masked (the world does not restart here); a goal
+ * server mod). The agent's raw facts (RlEnv.facts: the very code of the learning environment, its goal read as the
+ * nearest scenario) become the observation and the mask (RlSpec.vector, RlSpec.mask), the net picks an allowed action,
+ * RlSpec.call makes it a mind's call, AgentMind does it as any other. In the game noop is masked (the world does not restart here); a goal
  * with an item is done when the item is there. No thread, no wait: a decision takes well under a millisecond.
  *
  * -Daiguide.policy.weights=<file> (else the jar's /assets/aiguide/rl/policy.bin), -Daiguide.policy.sample=true (draw
@@ -27,7 +27,14 @@ final class PolicyMind {
     static volatile String error = "";
     static PolicyNet.Work work;
     static final Random rnd = new Random();
-    static final Map<AgentMind, PolicyFacts.Memo> memos = new WeakHashMap<AgentMind, PolicyFacts.Memo>();
+    static final Map<AgentMind, Memo> memos = new WeakHashMap<AgentMind, Memo>();
+
+    /** what the policy keeps of a mind: its scenario, its last step as the environment keeps it, its time and progress */
+    static final class Memo {
+        String scenario = "wood";
+        final RlEnv.Mine mine = new RlEnv.Mine();
+        double timeFrac, progress;
+    }
     static final Map<AgentMind, Integer> seenSteps = new WeakHashMap<AgentMind, Integer>();
 
     /** the policy decides (the default), not the model */
@@ -91,8 +98,8 @@ final class PolicyMind {
     static Mind.Call decide(AgentMind m, Crew c, Agent a, WorldServer w) {
         PolicyNet n = net();
         if (n == null) return null;
-        PolicyFacts.Memo mm = memos.get(m);
-        if (mm == null) memos.put(m, mm = new PolicyFacts.Memo());
+        Memo mm = memos.get(m);
+        if (mm == null) memos.put(m, mm = new Memo());
         WaveCycle.View v = Waves.state();
         mm.scenario = scenario(m.goal, v.active());
         RlSpec.Scenario sc = RlSpec.scenario(mm.scenario);
@@ -111,7 +118,7 @@ final class PolicyMind {
             }
         }
         long t0 = System.nanoTime();
-        Map<String, Double> raw = PolicyFacts.of(c, a, w, mm);
+        Map<String, Double> raw = RlEnv.facts(c, a, w, mm.scenario, mm.mine, mm.timeFrac, mm.progress);
         float[] obs = RlSpec.vector(raw);
         int[] mask = RlSpec.mask(raw);
         mask[0] = 0;   // noop: in the game the world does not restart; look_around and wait:5 are always there
@@ -122,7 +129,7 @@ final class PolicyMind {
         }
         double ms = (System.nanoTime() - t0) / 1e6;
         if (k < 0) k = RlSpec.index("wait:5");
-        mm.last = k;
+        mm.mine.last = k;
         Mind.Call cl = RlSpec.call(k);
         cl.why = "policy: " + RlSpec.ACTIONS.get(k).id + String.format(Locale.ROOT, " (p %.2f, %s)", probs[k], mm.scenario);
         cl.args.addProperty("why", cl.why);
@@ -131,7 +138,7 @@ final class PolicyMind {
     }
 
     /** the outcome of the agent's last step into the memo (its group, how long, how many times the same failure) */
-    static void lastStep(AgentMind m, PolicyFacts.Memo mm) {
+    static void lastStep(AgentMind m, Memo mm) {
         int n = m.mind.steps.size();
         Integer was = seenSteps.get(m);
         seenSteps.put(m, n);
@@ -139,9 +146,10 @@ final class PolicyMind {
         Mind.Step s = m.mind.steps.peekLast();
         if (s == null) return;
         String out = RlSpec.outcome(s.result);
-        if (!out.equals("ok") && out.equals(mm.outcome)) mm.repeated++;
-        else mm.repeated = out.equals("ok") ? 0 : 1;
-        mm.outcome = out;
-        mm.seconds = s.seconds;
+        RlEnv.Mine x = mm.mine;
+        if (!out.equals("ok") && out.equals(x.outcome)) x.repeated++;
+        else x.repeated = out.equals("ok") ? 0 : 1;
+        x.outcome = out;
+        x.seconds = s.seconds;
     }
 }

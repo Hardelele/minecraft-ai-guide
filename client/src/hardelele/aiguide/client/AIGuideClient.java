@@ -35,7 +35,8 @@ public class AIGuideClient {
     /** a dedicated server started with -Daiguide.bench=...: the headless test bench drives the crew */
     @Mod.EventHandler
     public void serverStarted(cpw.mods.fml.common.event.FMLServerStartedEvent e) {
-        if (System.getProperty("aiguide.bench") != null) Bench.start();
+        if (System.getProperty("aiguide.rl") != null && e.getSide() != Side.CLIENT) RlEnv.start(Integer.parseInt(System.getProperty("aiguide.rl").trim()));   // the learning environment (docs/rl/CONTRACT.md)
+        else if (System.getProperty("aiguide.bench") != null) Bench.start();
         else if (e.getSide() == Side.CLIENT) autoRecord();
     }
 

@@ -216,6 +216,7 @@ public class Agent extends EntityCreature implements Doer {
             }
             String cause = Defense.died(who(), s.getDamageType());   // its tally's deaths, by cause (a fight, hunger, an accident)
             Epochs.died(this, s.getDamageType(), cause);
+            RlEnv.died(this, cause);
         }
         super.onDeath(s);
         if (worldObj.isRemote) return;

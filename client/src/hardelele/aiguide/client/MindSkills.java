@@ -102,11 +102,19 @@ final class MindSkills {
             case "chop_tree": return chop(c, a, w, call.arg("at"));
             case "mine": return mine(c, a, w, call.arg("block"), clamp(n, 1, 32));
             case "craft": return craft(c, a, w, call.arg("item"), clamp(n, 1, 64));
-            case "smelt": return smelt(c, a, w, call.arg("item"), clamp(n, 1, 64), call.arg("fuel"));
+            case "smelt": {
+                String what = call.arg("item");
+                if (what.equalsIgnoreCase("food")) {   // the raw food of the bag, whichever it is
+                    what = RlSkills.rawFood(a);
+                    if (what == null) return failed("NO_FOOD", "no raw food in the bag (raw meat, fish, a potato) to cook");
+                }
+                return smelt(c, a, w, what, clamp(n, 1, 64), call.arg("fuel"));
+            }
             case "place": return place(c, a, w, call.arg("item"), call.arg("at"));
             case "take": case "put": return chest(c, a, w, call.tool.equals("take"), call.arg("chest"), call.arg("item"), clamp(n, 1, 64 * 27));
             case "give": return give(c, a, w, call.arg("to"), call.arg("item"), clamp(n, 1, 64 * 9));
             case "wait": return new Wait(clamp(call.num("seconds", 5), 1, 120));
+            case "hunt": return RlSkills.hunt(c, a, w);
             default: return DefenseSkills.make(c, a, w, call);   // the defence's (or UNKNOWN_TOOL)
         }
     }
@@ -266,6 +274,10 @@ final class MindSkills {
     /** a place by words: { x, y, z, within } of 'x y z', table, chest, furnace, player, agent N, home; null if none */
     static double[] where(Crew c, Agent a, WorldServer w, String target) {
         String t = target == null ? "" : target.trim().toLowerCase(Locale.ROOT);
+        if (t.equals("frontier")) {   // where the crew has not looked yet (the edge of the ground it saw)
+            int[] f = RlSkills.frontier(a, w);
+            return f == null ? null : new double[] { f[0] + 0.5, f[1], f[2] + 0.5, 1.5 };
+        }
         int[] p = coords(t);
         if (p != null) return new double[] { p[0] + 0.5, p[1], p[2] + 0.5, 1.5 };
         Roles.Role role = t.contains("table") || t.contains("верстак") ? Roles.Role.TABLE : t.contains("chest") || t.contains("сундук") ? Roles.Role.CHEST
@@ -759,6 +771,11 @@ final class MindSkills {
         if (at == null && coords(t) == null) at = station(c, a, w, Roles.Role.CHEST, 48);
         if (at == null || !Roles.is(w, at, Roles.Role.CHEST)) return failed("NO_CHEST", "no chest known " + (coords(t) != null ? "at " + t : "near (48 blocks)"));
         boolean all = !take && (name.equalsIgnoreCase("all") || name.equalsIgnoreCase("everything"));
+        if (take && name.equalsIgnoreCase("food")) {   // whatever food the chest has
+            TileEntity te = w.getTileEntity(at[0], at[1], at[2]);
+            name = RlSkills.foodIn(te instanceof IInventory ? (IInventory) te : null);
+            if (name == null) return failed("NOT_IN_CHEST", "no food in the chest at " + at[0] + " " + at[1] + " " + at[2]);
+        }
         Object[] it = all ? null : item(name);
         if (!all && it == null) return failed("UNKNOWN_ITEM", "'" + name + "': use the game's id");
         if (!take && !all && Skills.count(a.bag, (Item) it[0], (Integer) it[1]) == 0) return failed("NO_ITEMS", "no " + name + " in the bag");

@@ -134,6 +134,12 @@ final class AgentMind {
         if (!a.jobs.isEmpty()) return false;   // something else first (a summon's walk, the way back for its things)
         if (thinking == null) {
             if (now < retryAt) { a.body.stop(); return true; }
+            if (recovering(c, a)) return false;   // back for what it dropped when it died first (the board's card), then the next step
+            if (RlEnv.on()) {   // the learning environment decides: no model, the policy's action (it stands meanwhile)
+                Mind.Call cl = RlEnv.decide(this, a, w);
+                if (cl == null) { a.body.stop(); show("thinking"); return true; }
+                return act(c, a, w, cl);
+            }
             if (PolicyMind.on()) return byPolicy(c, a, w);   // the crew's own net decides (the default): no model, no wait
             String lim = mind.limit(System.currentTimeMillis());
             if (lim != null) {
@@ -147,6 +153,7 @@ final class AgentMind {
             askedMs = System.currentTimeMillis();
             final String b = body;
             final Mind.Model md = model;
+            if (RlEnv.on()) RlEnv.modelCalls++;   // (never: the environment's minds decide above; counted if it ever happens)
             thinking = pool.submit(() -> md.complete(b));
             show("thinking");
             a.body.stop();
@@ -204,6 +211,18 @@ final class AgentMind {
         return act(c, a, w, cl);
     }
 
+    /**
+     * It died and came back (a minute ago at most) and the card to go back for its things is open for it: the board
+     * gives that first (Crew.respawn's card; the bag fell where it died and is gone in 5 minutes). Before this the mind
+     * held the agent at every decision, so the card was never taken and the weapon was lost with the bag.
+     */
+    static boolean recovering(Crew c, Agent a) {
+        if (a.ticksExisted > 20 * 60) return false;
+        for (TaskBoard.Card k : c.board.cards)
+            if (k.open() && "recover".equals(k.kind) && k.only != null && TaskBoard.same(k.only, a)) return true;
+        return false;
+    }
+
     /** the call done: at once (say, how_to_make, done, give_up, a skill that cannot begin) or as a card of the board */
     boolean act(Crew c, Agent a, WorldServer w, Mind.Call cl) {
         switch (cl.tool) {
@@ -224,6 +243,9 @@ final class AgentMind {
                 return true;
             case "how_to_make":
                 record(c, a, w, cl, "OK", MindSkills.howToMake(cl.arg("item")), "", 0);
+                return true;
+            case "masked":   // the policy chose an action its mask did not allow: a failed step, nothing done
+                record(c, a, w, cl, "MASKED", "the action was not allowed now (its mask was 0)", "", 0);
                 return true;
             default:
         }
@@ -270,6 +292,12 @@ final class AgentMind {
         Mind.Step s = mind.record(cl, result, detail, changes, sec);
         if (!cl.tool.equals("how_to_make") || !result.equals("OK"))
             Events.log("mind: " + a.who() + " " + cl.tool + " -> " + result + (s.detail.isEmpty() ? "" : " (" + cut(s.detail, 240) + ")") + (changes.isEmpty() ? "" : "; " + changes));
+        if (RlEnv.on()) {   // the environment's step: its reward and the next observation's outcome; no journal line (no model, no prompt)
+            RlEnv.ended(this, a, cl.tool, result, skill != null ? before : null, MindSkills.bag(a), sec);
+            fightBefore = null;
+            tokens = new int[3];
+            return;
+        }
         JsonObject line = mind.logLine(w.getTotalWorldTime(), asked, cl, s, tokens, ms);
         Defense.Tally t = Defense.peek(a.who());
         if (goal.defense || t != null && !t.empty()) {   // the fight: the agent's tally so far and what this step came to
