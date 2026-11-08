@@ -68,7 +68,7 @@ CPU: torch на 2 потоках, симулятор в 3 процессах, в
 | `res/assets/aiguide/rl/policy.bin` | «сеть после симулятора»: идёт в jar клиента (`tools/build_client.py`), мозг по умолчанию |
 | `rl/policy-test.bin` | сверка Java с PyTorch для этих весов (`PolicyTest`) |
 | `rl/snapshots/policy-epoch-0.bin` | необученная сеть (та же инициализация, что у обучения: `torch.manual_seed(1)`) |
-| `rl/snapshots/policy-epoch-1.bin`, `-10`, `-50` | после 1, 10, 50 эпох обучения на симуляторе (прогон `sim1`) |
+| `rl/snapshots/policy-epoch-1.bin`, `-10`, `-50`, `-100`, `-744` | после 1, 10, 50, 100, 744 эпох на симуляторе (прогон `sim1`; 744 = `policy.bin`) |
 
 Подставить в мод (клиентский jar с этой ветки; JVM-флаги сервера/одиночной игры):
 
