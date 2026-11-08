@@ -14,10 +14,14 @@ SRC = os.path.join(ROOT, "client", "src", "hardelele", "aiguide", "client")
 TEST = os.path.join(ROOT, "client", "test")
 OUT = os.path.join(ROOT, "build", "test-classes")
 PURE = ["Sight.java", "CaseVec.java", "CaseBook.java", "Events.java", "Result.java", "Retry.java", "Situation.java", "Reflex.java", "Reflexes.java", "Undo.java", "Moves.java",
-        "PlacesNet.java", "PlacesKernels.java", "PlacesClasses.java", "PlacesSplit.java"]   # the classes with no game in them (Gson aside)
+        "PlacesNet.java", "PlacesKernels.java", "PlacesClasses.java", "PlacesSplit.java",
+        "PlaceView.java", "PlaceSource.java", "Labels.java", "Episodes.java", "Scrub.java", "ShareBuild.java", "ShareUpload.java"]   # the classes with no game in them (Gson aside)
 TESTS = ["hardelele.aiguide.client.SightTest", "hardelele.aiguide.client.CaseTest", "hardelele.aiguide.client.ReflexesTest",
-         "hardelele.aiguide.client.PlacesSplitTest", "hardelele.aiguide.client.PlacesNetTest"]
+         "hardelele.aiguide.client.PlacesSplitTest", "hardelele.aiguide.client.PlacesNetTest", "hardelele.aiguide.client.FeedbackTest"]
 GAME_TESTS = ["CaveGeometryTest", "CaveRetentionTest", "RoutineIntentTest", "RoutineLayoutTest", "RoutineSnapshotTest", "ShelterRouteTest", "PlacesInputTest"]   # against the built client
+HELPERS = ["ShareProbe.java"]   # compiled with the pure tests, run by tools/share-service's tests
+PY_TESTS = ["tests/test_labels.py", "tests/test_feedback_lang.py",   # the ratings' offline tool, the ratings' words
+            "share-service/tests/test_sigv4.py", "share-service/tests/test_service.py"]   # the share service (and the mod's sending through it)
 GSON = os.path.join(ROOT, "lib", "gson-2.2.4.jar")
 GAME_OUT = os.path.join(ROOT, "build", "test-game")
 PKG = os.path.join(TEST, "hardelele", "aiguide", "client")
@@ -44,7 +48,7 @@ def places_files():
 def main():
     shutil.rmtree(OUT, ignore_errors=True)
     os.makedirs(OUT)
-    sources = [os.path.join(SRC, f) for f in PURE] + [os.path.join(PKG, t.rsplit(".", 1)[1] + ".java") for t in TESTS]
+    sources = [os.path.join(SRC, f) for f in PURE] + [os.path.join(PKG, t.rsplit(".", 1)[1] + ".java") for t in TESTS] + [os.path.join(PKG, f) for f in HELPERS]
     release = []
     ver = subprocess.run([tool("javac"), "-version"], capture_output=True, text=True)
     if "1.8." not in ver.stdout + ver.stderr:
@@ -66,6 +70,10 @@ def main():
     subprocess.check_call([tool("javac"), "-encoding", "UTF-8", "-nowarn", "-d", GAME_OUT, "-cp", cp] + release + [os.path.join(PKG, t + ".java") for t in GAME_TESTS])
     for t in GAME_TESTS:
         r = subprocess.call([tool("java"), "-Dfile.encoding=UTF-8", "-cp", os.pathsep.join([GAME_OUT, cp]), "hardelele.aiguide.client." + t])
+        print(("ok   " if r == 0 else "FAIL ") + t)
+        bad |= r
+    for t in PY_TESTS:   # after the Java ones: test_labels.py also reads what FeedbackTest wrote
+        r = subprocess.call([sys.executable, os.path.join(ROOT, "tools", t)])
         print(("ok   " if r == 0 else "FAIL ") + t)
         bad |= r
     sys.exit(bad)

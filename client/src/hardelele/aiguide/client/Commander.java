@@ -166,6 +166,8 @@ public class Commander {
     double[] mark;
     long markAt;
     int markColor;
+    // the person's ratings: a recognised place's menu, what the agents did (L: the places' layer, J: the agents' episodes)
+    final FeedbackUi fb = new FeedbackUi();
 
     static void start() {
         instance = new Commander();
@@ -199,6 +201,7 @@ public class Commander {
     void close() {
         if (!on) return;
         on = false;
+        fb.close();
         Slice.exit();
         CaveView.exit();
         viewedSkin = -1;
@@ -745,6 +748,12 @@ public class Commander {
         if (lmb != null) l.append("ЛКМ: ").append(lmb);
         if (rmb != null && !selected.isEmpty() && armed == Armed.NONE) l.append(l.length() > 0 ? "   " : "").append("ПКМ: ").append(rmb);
         hoverLabel = l.toString();
+        PlaceLayer.hovered = null;
+        if (PlaceLayer.shown() && armed == Armed.NONE && !(hover instanceof Agent) && curIn()) {   // a place under the mouse: the left click rates it
+            PlaceView p = PlaceLayer.hit(ray(curX(), curY()));
+            PlaceLayer.hovered = p;
+            if (p != null) hoverLabel = FeedbackUi.t("place.hover", FeedbackUi.className(p.cls()), Math.round(p.confidence() * 100));
+        }
     }
 
     String materialName() {
@@ -1013,6 +1022,7 @@ public class Commander {
         @Override
         protected void keyTyped(char c, int code) {
             lastInput = vOn ? lastInput : System.currentTimeMillis();
+            if (fb.open()) { fb.key(c, code); return; }
             if (routinesOpen) { routineKey(c, code); return; }
             if (chat.isFocused()) {   // writing to the guide: the keys are the text's
                 if (code == Keyboard.KEY_RETURN) { send(chat.getText()); chat.setText(""); chat.setFocused(false); }
@@ -1031,6 +1041,8 @@ public class Commander {
                 return;
             }
             if (code == Keyboard.KEY_Y) Fog.on = !Fog.on;
+            if (code == Keyboard.KEY_L) { togglePlaces(); return; }
+            if (code == Keyboard.KEY_J) { fb.openActions(); return; }
             if (code == Keyboard.KEY_U && viewedSkin > 0) {
                 if (CaveView.on) {
                     CaveView.exit();
@@ -1123,8 +1135,17 @@ public class Commander {
             return true;
         }
 
+        void togglePlaces() {
+            PlaceLayer.on = !PlaceLayer.on;
+            if (PlaceLayer.on && PlaceSource.current == null) fb.say(FeedbackUi.t("places.nosource"));
+            else if (PlaceLayer.on && PlaceSource.places().isEmpty()) fb.say(FeedbackUi.t("places.none"));
+        }
+
         void pill(String what) {
             if (what.equals("routines")) { openRoutines(); return; }
+            if (what.equals("places")) { togglePlaces(); return; }
+            if (what.equals("actions")) { fb.openActions(); return; }
+            if (what.equals("share")) { GuiShare.open(null, true); return; }
             if (what.startsWith("routine:")) {
                 if (selected.isEmpty()) { localReply = "Сначала выбери агентов для сценария."; return; }
                 Routines.run(picked(), what.substring(8));
@@ -1319,6 +1340,12 @@ public class Commander {
         void input(int b, boolean state, int mx, int my, int wheel, int dx) {
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             int gx = mx / scale, gy = (mc.displayHeight - my) / scale;
+            if (fb.open()) {
+                if (wheel != 0) fb.wheel(wheel);
+                if (b == 0 && state) fb.click(Commander.this, gx, gy);
+                if (b >= 0 && !state) downButton = -1;
+                return;
+            }
             if (routinesOpen) { routineInput(b, state, gx, gy, wheel); return; }
             if (b >= 0 && downButton < 0 && gx >= px0() && gx < px0() + bandW() && (onPanel(my, scale) || gy < 65)) { panelInput(b, state, gx, gy); return; }
             // The floating cave geometry is for observation. Vanilla block picking still sees
@@ -1351,6 +1378,10 @@ public class Commander {
                 if (b == 0) {
                     Object o = pick(mx, my);
                     if (armed != Armed.NONE) { armedClick(o, shift); downButton = -1; return; }
+                    if (!(o instanceof Agent) && PlaceLayer.shown()) {   // the places' layer on: a click on a place rates it (an agent is still picked)
+                        PlaceView p = PlaceLayer.hit(ray(mx, my));
+                        if (p != null) { fb.openPlace(p); downButton = -1; return; }
+                    }
                     if (o instanceof Agent) { selecting = true; return; }
                     if (o instanceof MovingObjectPosition) {   // a stroke: dig (or, with Ctrl, build on top of what is clicked)
                         MovingObjectPosition m = (MovingObjectPosition) o;
@@ -1450,6 +1481,7 @@ public class Commander {
                 Ui.round(x - nw / 2 - 4, y - 12, x + nw / 2 + 4, y - 1, 4, sel ? 0xB0204828 : 0x90101418);   // a chip under the name
                 fontRendererObj.drawStringWithShadow(n, x - nw / 2, y - 10, sel ? 0x90FF90 : 0xFFFFFF);
             }
+            PlaceLayer.labels(Commander.this, fontRendererObj, scale, mc.displayHeight);
             if (CaveView.active() && !CaveView.focused() && CaveView.liveExit()) {
                 CaveGeometry.Result g = CaveView.volume;
                 float[] s = toScreen(g.exitX + 0.5, g.exitY + 1.0, g.exitZ + 0.5);
@@ -1484,6 +1516,8 @@ public class Commander {
             }
             viewBar(gmx, gmy);
             if (routinesOpen) routineDialog(gmx, gmy);
+            if (fb.open()) fb.draw(fontRendererObj, px0(), bandW(), height, gmx, gmy);
+            fb.drawNote(fontRendererObj, px0(), bandW(), height);
             if (dragFrom != null) {   // the item being carried with the mouse
                 Agent a = Cam.serverAgent((Integer) dragFrom[1]);
                 int slot = (Integer) dragFrom[2];
@@ -1620,7 +1654,10 @@ public class Commander {
                 y += 22;
             } else if (sentAt >= 0 && sentText.length() > 0) { fontRendererObj.drawStringWithShadow("…", x0 + 12, y, 0x708090); }
             y += 2;
-            pill("Сценарии", "routines", x0 + 12, y, gmx, gmy);
+            int rx = pill("Сценарии", "routines", x0 + 12, y, gmx, gmy);
+            // the ratings and the share: as many of them as the band has room for (L, J are the keys anyway)
+            String[][] more = { { (PlaceLayer.on ? "● " : "") + FeedbackUi.t("pill.places"), "places" }, { FeedbackUi.t("pill.actions"), "actions" }, { FeedbackUi.t("pill.share"), "share" } };
+            for (String[] m : more) if (rx + fontRendererObj.getStringWidth(m[0]) + 12 <= x1 - 8) rx = pill(m[0], m[1], rx, y, gmx, gmy);
             y += 18;
             List<Agent> sel = selAgents();
             if (sel.isEmpty()) {

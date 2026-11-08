@@ -100,6 +100,11 @@ public class GuiGuide extends GuiScreen {
         }
         if (key == Keyboard.KEY_RETURN || key == Keyboard.KEY_NUMPADENTER) {
             String q = input.getText().trim();
+            if (ShareBuild.command(q)) {   // not a question: the share screen (nothing is sent from it unasked)
+                input.setText("");
+                GuiShare.open(this, false);
+                return;
+            }
             if (q.isEmpty() || waiting) return;
             input.setText("");
             scroll = 0;
@@ -163,7 +168,8 @@ public class GuiGuide extends GuiScreen {
         }
         if (history.isEmpty() && !waiting) {
             lines.add("§7" + (ru() ? "Спроси что угодно про сборку: что делать дальше, как сделать вещь, куда идут предметы в трубах. "
-                    + "Можно попросить принести, скрафтить или построить." : "Ask anything about the modpack."));
+                    + "Можно попросить принести, скрафтить или построить. /поделиться — собрать архив данных для обучения (сам он никуда не уходит)."
+                    : "Ask anything about the modpack. /share builds an archive of data for training (it is not sent by itself)."));
             colors.add(0xA0A0A0);
         }
         int rows = (bottom - top) / 10;

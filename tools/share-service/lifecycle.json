@@ -1,0 +1,11 @@
+{
+  "Rules": [
+    {
+      "ID": "incoming-expire",
+      "Filter": { "Prefix": "incoming/" },
+      "Status": "Enabled",
+      "Expiration": { "Days": 30 },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
+    }
+  ]
+}
