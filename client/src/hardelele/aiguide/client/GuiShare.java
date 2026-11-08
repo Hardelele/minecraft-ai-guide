@@ -49,7 +49,7 @@ public class GuiShare extends GuiScreen {
 
     void replan() {
         try { plan = Feedback.plan(radius, plan); }
-        catch (Exception e) { failure = String.valueOf(e); step = Step.FAILED; Director.log("share: no plan: " + e); }
+        catch (Exception e) { failure = t("share.failed", String.valueOf(e)); step = Step.FAILED; Director.log("share: no plan: " + e); }
     }
 
     @Override public boolean doesGuiPauseGame() { return false; }   // the server goes on: it saves the world first
@@ -117,14 +117,14 @@ public class GuiShare extends GuiScreen {
             y += 4;
             fontRendererObj.drawStringWithShadow(t("share.total", ShareBuild.human(plan.size())), x + 12, y, 0xFFE8A0);
             y += 14;
-            if (step == Step.FAILED) { fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(t("share.failed", failure), w - 24), x + 12, y, 0xFF9090); y += 12; }
+            if (step == Step.FAILED) { fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(String.valueOf(failure), w - 24), x + 12, y, 0xFF9090); y += 12; }
             int bx = button(t("share.build"), "build", x + 12, y, mx, my, true);
             button(t("cancel"), "back", bx, y, mx, my, false);
             return;
         }
         if (step == Step.BUILDING) {
             if (plan.finished) {
-                if (plan.error != null) { failure = plan.error; step = Step.FAILED; }
+                if (plan.error != null) { failure = t("share.failed", plan.error); step = Step.FAILED; }
                 else { step = Step.DONE; Director.log("share: archive " + plan.result.getName() + " " + plan.result.length() + " bytes"); }
             }
             double f = plan.total <= 0 ? 0 : Math.min(0.99, plan.done / (double) plan.total);
@@ -155,21 +155,41 @@ public class GuiShare extends GuiScreen {
         }
         if (step == Step.SENDING) {
             if (sending.finished) step = sending.error == null ? Step.SENT : Step.FAILED;
-            if (sending.error != null) failure = sending.error;
+            if (sending.error != null) failure = refusal(sending);
             double f = sending.total <= 0 ? 0 : sending.sent / (double) sending.total;
-            fontRendererObj.drawStringWithShadow(t("share.sending", (int) Math.round(f * 100)), x + 12, y, 0xFFFFFF);
+            String what = "ask".equals(sending.phase) ? t("share.asking") : "complete".equals(sending.phase) ? t("share.completing") : t("share.sending", (int) Math.round(f * 100));
+            fontRendererObj.drawStringWithShadow(what, x + 12, y, 0xFFFFFF);
             y += 14;
             Ui.round(x + 12, y, x + w - 12, y + 8, 3, 0xFF23323E);
             Ui.round(x + 12, y, x + 12 + (int) ((w - 24) * f), y + 8, 3, 0xFF50A0FF);
             return;
         }
         if (step == Step.SENT) { fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(t("share.sent", sending.answer), w - 24), x + 12, y, 0xC8FFD0); y += 14; }
-        if (step == Step.FAILED) { fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(t("share.failed", failure), w - 24), x + 12, y, 0xFF9090); y += 14; }
+        if (step == Step.FAILED) {
+            for (Object l : fontRendererObj.listFormattedStringToWidth(failure == null ? "" : failure, w - 24)) { fontRendererObj.drawStringWithShadow((String) l, x + 12, y, 0xFF9090); y += 10; }
+            y += 4;
+        }
         int bx = button(t("share.folder"), "folder", x + 12, y, mx, my, false);
         if (config != null && config.enabled() && zip != null && step != Step.SENT) {
             bx = ShareUpload.host(config) != null ? button(t("share.send"), "send", bx, y, mx, my, false) : bx;
         }
         button(t("close"), "back", bx, y, mx, my, false);
+    }
+
+    /** the words for a failed send: a quota, a size, the service not ready, the storage's refusal; else the error itself */
+    static String refusal(ShareUpload.Progress p) {
+        ShareUpload.Refused r = p.refused;
+        if (r == null) return t("share.failed", p.error);
+        if (r.error.equals("quota")) {
+            long hours = Math.max(1, (r.retryAfter + 3599) / 3600);
+            String k = "share.err.quota." + r.reason, s = t(k, hours);
+            return s.equals("aiguide.fb." + k) ? t("share.err.quota.other", hours) : s;
+        }
+        if (r.error.equals("too_large")) return t("share.err.too_large", ShareBuild.human(r.maxSize));
+        if (r.error.equals("not_configured")) return t("share.err.not_configured");
+        if (r.error.equals("storage")) return t("share.err.storage", r.reason);
+        if (r.error.equals("not_uploaded") || r.error.equals("size_mismatch") || r.error.equals("checksum_mismatch")) return t("share.err.check");
+        return t("share.failed", p.error);
     }
 
     @Override

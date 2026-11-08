@@ -6,5 +6,7 @@ out/
 # secrets of a running server
 api.key
 mcp.token
+tools/share-service/share.env
+*.sqlite
 knowledge/
 __pycache__/

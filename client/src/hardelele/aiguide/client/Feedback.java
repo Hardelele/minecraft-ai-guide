@@ -142,7 +142,9 @@ final class Feedback {
                 // no template: still nothing to send
             }
         }
-        return ShareUpload.Config.read(f);
+        ShareUpload.Config c = ShareUpload.Config.read(f);
+        if (c.viaService() && !c.installId.matches("[0-9a-f]{32}")) c.installId = ShareUpload.Config.installId(f);   // made once, random
+        return c;
     }
 
     /** the names and places the game knows, to be cleaned out */

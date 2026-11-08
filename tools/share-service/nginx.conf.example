@@ -1,0 +1,34 @@
+# An example vhost for the share service (the container listens on 127.0.0.1:8080 of the host).
+# The archives themselves never pass here: the game PUTs them straight to the storage by the link it is given.
+
+limit_req_zone $binary_remote_addr zone=aiguide_share:10m rate=6r/m;
+
+server {
+    listen 443 ssl http2;
+    server_name share.example.org;                      # your name
+
+    ssl_certificate     /etc/letsencrypt/live/share.example.org/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/share.example.org/privkey.pem;
+
+    access_log off;                                     # no client IPs kept here either (the service keeps a salted hash)
+    client_max_body_size 16k;                           # only small JSON comes here
+
+    location = /healthz { proxy_pass http://127.0.0.1:8080; }
+
+    location /v1/ {
+        limit_req zone=aiguide_share burst=10 nodelay;
+        limit_except POST { deny all; }
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header X-Real-IP $remote_addr;        # read when SHARE_TRUST_PROXY=1
+        proxy_set_header Host $host;
+        proxy_read_timeout 60s;                         # /v1/complete may HEAD (or download) the object
+    }
+
+    location / { return 404; }
+}
+
+server {
+    listen 80;
+    server_name share.example.org;
+    return 301 https://$host$request_uri;
+}

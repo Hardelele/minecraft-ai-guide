@@ -379,5 +379,83 @@ public class FeedbackTest {
         } finally {
             srv.stop(0);
         }
+        service(d, zip, content);
+    }
+
+    // ---- through the share service: a stub service and a stub storage on 127.0.0.1 ---------------------------------
+
+    static void service(File d, File zip, final byte[] content) throws Exception {
+        File cfg = new File(d, "share2.json");
+        Files.write(cfg.toPath(), "{\"shareService\": \"http://x\", \"keep\": 7}".getBytes(StandardCharsets.UTF_8));
+        String id = ShareUpload.Config.installId(cfg);
+        String again = ShareUpload.Config.installId(cfg);
+        JsonObject saved = new JsonParser().parse(new String(Files.readAllBytes(cfg.toPath()), StandardCharsets.UTF_8)).getAsJsonObject();
+        check("an install id: 32 random hex digits, made once, kept in the config with its other keys", id.matches("[0-9a-f]{32}") && id.equals(again)
+                && saved.get("keep").getAsInt() == 7 && id.equals(ShareUpload.Config.read(cfg).installId));
+        check("another config, another id", !id.equals(ShareUpload.Config.installId(new File(d, "share3.json"))));
+
+        final List<Object[]> got = new ArrayList<Object[]>();
+        final String[] mode = { "ok" };
+        final HttpServer srv = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        final String base = "http://127.0.0.1:" + srv.getAddress().getPort();
+        srv.createContext("/", new HttpHandler() {
+            public void handle(HttpExchange x) throws java.io.IOException {
+                byte[] body = readAll(x.getRequestBody());
+                String path = x.getRequestURI().getPath();
+                synchronized (got) { got.add(new Object[] { x.getRequestMethod(), path, body, x.getRequestHeaders().getFirst("x-amz-checksum-sha256"), x.getRequestHeaders().getFirst("Content-Length") }); }
+                int code = 200;
+                String r = "{}";
+                if (path.equals("/v1/upload")) {
+                    if (mode[0].equals("quota")) { code = 429; r = "{\"error\":\"quota\",\"reason\":\"install_daily\",\"retry_after\":7200}"; }
+                    else if (mode[0].equals("large")) { code = 413; r = "{\"error\":\"too_large\",\"max_size\":1000}"; }
+                    else r = "{\"upload_id\":\"u1\",\"url\":\"" + base + "/s3/bucket/incoming/k.zip?X-Amz-Signature=x\",\"method\":\"PUT\",\"headers\":{\"Content-Length\":\"" + content.length + "\",\"x-amz-checksum-sha256\":\"c2hh\"},\"expires_in\":900}";
+                } else if (path.startsWith("/s3/")) { code = mode[0].equals("storage") ? 403 : 200; r = ""; }
+                else if (path.equals("/v1/complete")) r = "{\"status\":\"completed\"}";
+                byte[] rb = r.getBytes(StandardCharsets.UTF_8);
+                x.sendResponseHeaders(code, rb.length == 0 ? -1 : rb.length);
+                if (rb.length > 0) { OutputStream o = x.getResponseBody(); o.write(rb); o.close(); } else x.close();
+            }
+        });
+        srv.start();
+        try {
+            ShareUpload.Config c = new ShareUpload.Config();
+            c.service = base + "/";
+            c.installId = id;
+            c.timeoutSec = 10;
+            check("with a service set, Send is shown and goes to the service's host", c.enabled() && ShareUpload.host(c).equals("127.0.0.1:" + srv.getAddress().getPort()));
+            byte[] manifest = ("{\"id\":\"abc123\",\"version\":1,\"files\":[{},{}],\"consent\":{\"items\":{\"chat\":false}},\"world\":{\"id\":\"w\"},\"scrub\":{}}").getBytes(StandardCharsets.UTF_8);
+            ShareUpload.Progress p = ShareUpload.start(c, zip, "abc123", manifest);
+            for (int i = 0; i < 200 && !p.finished; i++) Thread.sleep(25);
+            check("a link asked for, the archive put, the upload completed", p.error == null && got.size() == 3 && "/v1/upload".equals(got.get(0)[1])
+                    && "PUT".equals(got.get(1)[0]) && "/v1/complete".equals(got.get(2)[1]) && p.answer.contains("completed"));
+            JsonObject ask = new JsonParser().parse(new String((byte[]) got.get(0)[2], StandardCharsets.UTF_8)).getAsJsonObject();
+            check("the ask: the install id, the size, the archive's SHA-256", id.equals(ask.get("install_id").getAsString()) && ask.get("size").getAsLong() == content.length
+                    && ShareBuild.sha256(zip).equals(ask.get("sha256").getAsString()));
+            JsonObject s = ask.getAsJsonObject("manifest_summary");
+            check("the summary: the archive's id, its files and ticks, not the world or the cleaning", "abc123".equals(s.get("id").getAsString()) && s.get("files").getAsInt() == 2
+                    && s.has("items") && !s.has("world") && !s.has("scrub"));
+            check("the PUT: the zip whole, the signed headers sent as given", java.util.Arrays.equals((byte[]) got.get(1)[2], content) && "c2hh".equals(got.get(1)[3])
+                    && String.valueOf(content.length).equals(got.get(1)[4]));
+            JsonObject done = new JsonParser().parse(new String((byte[]) got.get(2)[2], StandardCharsets.UTF_8)).getAsJsonObject();
+            check("complete: the upload's id and the install id", "u1".equals(done.get("upload_id").getAsString()) && id.equals(done.get("install_id").getAsString()));
+
+            mode[0] = "quota";
+            p = ShareUpload.start(c, zip, "abc123", manifest);
+            for (int i = 0; i < 200 && !p.finished; i++) Thread.sleep(25);
+            check("a quota: refused with its reason and when to try again", p.refused != null && "quota".equals(p.refused.error) && "install_daily".equals(p.refused.reason) && p.refused.retryAfter == 7200);
+            mode[0] = "large";
+            try { ShareUpload.send(c, zip, "abc123", manifest, null); check("too large: refused", false); }
+            catch (ShareUpload.Refused e) { check("too large: refused with the service's limit", "too_large".equals(e.error) && e.maxSize == 1000); }
+            mode[0] = "storage";
+            got.clear();
+            try { ShareUpload.send(c, zip, "abc123", manifest, null); check("the storage's refusal: refused", false); }
+            catch (ShareUpload.Refused e) { check("the storage's refusal: no complete after it", "storage".equals(e.error) && "403".equals(e.reason) && got.size() == 2); }
+            c.installId = "";
+            boolean noId = false;
+            try { ShareUpload.send(c, zip, "abc123", manifest, null); } catch (java.io.IOException e) { noId = !(e instanceof ShareUpload.Refused); }
+            check("no install id: nothing asked", noId);
+        } finally {
+            srv.stop(0);
+        }
     }
 }

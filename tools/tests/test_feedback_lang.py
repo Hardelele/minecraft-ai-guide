@@ -44,7 +44,9 @@ def main():
     wanted |= {"share.item." + i for i in re.findall(r'"(\w+)"', items)}
     results = re.search(r"enum Result \{(.*?)\}", src("Result.java"), re.S).group(1)
     wanted |= {"result." + r.lower() for r in re.findall(r"\b([A-Z][A-Z_]+)\b", re.sub(r"/\*\*.*?\*/", "", results, flags=re.S)) if r != "RUNNING"}
-    wanted |= {"result.pushed", "result.none"}
+    wanted |= {"result.pushed", "result.none", "share.err.quota.other"}
+    with open(os.path.join(ROOT, "tools", "share-service", "server.py"), encoding="utf-8") as h:   # every quota the service names
+        wanted |= {"share.err.quota." + r for r in re.findall(r'"(\w+)"\)', re.search(r"for over, reason in \((.*?)\):", h.read(), re.S).group(1))}
     for k in sorted(wanted):
         for name, d in (("ru_RU", ru), ("en_US", en)):
             if PREFIX + k not in d:
