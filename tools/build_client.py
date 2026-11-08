@@ -16,6 +16,7 @@ LIB = os.path.join(ROOT, "lib")
 SRC = os.path.join(ROOT, "client", "src")
 RES = os.path.join(ROOT, "client", "res")
 OUT = os.path.join(ROOT, "build", "client-classes")
+PLACES = os.path.join(ROOT, "res", "assets", "aiguide", "places", "places.bin")
 
 
 def main():
@@ -47,6 +48,11 @@ def main():
             for f in fs:
                 p = os.path.join(d, f)
                 z.write(p, os.path.relpath(p, RES).replace(os.sep, "/"))
+        # the places net's weights (places/CONTRACT.md: res/assets/aiguide/places/places.bin, the model's branch puts them there)
+        if os.path.isfile(PLACES):
+            z.write(PLACES, "assets/aiguide/places/places.bin", compress_type=zipfile.ZIP_DEFLATED)
+        else:
+            print("no", PLACES, "- the jar has no places weights (Places stays off unless -Daiguide.places.weights is given)")
     print("built:", target)
 
 

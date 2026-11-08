@@ -13,12 +13,32 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "client", "src", "hardelele", "aiguide", "client")
 TEST = os.path.join(ROOT, "client", "test")
 OUT = os.path.join(ROOT, "build", "test-classes")
-PURE = ["Sight.java", "CaseVec.java", "CaseBook.java", "Events.java", "Result.java", "Retry.java", "Situation.java", "Reflex.java", "Reflexes.java", "Undo.java", "Moves.java"]   # the classes with no game in them (Gson aside)
-TESTS = ["hardelele.aiguide.client.SightTest", "hardelele.aiguide.client.CaseTest", "hardelele.aiguide.client.ReflexesTest"]
-GAME_TESTS = ["CaveGeometryTest", "CaveRetentionTest", "RoutineIntentTest", "RoutineLayoutTest", "RoutineSnapshotTest", "ShelterRouteTest"]   # against the built client
+PURE = ["Sight.java", "CaseVec.java", "CaseBook.java", "Events.java", "Result.java", "Retry.java", "Situation.java", "Reflex.java", "Reflexes.java", "Undo.java", "Moves.java",
+        "PlacesNet.java", "PlacesKernels.java", "PlacesClasses.java", "PlacesSplit.java"]   # the classes with no game in them (Gson aside)
+TESTS = ["hardelele.aiguide.client.SightTest", "hardelele.aiguide.client.CaseTest", "hardelele.aiguide.client.ReflexesTest",
+         "hardelele.aiguide.client.PlacesSplitTest", "hardelele.aiguide.client.PlacesNetTest"]
+GAME_TESTS = ["CaveGeometryTest", "CaveRetentionTest", "RoutineIntentTest", "RoutineLayoutTest", "RoutineSnapshotTest", "ShelterRouteTest", "PlacesInputTest"]   # against the built client
 GSON = os.path.join(ROOT, "lib", "gson-2.2.4.jar")
 GAME_OUT = os.path.join(ROOT, "build", "test-game")
 PKG = os.path.join(TEST, "hardelele", "aiguide", "client")
+# the places net's weights and its check against PyTorch (places/CONTRACT.md): in the tree once the model's branch is
+# merged, else taken from that branch (places/model) into build/places
+PLACES_FILES = [("res/assets/aiguide/places/places.bin", "places.bin"), ("places/places-test.bin", "places-test.bin")]
+
+
+def places_files():
+    out = []
+    for path, name in PLACES_FILES:
+        f = os.path.join(ROOT, *path.split("/"))
+        if not os.path.isfile(f):
+            f = os.path.join(ROOT, "build", "places", name)
+            os.makedirs(os.path.dirname(f), exist_ok=True)
+            r = subprocess.run(["git", "show", "places/model:" + path], cwd=ROOT, capture_output=True)
+            if r.returncode == 0:
+                with open(f, "wb") as o:
+                    o.write(r.stdout)
+        out.append(f)
+    return out
 
 
 def main():
@@ -31,8 +51,10 @@ def main():
         release = ["--release", "8"]
     subprocess.check_call([tool("javac"), "-encoding", "UTF-8", "-nowarn", "-d", OUT, "-cp", GSON] + release + sources)
     bad = 0
+    weights, check = places_files()
     for t in TESTS:
-        bad |= subprocess.call([tool("java"), "-Dfile.encoding=UTF-8", "-Daiguide.test.dir=" + os.path.join(ROOT, "build", "test-tmp"), "-cp", os.pathsep.join([OUT, GSON]), t])
+        bad |= subprocess.call([tool("java"), "-Dfile.encoding=UTF-8", "-Daiguide.test.dir=" + os.path.join(ROOT, "build", "test-tmp"),
+                                "-Daiguide.places.weights=" + weights, "-Daiguide.places.test=" + check, "-cp", os.pathsep.join([OUT, GSON]), t])
     client = os.path.join(ROOT, "build", "client-classes")
     if not os.path.isdir(client):
         print("no build/client-classes: run tools/build_client.py first")
