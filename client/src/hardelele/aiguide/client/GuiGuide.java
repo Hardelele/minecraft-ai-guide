@@ -100,6 +100,14 @@ public class GuiGuide extends GuiScreen {
         }
         if (key == Keyboard.KEY_RETURN || key == Keyboard.KEY_NUMPADENTER) {
             String q = input.getText().trim();
+            String[] goal = Mind.command(q);
+            if (goal != null && CrewKeys.instance != null) {   // a goal for the agents' minds (/цель): set here, not asked
+                add(mc.thePlayer == null ? "" : mc.thePlayer.getCommandSenderName(), q);
+                input.setText("");
+                scroll = 0;
+                AgentMind.fromWindow(mc.thePlayer == null ? null : mc.thePlayer.getCommandSenderName(), goal);
+                return;
+            }
             if (CrewCommand.parse(q) != null && CrewKeys.instance != null) {   // the crew's command (/агент, /crew add|remove): done here, not asked
                 add(mc.thePlayer == null ? "" : mc.thePlayer.getCommandSenderName(), q);
                 input.setText("");

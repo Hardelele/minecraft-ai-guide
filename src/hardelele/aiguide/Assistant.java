@@ -203,6 +203,12 @@ class Assistant {
         body.addProperty("temperature", mod.config.temperature);
         if (tools != null) body.add("tools", tools);
         for (Map.Entry<String, JsonElement> e : extra.entrySet()) body.add(e.getKey(), e.getValue());
+        JsonObject r = new JsonParser().parse(post(body, timeoutSeconds)).getAsJsonObject();
+        return r.getAsJsonArray("choices").get(0).getAsJsonObject().getAsJsonObject("message");
+    }
+
+    /** one POST of a chat completion's body: the API's whole answer (an error as an exception, never with the key) */
+    String post(JsonObject body, int timeoutSeconds) throws Exception {
         String url = mod.config.baseUrl.replaceAll("/+$", "") + "/chat/completions";
         Proxy proxy = Proxy.NO_PROXY;
         if (!mod.config.proxy.isEmpty()) {
@@ -222,8 +228,7 @@ class Assistant {
         int code = c.getResponseCode();
         String text = read(code >= 400 ? c.getErrorStream() : c.getInputStream());
         if (code >= 400) throw new Exception("API " + code + ": " + (text.length() > 300 ? text.substring(0, 300) : text));
-        JsonObject r = new JsonParser().parse(text).getAsJsonObject();
-        return r.getAsJsonArray("choices").get(0).getAsJsonObject().getAsJsonObject("message");
+        return text;
     }
 
     static String read(InputStream in) throws Exception {

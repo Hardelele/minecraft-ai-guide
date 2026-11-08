@@ -53,7 +53,9 @@ class GuideConfig {
     boolean logTools, actions, mcpEnabled, areaBrief, labelUnknown;
     int areaRadius;
     int storageRadius, fetchRadius, mcpPort, learnMaxChars, learnMaxTokens;
-    String mcpHost, mcpTokenFile, learnModel, learnExtraBody;
+    String mcpHost, mcpTokenFile, learnModel, learnExtraBody, mindModel;
+    int mindMaxTokens, mindSteps, mindMinutes, mindTokens;
+    double mindTemperature;
     List<String> sources;
 
     GuideConfig(File configDir) {
@@ -93,6 +95,12 @@ class GuideConfig {
         mcpHost = c.getString("host", "mcp", "127.0.0.1", "Where MCP listens: 127.0.0.1 for this computer only, 0.0.0.0 for everyone (then keep the token secret)");
         mcpPort = c.getInt("port", "mcp", 25580, 1, 65535, "The MCP port; the endpoint is http://<host>:<port>/mcp");
         mcpTokenFile = c.getString("tokenFile", "mcp", "config/aiguide/mcp.token", "The bearer token clients must send; made at first start if missing");
+        mindModel = c.getString("model", "mind", "", "The model of the crew agents' minds (each picks the agent's next skill); empty: the guide's model");
+        mindMaxTokens = c.getInt("maxTokens", "mind", 400, 50, 8000, "The longest answer of a mind's decision, in tokens (one tool call)");
+        mindTemperature = c.get("mind", "temperature", 0.2, "Randomness of the minds' decisions").getDouble();
+        mindSteps = c.getInt("maxSteps", "mind", 60, 1, 1000, "Steps (skills) one goal may take; past it the agent gives the goal up and says so");
+        mindMinutes = c.getInt("maxMinutes", "mind", 30, 1, 600, "Minutes one goal may take");
+        mindTokens = c.getInt("maxTokensPerGoal", "mind", 200000, 1000, 100000000, "Tokens (asked and answered, all its decisions) one agent's goal may cost");
         learnModel = c.getString("learnModel", "learn", "deepseek-v4-pro", "The model /guide learn writes guides with (a stronger one is worth it: it runs once)");
         learnExtraBody = c.getString("learnExtraBody", "learn", "{}", "JSON merged into /guide learn requests");
         learnMaxTokens = c.getInt("maxTokens", "learn", 32000, 1000, 200000, "The longest answer of the learn model, thinking included");
