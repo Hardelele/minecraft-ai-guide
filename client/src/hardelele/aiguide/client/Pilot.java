@@ -48,8 +48,36 @@ public class Pilot {
     static final float EASE = SMOOTH ? 0.22f : 1f, SPIN = SMOOTH ? 11f : 32f;
     static final int AIM_TICKS = SMOOTH ? 40 : 20;
 
-    String task;   // goto, use, place, dig; null when idle
+    String task;   // goto, use, place, dig, look, hit; null when idle
     int tx, ty, tz, slot, ticks, side, replans, checkAt;
+
+    // ---- the crew's line (the player's character as its number 1, PlayerAgent): orders in, how each ended out ----
+    /** who gave the task on now: "crew", or null (the guide on the server) */
+    volatile String by;
+    volatile int crewId;
+    /** the crew's last task that ended, and how: ok, failed:why, taken (the player moved), danger, stopped */
+    volatile int endedId;
+    volatile String endedHow = "";
+    /** a card of the crew's is being done with the player's character: a movement key takes it back even between tasks */
+    volatile boolean crewDriving;
+    /** what took the character back from the crew (taken, danger), for it to read once */
+    volatile String crewSignal;
+    int nextId;
+
+    /** a task from the crew (any thread): its id, to see how it ended */
+    synchronized int order(JsonObject m) {
+        int id = ++nextId;
+        m.addProperty("by", "crew");
+        m.addProperty("id", id);
+        inbox.add(m);
+        return id;
+    }
+
+    /** the task on now ended: the crew is told here, the guide over the line (as before) */
+    void ended(String how, JsonObject toServer) {
+        if (by != null) { endedHow = how; endedId = crewId; by = null; }
+        else if (toServer != null) send(toServer);
+    }
     double reach, lastX, lastZ;
     List<int[]> path;
     int at;
@@ -135,9 +163,15 @@ public class Pilot {
             send(r);
         } else if (t.equals("say")) {
             GuiGuide.said(m.has("text") ? m.get("text").getAsString() : "", !m.has("chat") || m.get("chat").getAsBoolean());
-        } else if (t.equals("goto") || t.equals("use") || t.equals("place") || t.equals("dig")) {
+        } else if (t.equals("goto") || t.equals("use") || t.equals("place") || t.equals("dig") || t.equals("look") || t.equals("hit")) {
             if (mc.currentScreen instanceof GuiGuide) mc.displayGuiScreen(null);   // the player watches where they are taken
+            if (task != null && by != null) ended("stopped", null);   // the crew's task on now gives way to this one
             stop();
+            boolean crew = m.has("by");
+            if (!crew && crewDriving) crewSignal = "guide";   // the guide leads the player now: the crew's card goes back
+            by = crew ? "crew" : null;
+            crewId = crew ? num(m, "id") : 0;
+            target = num(m, "e");
             task = t;
             tx = num(m, "x");
             ty = num(m, "y");
@@ -155,7 +189,15 @@ public class Pilot {
             if (mc.currentScreen instanceof GuiGuide) mc.displayGuiScreen(null);
             stop();
             mc.displayGuiScreen(new net.minecraft.client.gui.inventory.GuiInventory(mc.thePlayer));
-        } else if (t.equals("stop")) stop();
+        } else if (t.equals("stop")) {
+            if (m.has("by")) {   // the crew lets the character go: its own task stops, not the guide's
+                crewDriving = false;
+                if (task != null && by != null) { ended("stopped", null); stop(); }
+            } else {
+                if (task != null && by != null) ended("stopped", null);
+                stop();
+            }
+        }
         else if (t.equals("ghost")) Ghosts.set(m);
         else if (t.equals("ghostclear")) Ghosts.clear();
     }
@@ -167,23 +209,84 @@ public class Pilot {
         if (e.phase != TickEvent.Phase.END) return;
         if (mc.thePlayer == null || mc.theWorld == null) {
             inbox.clear();
+            if (task != null && by != null) ended("stopped", null);
             task = null;
             pressing = false;
+            crewDriving = false;
             return;
         }
         for (JsonObject m; (m = inbox.poll()) != null; ) handle(m);
         if (mc.currentScreen == null && window.isPressed()) mc.displayGuiScreen(new GuiGuide());
         shots();
-        if (task == null) return;
-        if (taken()) {   // the player moves themselves: the controls are theirs
-            stop();
-            send(msg("cancel"));
+        if (task == null && !crewDriving) {
+            if (PlayerAgent.givenToAI && taken()) crewSignal = "taken";   // given to the AI, between cards: a movement key takes him back too
             return;
         }
+        String bad = danger();
+        if (bad != null) {   // a fall, lava, fire: the autopilot lets go at once, the controls are the player's
+            Events.log("pilot: lets go of the controls: " + bad);
+            boolean crew = by != null || crewDriving;
+            stop();
+            if (crew) { crewSignal = "danger"; ended("danger", null); }
+            else { JsonObject f = msg("failed"); f.addProperty("why", "danger: " + bad); f.addProperty("task", ""); send(f); }
+            return;
+        }
+        if (taken()) {   // the player moves themselves: the controls are theirs
+            if (crewDriving) crewSignal = "taken";
+            if (task != null) {
+                stop();
+                ended("taken", msg("cancel"));
+            }
+            return;
+        }
+        if (task == null) return;
         ticks++;
         if (task.equals("goto")) walk();
         else if (task.equals("use") || task.equals("place")) click();
         else if (task.equals("dig")) dig();
+        else if (task.equals("look")) look();
+        else if (task.equals("hit")) hit();
+    }
+
+    /** what makes driving the character dangerous now: falling further than a planned drop, lava or fire on or around it */
+    String danger() {
+        EntityClientPlayerMP p = mc.thePlayer;
+        if (p.capabilities.isFlying || p.capabilities.disableDamage) return null;   // creative: nothing hurts
+        if (p.fallDistance > 3.6f) return "falling";
+        if (p.handleLavaMovement()) return "in lava";
+        if (p.isBurning()) return "burning";
+        int[] f = feet();
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dz = -1; dz <= 1; dz++)
+                for (int dy = -1; dy <= 1; dy++) {
+                    net.minecraft.block.material.Material m = mc.theWorld.getBlock(f[0] + dx, f[1] + dy, f[2] + dz).getMaterial();
+                    if (m == net.minecraft.block.material.Material.lava) return "lava next to it";
+                }
+        return null;
+    }
+
+    /** turn to a point (a chest to put things in): done when looking at it */
+    void look() {
+        if (aim(tx + 0.5, ty + 0.5, tz + 0.5) || ticks >= AIM_TICKS) {
+            task = null;
+            ended("ok", null);
+        }
+    }
+
+    int target;   // the entity a hit is for
+
+    /** one blow at an entity in reach, as the attack button does: the eyes on it, then the game's own attack */
+    void hit() {
+        EntityClientPlayerMP p = mc.thePlayer;
+        net.minecraft.entity.Entity e = mc.theWorld.getEntityByID(target);
+        if (e == null || e.isDead) { task = null; ended("ok", null); return; }
+        boolean on = aim(e.posX, e.boundingBox.minY + e.height * 0.6, e.posZ);
+        if (!on && ticks < AIM_TICKS) return;
+        if (p.getDistanceToEntity(e) > 3.4) { fail("out of reach"); return; }
+        mc.playerController.attackEntity(p, e);
+        p.swingItem();
+        task = null;
+        ended("ok", null);
     }
 
     /** a movement key held on the keyboard itself (not by the autopilot) */
@@ -209,7 +312,7 @@ public class Pilot {
         JsonObject m = msg("failed");
         m.addProperty("why", why);
         m.addProperty("task", was == null ? "" : was);
-        send(m);
+        ended("failed:" + why, m);
     }
 
     void keys(boolean forward, boolean jump) {
@@ -237,12 +340,12 @@ public class Pilot {
 
     void walk() {
         EntityClientPlayerMP p = mc.thePlayer;
-        if (mc.currentScreen != null) { keys(false, false); return; }   // a window is open: wait
+        if (mc.currentScreen != null && !(mc.currentScreen instanceof Commander.Screen)) { keys(false, false); return; }   // a window is open: wait (not the commander's: it watches from above)
         if (path == null || at >= path.size()) {
             keys(false, false);
             if (Paths.near(feet(), tx, ty, tz, reach + 0.5)) {
                 task = null;
-                send(msg("arrived"));
+                ended("ok", msg("arrived"));
             } else if (++replans > 3 || !plan()) fail("lost the way");
             return;
         }
@@ -316,6 +419,7 @@ public class Pilot {
         if (mc.playerController.onPlayerRightClick(p, w, p.getHeldItem(), x, y, z, s, Vec3.createVectorHelper(hx - x, hy - y, hz - z)))
             p.swingItem();
         task = null;
+        ended("ok", null);
     }
 
     /** a solid block next to the place, and the side of it that faces the place */
@@ -353,6 +457,7 @@ public class Pilot {
                 return;
             }
             task = null;
+            ended("ok", null);
             return;
         }
         if (ticks > 20 * 30) { fail("could not dig it"); return; }
@@ -433,6 +538,7 @@ public class Pilot {
 
     @SubscribeEvent
     public void overlay(RenderGameOverlayEvent.Text e) {
+        if (crewDriving) { e.left.add("§b" + CrewKeys.tr("overlay")); return; }   // the crew's card: the player's character is its number 1
         if (task == null) return;
         boolean ru = mc.gameSettings.language != null && mc.gameSettings.language.startsWith("ru");
         e.left.add("§b" + (ru ? "[Гид] ведёт тебя — WASD, чтобы взять управление" : "[Guide] is driving — WASD to take the controls"));

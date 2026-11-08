@@ -41,8 +41,7 @@ class Orders {
                 if (s == null) return;
                 WorldServer w = s.worldServers[0];
                 for (int n : agents) {
-                    Agent a = null;
-                    for (Agent g : c.agents) if (g.skin() == n && !g.isDead) a = g;
+                    Doer a = c.doer(n);   // an agent, or the player's own character (1)
                     if (a == null) continue;
                     try {
                         apply(c, w, a, kind, x, y, z, entityId, queue, item, n);
@@ -54,51 +53,83 @@ class Orders {
         });
     }
 
-    static void apply(Crew c, WorldServer w, final Agent a, Kind kind, int x, int y, int z, int entityId, boolean queue, String item, int n) {
+    /**
+     * An order to one of the crew. Stop: its orders go, it stands, still the player's (held: not back with the AI by
+     * itself); release: back with the AI at once. Any other order: the player's unit until its orders are done (then
+     * back with the AI by itself, TaskBoard.muster), unless held by a Stop after it.
+     */
+    static void apply(Crew c, WorldServer w, final Doer a, Kind kind, int x, int y, int z, int entityId, boolean queue, String item, int n) {
         if (kind == Kind.RELEASE || kind == Kind.STOP) {   // its orders go; stop: it stands (still the player's), release: back to the AI
             cancel(c, a);
-            Crew.clearJobs(a);
-            a.body.stop();
+            a.cancel(kind == Kind.STOP ? "stop" : "release");
             TaskBoard.Card held = c.board.leased.get(a);
             if (held != null) { c.board.release(a, held); held.state = TaskBoard.State.OPEN; }
-            a.commanded = kind == Kind.STOP;
-            Events.log("order: " + a.getCustomNameTag() + (kind == Kind.STOP ? " stops (holds)" : " is back with the AI"));
+            a.ordered(kind == Kind.STOP);
+            a.holding(kind == Kind.STOP);
+            Events.log("order: " + a.who() + (kind == Kind.STOP ? " stops (holds)" : " is back with the AI"));
             return;
         }
         if (kind == Kind.HOLD) {   // work with this (the n-th stack of its bag): in hand now, its skills take it first
-            if (n >= 0 && n < a.bag.size()) {
-                ItemStack s = a.bag.get(n);
-                a.preferred = s;
-                a.body.hold(s);
-                Events.log("order: " + a.getCustomNameTag() + " works with " + Ledger.name(s));
+            if (!(a instanceof Agent)) return;
+            Agent g = (Agent) a;
+            if (n >= 0 && n < g.bag.size()) {
+                ItemStack s = g.bag.get(n);
+                g.preferred = s;
+                g.body.hold(s);
+                Events.log("order: " + g.getCustomNameTag() + " works with " + Ledger.name(s));
             }
             return;
         }
+        final Crew.Task t;
+        TaskBoard.Play play = null;
+        if (a instanceof Agent) t = task(c, w, (Agent) a, kind, x, y, z, entityId, item, n);
+        else {   // the player's own character: what the autopilot can do of the order, nothing else
+            t = null;
+            play = play(kind, x, y, z, entityId, item);
+            if (play == null) {
+                Events.log("order: " + a.who() + " cannot " + kind + " (the autopilot does not do that)");
+                Crew.note("self.cannot", kind.name().toLowerCase());
+                return;
+            }
+        }
+        if (t == null && play == null) return;
         if (!queue) cancel(c, a);
-        final Crew.Task t = task(c, w, a, kind, x, y, z, entityId, item, n);
-        if (t == null) return;
         Origin was = Crew.originNow;
         Crew.originNow = Origin.PLAYER;
-        TaskBoard.Card k = c.board.post("order " + kind.name().toLowerCase(), () -> t).pin(a).prio(PRIO).lease(kind == Kind.CRAFT ? 20 * 1800 : 20 * 600);   // a craft may go to the world for its raw things
+        TaskBoard.Card k = c.board.post("order " + kind.name().toLowerCase(), () -> t).pin(a).prio(PRIO).lease(kind == Kind.CRAFT ? 20 * 1800 : 20 * 600).play(play);   // a craft may go to the world for its raw things
         Crew.originNow = was;
         k.phase = null;   // the player's, not a phase's
-        TaskBoard.Card before = last.get(a.skin());
+        TaskBoard.Card before = last.get(a.num());
         if (queue && before != null && before.open()) k.after(before);
-        last.put(a.skin(), k);
-        a.commanded = true;
-        Events.log("order: " + a.getCustomNameTag() + " " + kind + " " + x + " " + y + " " + z + (entityId >= 0 ? " #" + entityId : "") + (queue ? " (queued)" : ""));
+        last.put(a.num(), k);
+        a.ordered(true);
+        a.holding(false);
+        Events.log("order: " + a.who() + " " + kind + " " + x + " " + y + " " + z + (entityId >= 0 ? " #" + entityId : "") + (queue ? " (queued)" : ""));
         if (!queue || before == null || !before.open()) c.board.assign(k, a, w, "has an order");
     }
 
-    /** the agent's open player orders go (given up: the player changed them) */
-    static void cancel(Crew c, Agent a) {
+    /** an order in the player's own terms (what PlayerAgent does through the autopilot), or null when it cannot */
+    static TaskBoard.Play play(Kind kind, int x, int y, int z, int entityId, String item) {
+        switch (kind) {
+            case MOVE: return TaskBoard.Play.at(TaskBoard.Play.Kind.MOVE, x, y, z);
+            case CHOP: return TaskBoard.Play.at(TaskBoard.Play.Kind.CHOP, x, y, z);
+            case MINE: return TaskBoard.Play.at(TaskBoard.Play.Kind.MINE, x, y, z);
+            case DEPOSIT: return TaskBoard.Play.at(TaskBoard.Play.Kind.DEPOSIT, x, y, z);
+            case ATTACK: return new TaskBoard.Play(TaskBoard.Play.Kind.ATTACK, x, y, z, entityId, null, 0);
+            case PLACE: return new TaskBoard.Play(TaskBoard.Play.Kind.PLACE, x, y, z, -1, item, 1);
+            default: return null;   // guard, craft, smelt, give: not the autopilot's
+        }
+    }
+
+    /** the doer's open player orders go (given up: the player changed them) */
+    static void cancel(Crew c, Doer a) {
         for (TaskBoard.Card k : c.board.cards)
             if (k.origin == Origin.PLAYER && k.only != null && TaskBoard.same(k.only, a) && k.open()) {
                 if (k.holder != null) c.board.release(k.holder, k);
                 k.state = TaskBoard.State.FAILED;
                 k.last = Result.GONE;
             }
-        last.remove(a.skin());
+        last.remove(a.num());
     }
 
     /** what the order is in the crew's skills */
@@ -359,8 +390,8 @@ class Orders {
                 WorldServer w = net.minecraft.server.MinecraftServer.getServer().worldServers[0];
                 List<int[]> bs = new ArrayList<int[]>(blocks);
                 java.util.Collections.sort(bs, (p, q) -> build ? p[1] - q[1] : q[1] - p[1]);
-                List<Agent> who = new ArrayList<Agent>();
-                for (int n : agents) for (Agent g : c.agents) if (g.skin() == n && !g.isDead) who.add(g);
+                List<Doer> who = new ArrayList<Doer>();
+                for (int n : agents) { Doer g = c.doer(n); if (g != null) who.add(g); }
                 if (agents.length > 0 && who.isEmpty()) {
                     Events.log("order: designation rejected; selected agents unavailable");
                     return; // never turn an explicit selection into a free-for-anyone card
@@ -386,13 +417,14 @@ class Orders {
                         t = new TaskBoard.Seq(new Crew.Mine(new ArrayList<int[]>(java.util.Arrays.asList(b))), new Crew.Collect(b[0] + 0.5, b[1], b[2] + 0.5, 4)).lenient();
                     }
                     final Crew.Task tt = t;
-                    TaskBoard.Card k = c.board.post(build ? "paint build" : "paint dig", () -> tt).prio(8 + (build ? -b[1] : b[1]) * 0.001).at(b[0] + 0.5, b[1], b[2] + 0.5).lease(20 * 300);
+                    TaskBoard.Card k = c.board.post(build ? "paint build" : "paint dig", () -> tt).prio(8 + (build ? -b[1] : b[1]) * 0.001).at(b[0] + 0.5, b[1], b[2] + 0.5).lease(20 * 300)
+                            .play(build ? new TaskBoard.Play(TaskBoard.Play.Kind.PLACE, b[0], b[1], b[2], -1, material, 1) : TaskBoard.Play.at(TaskBoard.Play.Kind.DIG, b[0], b[1], b[2]));
                     k.placeChecked = true;   // (its own way there is the dig's: not the base's walk)
                     k.phase = null;
-                    if (who.size() == 1) { k.pin(who.get(0)); who.get(0).commanded = true; }   // one agent: its own
+                    if (who.size() == 1) { k.pin(who.get(0)); who.get(0).ordered(true); who.get(0).holding(false); }   // one: its own
                     else if (!who.isEmpty()) {   // several: theirs, shared out among them as each is free (who takes which, they decide)
                         k.group = new java.util.HashSet<Integer>();
-                        for (Agent g : who) { k.group.add(g.skin()); g.commanded = true; }
+                        for (Doer g : who) { k.group.add(g.num()); g.ordered(true); g.holding(false); }
                     }
                     TaskBoard.Card dep = at.get(Crew.key(b[0], b[1] + (build ? -1 : 1), b[2]));   // the one above (dig) or below (build) first
                     if (dep != null) k.after(dep);
@@ -415,7 +447,7 @@ class Orders {
                     if (!k.open() || k.at == null || !(k.kind.equals("paint dig") || k.kind.equals("paint build"))) continue;
                     double x = k.at[0], y = k.at[1], z = k.at[2];
                     if (x < Math.min(x0, x1) || x > Math.max(x0, x1) + 1 || y < Math.min(y0, y1) || y > Math.max(y0, y1) || z < Math.min(z0, z1) || z > Math.max(z0, z1) + 1) continue;
-                    if (k.holder != null) { Crew.clearJobs(k.holder); c.board.release(k.holder, k); }
+                    if (k.holder != null) { k.holder.cancel("taken back"); c.board.release(k.holder, k); }
                     k.state = TaskBoard.State.FAILED;
                     k.last = Result.GONE;
                     n++;
@@ -444,7 +476,7 @@ class Orders {
     static String fromGuide(String agents, String order, int x, int y, int z) {
         Crew c = Crew.ensure();
         List<Integer> who = new ArrayList<Integer>();
-        if (agents == null || agents.trim().isEmpty() || agents.trim().equalsIgnoreCase("all")) { for (Agent a : new ArrayList<Agent>(c.agents)) who.add(a.skin()); }
+        if (agents == null || agents.trim().isEmpty() || agents.trim().equalsIgnoreCase("all")) { for (Agent a : new ArrayList<Agent>(c.agents)) who.add(a.skin()); }   // the agents (the player himself only by his number, 1)
         else for (String p : agents.split("[,\\s]+")) if (p.matches("\\d+")) who.add(Integer.parseInt(p));
         if (who.isEmpty()) return "No such agents (the crew: " + c.agents.size() + ").";
         int[] ws = new int[who.size()];

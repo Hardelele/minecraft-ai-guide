@@ -1,6 +1,8 @@
 key.aiguide.window=Окно гида
 key.categories.aiguide=AI Guide
 key.aiguide.commander=Режим командира
+key.aiguide.selfai=Отдать себя ИИ
+key.aiguide.addagent=Ещё агент
 
 # the person's ratings (FeedbackUi, PlaceLayer) and the share archive (GuiShare)
 aiguide.fb.pill.places=Места
@@ -57,6 +59,7 @@ aiguide.fb.result.blocked=мешает
 aiguide.fb.result.busy=занято
 aiguide.fb.result.not_visible=не видно
 aiguide.fb.result.out_of_reach=не дотянуться
+aiguide.fb.result.no_agent=все на приказах игрока
 aiguide.fb.result.pushed=перебит другим рефлексом
 aiguide.fb.share.title=Поделиться данными
 aiguide.fb.share.intro=Архив собирается на этом компьютере, в папке aiguide-share. Сам он никуда не отправляется. Отметь, что в него положить.
@@ -96,3 +99,31 @@ aiguide.fb.share.err.too_large=Архив больше, чем сервис пр
 aiguide.fb.share.err.not_configured=Сервис приёма ещё не настроен. Архив остался в папке.
 aiguide.fb.share.err.storage=Хранилище не приняло архив (код %s). Попробуй позже, архив остался в папке.
 aiguide.fb.share.err.check=Загрузка не подтвердилась (архив дошёл не целым). Попробуй отправить ещё раз.
+
+# the crew: the player as its number 1, agents added and let go, the keys (CrewKeys, Commander, Pilot)
+aiguide.crew.tag=Экипаж
+aiguide.crew.nocrew=Экипаж есть только в одиночной игре.
+aiguide.crew.usage=Команды экипажа: /агент [N] или /crew add [N] — позвать агентов; /агент убрать K или /crew remove K — отпустить агента K.
+aiguide.crew.remove.which=Кого отпустить? Выбери агентов в режиме командира или напиши номер: /crew remove 3.
+aiguide.crew.remove.self=Агент 1 — это ты сам: его не отпустить.
+aiguide.crew.remove.none=Агента %s нет.
+aiguide.crew.added=%s пришёл.
+aiguide.crew.removed=%s ушёл, его вещи лежат на земле.
+aiguide.crew.full=Больше агентов нельзя: их уже %s, а с тобой экипаж — %s.
+aiguide.crew.nospot=Рядом нет места, где агент мог бы безопасно встать.
+aiguide.crew.stall=План стоит: все агенты выполняют ваши приказы. Нажмите «По плану», чтобы вернуть их.
+aiguide.crew.self.given=Ты отдал себя ИИ: твой персонаж берёт задания с доски сам. Любая клавиша движения или %s — управление снова у тебя.
+aiguide.crew.self.back=Управление у тебя.
+aiguide.crew.self.danger=Опасно (падение, лава или огонь): автопилот отпустил управление, оно у тебя.
+aiguide.crew.self.cannot=Твой персонаж так не умеет: автопилот только ходит, рубит, копает, складывает в сундук, бьёт и ставит блоки.
+aiguide.crew.self.label=%s (1)
+aiguide.crew.self.doing=делает: %s
+aiguide.crew.self.ai=отдан ИИ, ждёт задание
+aiguide.crew.self.free=сам по себе
+aiguide.crew.self.ai.short=ИИ
+aiguide.crew.self.pick=выбрать себя: %s
+aiguide.crew.pill.add=+ агент
+aiguide.crew.pill.self=Отдать себя ИИ
+aiguide.crew.pill.dismiss=Отпустить
+aiguide.crew.key.conflict=Клавиша %s у AI Guide («%s») занята: её держит %s — «%s». Свободна, например, %s (Настройки → Управление).
+aiguide.crew.overlay=[Экипаж] твой персонаж — агент 1 и делает задание. WASD — взять управление

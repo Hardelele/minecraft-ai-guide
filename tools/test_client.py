@@ -15,12 +15,13 @@ TEST = os.path.join(ROOT, "client", "test")
 OUT = os.path.join(ROOT, "build", "test-classes")
 PURE = ["Sight.java", "CaseVec.java", "CaseBook.java", "Events.java", "Result.java", "Retry.java", "Situation.java", "Reflex.java", "Reflexes.java", "Undo.java", "Moves.java",
         "PlacesNet.java", "PlacesKernels.java", "PlacesClasses.java", "PlacesSplit.java",
-        "PlaceView.java", "PlaceSource.java", "Labels.java", "Episodes.java", "Scrub.java", "ShareBuild.java", "ShareUpload.java"]   # the classes with no game in them (Gson aside)
+        "PlaceView.java", "PlaceSource.java", "Labels.java", "Episodes.java", "Scrub.java", "ShareBuild.java", "ShareUpload.java", "CrewCommand.java"]   # the classes with no game in them (Gson aside)
 TESTS = ["hardelele.aiguide.client.SightTest", "hardelele.aiguide.client.CaseTest", "hardelele.aiguide.client.ReflexesTest",
-         "hardelele.aiguide.client.PlacesSplitTest", "hardelele.aiguide.client.PlacesNetTest", "hardelele.aiguide.client.FeedbackTest"]
-GAME_TESTS = ["CaveGeometryTest", "CaveRetentionTest", "RoutineIntentTest", "RoutineLayoutTest", "RoutineSnapshotTest", "ShelterRouteTest", "PlacesInputTest"]   # against the built client
+         "hardelele.aiguide.client.PlacesSplitTest", "hardelele.aiguide.client.PlacesNetTest", "hardelele.aiguide.client.FeedbackTest",
+         "hardelele.aiguide.client.CrewCommandTest"]
+GAME_TESTS = ["CaveGeometryTest", "CaveRetentionTest", "RoutineIntentTest", "RoutineLayoutTest", "RoutineSnapshotTest", "ShelterRouteTest", "PlacesInputTest", "BoardOrdersTest"]   # against the built client
 HELPERS = ["ShareProbe.java"]   # compiled with the pure tests, run by tools/share-service's tests
-PY_TESTS = ["tests/test_labels.py", "tests/test_feedback_lang.py",   # the ratings' offline tool, the ratings' words
+PY_TESTS = ["tests/test_labels.py", "tests/test_feedback_lang.py", "tests/test_crew_lang.py",   # the ratings' offline tool, the ratings' words
             "share-service/tests/test_sigv4.py", "share-service/tests/test_service.py"]   # the share service (and the mod's sending through it)
 GSON = os.path.join(ROOT, "lib", "gson-2.2.4.jar")
 GAME_OUT = os.path.join(ROOT, "build", "test-game")

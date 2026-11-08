@@ -250,7 +250,8 @@ class Day1 {
             // the camp first (its logs are its own, the carrier leaves them), then wood; one carries for the choppers
             c.board.post("camp", () -> new TaskBoard.Seq(new ChopMore(c, 3, true), new Camp(c), new TaskBoard.Seq(new ChopMore(c, target), c.new Stash(null, 0)).lenient())).prio(3).at(t[0], t[1], t[2]);
             for (int i = 0; i < n - 1 - (carry ? 1 : 0); i++)
-                c.board.post("chop", () -> carry ? new ChopMore(c, target) : new TaskBoard.Seq(new ChopMore(c, target), c.new Stash(null, 0))).prio(2);
+                c.board.post("chop", () -> carry ? new ChopMore(c, target) : new TaskBoard.Seq(new ChopMore(c, target), c.new Stash(null, 0))).prio(2)
+                        .play(new TaskBoard.Play(TaskBoard.Play.Kind.CHOP_MORE, 0, 0, 0, -1, null, target));   // the player's character can chop too
             if (carry) c.board.post("carry", () -> new Courier(c, "chop")).prio(1.5);
             Events.log("crew: wood chain for " + target + " logs: camp, " + (n - 1 - (carry ? 1 : 0)) + " chop" + (carry ? ", carry" : "") + " cards");
         }

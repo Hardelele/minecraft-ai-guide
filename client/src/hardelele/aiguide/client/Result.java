@@ -20,7 +20,9 @@ public enum Result {
     /** the eyes do not see it from anywhere it got to: something is in the way of every face (or every face looks away) */
     NOT_VISIBLE,
     /** no face of it is in a player's reach from where it got to */
-    OUT_OF_REACH;
+    OUT_OF_REACH,
+    /** nobody free for it: everyone who could do it is on the player's orders (the plan waits, nothing is short) */
+    NO_AGENT;
 
     boolean done() {
         return this != RUNNING;

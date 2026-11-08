@@ -68,6 +68,15 @@ class Assistant {
     }
 
     String answer(String player, String question) throws Exception {
+        Tools.asking.set(question);   // the tools called for it know whose words they answer
+        try {
+            return answer0(player, question);
+        } finally {
+            Tools.asking.remove();
+        }
+    }
+
+    String answer0(String player, String question) throws Exception {
         if (mod.config.key().isEmpty()) return mod.msg("nokey");
         JsonArray messages = new JsonArray();
         messages.add(message("system", systemPrompt(player) + area(player)));

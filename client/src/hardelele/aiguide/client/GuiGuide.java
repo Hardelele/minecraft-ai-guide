@@ -100,6 +100,13 @@ public class GuiGuide extends GuiScreen {
         }
         if (key == Keyboard.KEY_RETURN || key == Keyboard.KEY_NUMPADENTER) {
             String q = input.getText().trim();
+            if (CrewCommand.parse(q) != null && CrewKeys.instance != null) {   // the crew's command (/агент, /crew add|remove): done here, not asked
+                add(mc.thePlayer == null ? "" : mc.thePlayer.getCommandSenderName(), q);
+                input.setText("");
+                scroll = 0;
+                CrewKeys.instance.command(q, Commander.instance == null ? null : Commander.instance.agentsPicked());
+                return;
+            }
             if (ShareBuild.command(q)) {   // not a question: the share screen (nothing is sent from it unasked)
                 input.setText("");
                 GuiShare.open(this, false);

@@ -18,7 +18,7 @@ import net.minecraft.world.World;
  * finder, breaks and places blocks as a player does (in reach, looking at them) and carries what it picks up.
  * It cannot be hurt and is never saved with the world.
  */
-public class Agent extends EntityCreature {
+public class Agent extends EntityCreature implements Doer {
     final Deque<Crew.Task> jobs = new ArrayDeque<Crew.Task>();
     final Deque<Origin> origins = new ArrayDeque<Origin>();   // where each job came from
     /**
@@ -156,6 +156,41 @@ public class Agent extends EntityCreature {
 
     /** under the player's command (Commander): takes only the player's order cards, until given back to the AI */
     volatile boolean commanded;
+    /** the player's Stop: stays under command with no orders (else back to the AI once its orders are done) */
+    volatile boolean held;
+
+    // ---- as a doer of the board's cards (Doer) ----
+    public int num() { return skin(); }
+    public String who() { return getCustomNameTag(); }
+    public boolean alive() { return !isDead; }
+    public boolean ordered() { return commanded; }
+    public void ordered(boolean on) { commanded = on; }
+    public boolean holding() { return held; }
+    public void holding(boolean on) { held = on; }
+    public double px() { return posX; }
+    public double py() { return posY; }
+    public double pz() { return posZ; }
+    /** an agent's body does whatever the crew's skills make of a card */
+    public boolean can(TaskBoard.Card k) { return k.make != null; }
+    public boolean paused() { return slot.busy(); }
+
+    /** the card's work as its job (its origin the card's), the card finished with what the job ends with */
+    public void begin(final TaskBoard b, final TaskBoard.Card k) {
+        final Crew.Task t = k.make.make();
+        Crew.job(this, new Crew.Task() {
+            public Result step(Agent ag, net.minecraft.world.WorldServer ww) {
+                if (k.state != TaskBoard.State.LEASED || k.holder != ag) return Result.GONE;   // taken back (lease out, phase over)
+                Result r = t.step(ag, ww);
+                if (r.done()) b.finish(k, ag, r);
+                return r;
+            }
+        }, k.origin);
+    }
+
+    public void cancel(String why) {
+        Crew.clearJobs(this);
+        body.stop();
+    }
     /** what the player chose it to work with (a tool, a block to build with): its skills take it first when it fits */
     volatile ItemStack preferred;
     int hurtAt = -1000;

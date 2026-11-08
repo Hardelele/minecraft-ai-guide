@@ -177,8 +177,10 @@ class Day2 {
             if (guard) {
                 for (TaskBoard.Card card : c.board.cards) {
                     if (!card.kind.equals("guard") || !card.open()) continue;
-                    Agent assigned = card.holder != null ? card.holder : card.only;
-                    if (assigned == null || assigned.isDead || !c.agents.contains(assigned)) continue;
+                    Doer d = card.holder != null ? card.holder : card.only;
+                    if (!(d instanceof Agent)) continue;
+                    Agent assigned = (Agent) d;
+                    if (assigned.isDead || !c.agents.contains(assigned)) continue;
                     outsideGuard = assigned;
                     existingGuard = true;
                     break;

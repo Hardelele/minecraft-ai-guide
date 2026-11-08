@@ -12,12 +12,14 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.world.WorldServer;
 
 /**
- * The crew's board: phases post cards (what is to be done, not who does it), an idle agent takes the card that is
- * worth most to it (priority, distance, whether it can, how often it failed). A taken card is leased: past its
- * lease it goes back on the board. What the game really shares is reserved: target blocks (a tree, a block of the
- * plan), chest quantities a card counts on, the furnace (one inventory). A crafting table is not reserved: every
- * player has his own grid at it, so do the agents, they only stand around it. An agent with a full bag hauls it to
- * the chest; an idle one with nothing on the board works on the crew's biggest deficit (its goals).
+ * The crew's board: phases post cards (what is to be done, not who does it), an idle doer (an agent, or the player's
+ * own character through the autopilot: Doer) takes the card that is worth most to it (priority, distance, whether it
+ * can, how often it failed). A taken card is leased: past its lease it goes back on the board. What the game really
+ * shares is reserved: target blocks (a tree, a block of the plan), chest quantities a card counts on, the furnace (one
+ * inventory). A crafting table is not reserved: every player has his own grid at it, so do the agents, they only stand
+ * around it. An agent with a full bag hauls it to the chest; an idle one with nothing on the board works on the crew's
+ * biggest deficit (its goals). A card nobody may take only because everyone is on the player's orders waits for them
+ * (NO_AGENT at last, not a failure of the plan); a doer whose player orders are all done is back with the AI.
  */
 class TaskBoard {
     enum State { OPEN, LEASED, DONE, FAILED }
@@ -25,39 +27,52 @@ class TaskBoard {
     interface Make { Crew.Task make(); }
     interface Need { boolean ok(Agent a); }
 
+    /** what a card asks for in the player's own terms: what the autopilot can do of it (PlayerAgent), or none */
+    static class Play {
+        enum Kind { MOVE, CHOP, MINE, DIG, DEPOSIT, ATTACK, PLACE, CHOP_MORE }
+        final Kind kind;
+        final int x, y, z, id, n;
+        final String item;
+        Play(Kind kind, int x, int y, int z, int id, String item, int n) { this.kind = kind; this.x = x; this.y = y; this.z = z; this.id = id; this.item = item; this.n = n; }
+        static Play at(Kind kind, int x, int y, int z) { return new Play(kind, x, y, z, -1, null, 0); }
+        public String toString() { return kind + " " + x + " " + y + " " + z + (id >= 0 ? " #" + id : "") + (item != null ? " " + item : ""); }
+    }
+
     static class Card {
         final int id;
         final String kind;
         final Make make;
         Origin origin;
         Crew.Phase phase;
-        Agent only;           // just this agent
-        java.util.Set<Integer> group;   // just these agents (by number): they share it out among themselves
+        Doer only;            // just this one
+        java.util.Set<Integer> group;   // just these (by number): they share it out among themselves
         Card sameAs;          // whoever did that card (it holds what came of it)
         final List<Card> after = new ArrayList<Card>();
         double prio = 1;
         double[] at;          // where the work is (for distance)
         Need need;
+        Play play;            // the player's character can take it (through the autopilot), as this
         final Map<Item, Integer> wants = new LinkedHashMap<Item, Integer>();   // chest quantities it aims at (targets, not start conditions)
         final Map<Item, Integer> unit = new LinkedHashMap<Item, Integer>();    // what one unit of its work takes: enough of that to start
         int lease = 20 * 240, tries;
         boolean optional;     // nice to have: its failure does not fail the phase
         Card optional() { optional = true; return this; }
         State state = State.OPEN;
-        Agent holder, doneBy;
+        Doer holder, doneBy;
         long since;
-        int unfit;
+        int unfit, stalled;   // ticks nobody could take it; ticks it waited only for the player's orders
         boolean placeChecked;
         final Map<Item, Integer> shortOf = new LinkedHashMap<Item, Integer>();   // what was missing when it failed, and how much
         Result last;
         Card(int id, String kind, Make make) { this.id = id; this.kind = kind; this.make = make; }
-        Card pin(Agent a) { only = a; return this; }
+        Card pin(Doer a) { only = a; return this; }
         Card same(Card c) { sameAs = c; return this; }
         Card after(Card... cs) { for (Card c : cs) if (c != null) after.add(c); return this; }
         Card after(List<Card> cs) { after.addAll(cs); return this; }
         Card prio(double p) { prio = p; return this; }
         Card at(double x, double y, double z) { at = new double[] { x, y, z }; return this; }
         Card need(Need n) { need = n; return this; }
+        Card play(Play p) { play = p; return this; }
         List<ItemStack> needs;   // the things the 'need' asks the agent to hold (for the shortfall when nobody has them)
         Card needs(List<ItemStack> l) { needs = l; return this; }
         /** the one rule for processing cards: aims at n, starts when there is one unit's worth (what is short is topped up meanwhile) */
@@ -70,16 +85,21 @@ class TaskBoard {
         public String toString() { return "#" + id + " " + kind; }
     }
 
+    /** how long a card waits for the player's orders to be done before it is given up as NO_AGENT (10 minutes) */
+    static final int STALL_MAX = 20 * 60 * 10;
+
     final Crew c;
     final List<Card> cards = new ArrayList<Card>();
-    final Map<Agent, Card> leased = new HashMap<Agent, Card>();
-    final Map<Long, Agent> blocks = new HashMap<Long, Agent>();
+    final Map<Doer, Card> leased = new HashMap<Doer, Card>();
+    final Map<Long, Doer> blocks = new HashMap<Long, Doer>();
     final Map<Card, Map<Item, Integer>> held = new HashMap<Card, Map<Item, Integer>>();   // chest quantities held by a card
     final Map<String, List<Agent>> stations = new HashMap<String, List<Agent>>();
     final Map<Item, Integer> goals = new LinkedHashMap<Item, Integer>();
     final Retry retry = new Retry();   // the crew's one retry policy: cards, an agent's default work, its way home
     int next = 1;
     long now;
+    /** a card waits only for the player's orders now (the phase waits with it); said to the player once a stop */
+    boolean stalled, stallSaid;
 
     TaskBoard(Crew c) { this.c = c; }
 
@@ -96,6 +116,13 @@ class TaskBoard {
     /** the cards of a phase not done yet */
     boolean pending(Crew.Phase ph) {
         for (Card k : cards) if (k.phase == ph && k.open()) return true;
+        return false;
+    }
+
+    /** a card of the phase waits for the player's orders (its time does not run meanwhile) */
+    boolean stalled(Crew.Phase ph) {
+        if (ph == null) return false;
+        for (Card k : cards) if (k.phase == ph && k.state == State.OPEN && k.stalled > 0) return true;
         return false;
     }
 
@@ -116,28 +143,38 @@ class TaskBoard {
         return true;
     }
 
-    /** can this agent take the card at all */
-    boolean fits(Card k, Agent a, WorldServer w) {
+    boolean fits(Card k, Doer a, WorldServer w) {
+        return fits(k, a, w, false);
+    }
+
+    /** can this one take the card at all (freeOfOrders: as if it were not on the player's orders) */
+    boolean fits(Card k, Doer a, WorldServer w, boolean freeOfOrders) {
         if (k.state != State.OPEN || !ready(k) || !retry.allowed(k, now)) return false;
         if (k.only != null && !same(k.only, a)) return false;
-        if (k.group != null && !k.group.contains(a.skin())) return false;
-        if (a.commanded && k.origin != Origin.PLAYER) return false;   // a commanded unit: the player's orders only
+        if (k.group != null && !k.group.contains(a.num())) return false;
+        if (!freeOfOrders && a.ordered() && k.origin != Origin.PLAYER) return false;   // a commanded unit: the player's orders only
         if (k.sameAs != null && k.sameAs.doneBy != null && !same(k.sameAs.doneBy, a)) return false;
         if (k.sameAs != null && k.sameAs.doneBy == null && k.sameAs.state != State.FAILED) return false;
-        if (k.need != null && !k.need.ok(a)) return false;
-        if (k.at != null && here != null && here.near((int) Math.floor(k.at[0]), (int) Math.floor(k.at[1]), (int) Math.floor(k.at[2]), Crew.REACH + 1) == null) return false;   // it cannot walk there from where it is
+        if (!a.can(k)) return false;
+        if (a instanceof Agent) {
+            if (k.need != null && !k.need.ok((Agent) a)) return false;
+            if (k.at != null && here != null && here.near((int) Math.floor(k.at[0]), (int) Math.floor(k.at[1]), (int) Math.floor(k.at[2]), Crew.REACH + 1) == null) return false;   // it cannot walk there from where it is
+        } else if (k.need != null) return false;   // a need is about an agent's bag
         for (Map.Entry<Item, Integer> e : k.unit.entrySet()) if (chestFree(w, e.getKey(), null) < e.getValue()) return false;
         return true;
     }
 
-    /** the same member of the crew: the agent itself, or the one it was before it died and came back (same name) */
-    static boolean same(Agent was, Agent a) {
-        return was == a || was.isDead && was.skin() == a.skin();
+    /** the same member of the crew: the doer itself, or the one it was before it died and came back (same number) */
+    static boolean same(Doer was, Doer a) {
+        return was == a || !was.alive() && was.num() == a.num();
     }
 
-    double utility(Card k, Agent a) {
+    double utility(Card k, Doer a) {
         double u = k.prio * 10 - k.tries * 4;
-        if (k.at != null) u -= Crew.dist(a, k.at[0], k.at[1], k.at[2]) * 0.15;
+        if (k.at != null) {
+            double dx = a.px() - k.at[0], dy = a.py() - k.at[1], dz = a.pz() - k.at[2];
+            u -= Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.15;
+        }
         if (k.only == a || k.sameAs != null) u += 3;
         return u;
     }
@@ -157,7 +194,7 @@ class TaskBoard {
         return fl;
     }
 
-    Card best(Agent a, WorldServer w) {
+    Card best(Doer a, WorldServer w) {
         Card best = null;
         double bu = -1e9;
         for (Card k : cards) {
@@ -166,6 +203,16 @@ class TaskBoard {
             if (u > bu) { bu = u; best = k; }
         }
         return best;
+    }
+
+    /** a doer that is not an agent (the player's character): the best card it can take, if any */
+    boolean feedDoer(Doer d, WorldServer w) {
+        if (leased.containsKey(d)) return false;
+        here = null;
+        Card k = best(d, w);
+        if (k == null) return false;
+        take(k, d, w);
+        return true;
     }
 
     /** an idle agent: a card, else the haul of a full bag, else the biggest deficit; false when nothing */
@@ -226,56 +273,57 @@ class TaskBoard {
     }
 
     /**
-     * A card for this agent now (a fight, the player's order): what it held goes back on the board as it was (not a try
-     * of it), its jobs stop, it takes the card. The one way anything takes an agent off its work.
+     * A card for this doer now (a fight, the player's order): what it held goes back on the board as it was (not a try
+     * of it), its work stops, it takes the card. The one way anything takes a doer off its work.
      */
-    void assign(Card k, Agent a, WorldServer w, String why) {
+    void assign(Card k, Doer a, WorldServer w, String why) {
         Card held = leased.get(a);
         if (held != null && held != k) {
             release(a, held);
             held.state = State.OPEN;
-            Events.log("board: " + held + " back on the board (" + a.getCustomNameTag() + " " + why + ")");
+            Events.log("board: " + held + " back on the board (" + a.who() + " " + why + ")");
         }
-        Crew.clearJobs(a);
-        a.body.stop();
+        a.cancel(why);
         releaseBlocks(a);
         take(k, a, w);
     }
 
-    void take(final Card k, final Agent a, WorldServer w) {
+    /** the card back from its holder as it was, not a try of it (the player took the controls, it had to stop) */
+    void giveBack(Doer a, String why) {
+        Card k = leased.get(a);
+        if (k == null) return;
+        release(a, k);
+        k.state = State.OPEN;
+        Events.log("board: " + k + " back on the board (" + a.who() + ": " + why + ")");
+    }
+
+    void take(final Card k, final Doer a, WorldServer w) {
         if (!k.leaseSet && k.phase != null) k.lease = k.phase.max;   // no estimate of its own: the time of its phase
         k.state = State.LEASED;
         k.holder = a;
         k.since = now;
+        k.stalled = 0;
         leased.put(a, k);
         if (!k.wants.isEmpty()) {
             Map<Item, Integer> h = new HashMap<Item, Integer>();   // what is there of the target is held for it, no more
             for (Map.Entry<Item, Integer> e : k.wants.entrySet()) h.put(e.getKey(), Math.min(e.getValue(), chestFree(w, e.getKey(), null)));
             held.put(k, h);
         }
-        final Crew.Task t = k.make.make();
-        Crew.job(a, new Crew.Task() {
-            public Result step(Agent ag, WorldServer ww) {
-                if (k.state != State.LEASED || k.holder != ag) return Result.GONE;   // taken back (lease out, phase over)
-                Result r = t.step(ag, ww);
-                if (r.done()) finish(k, ag, r);
-                return r;
-            }
-        }, k.origin);
-        Events.log("board: " + a.getCustomNameTag() + " takes " + k + (k.tries > 0 ? " (try " + (k.tries + 1) + ")" : ""));
+        a.begin(this, k);
+        Events.log("board: " + a.who() + " takes " + k + (k.tries > 0 ? " (try " + (k.tries + 1) + ")" : ""));
     }
 
-    void finish(Card k, Agent a, Result r) {
+    void finish(Card k, Doer a, Result r) {
         release(a, k);
         k.last = r;
         if (r == Result.OK) { k.state = State.DONE; k.doneBy = a; return; }
         k.tries++;
         boolean last = retry.failed(k, now);   // backed off before anyone takes it again; given up after the policy's tries
         k.state = last || k.only != null && r == Result.NO_TOOL ? State.FAILED : State.OPEN;
-        Events.log("board: " + k + " by " + a.getCustomNameTag() + " -> " + r + (k.state == State.OPEN ? ", back on the board" : ", given up"));
+        Events.log("board: " + k + " by " + a.who() + " -> " + r + (k.state == State.OPEN ? ", back on the board" : ", given up"));
     }
 
-    void release(Agent a, Card k) {
+    void release(Doer a, Card k) {
         k.holder = null;
         if (leased.get(a) == k) leased.remove(a);
         held.remove(k);
@@ -283,9 +331,30 @@ class TaskBoard {
         for (List<Agent> s : stations.values()) s.remove(a);
     }
 
-    /** each tick: leases running out */
+    /** an open card of the player's for this doer (its own, or its group's) */
+    boolean playerCards(Doer a) {
+        for (Card k : cards)
+            if (k.open() && k.origin == Origin.PLAYER && (k.only != null && same(k.only, a) || k.group != null && k.group.contains(a.num()))) return true;
+        return false;
+    }
+
+    /**
+     * Back with the AI by itself, as an idle unit of a strategy game: a doer under the player's command whose orders are
+     * all done (none open, nothing leased) and that the player did not hold (Stop).
+     */
+    void muster() {
+        for (Doer d : c.doers())
+            if (d.alive() && d.ordered() && !d.holding() && !leased.containsKey(d) && !playerCards(d)) {
+                d.ordered(false);
+                Events.log("order: " + d.who() + " is back with the AI (its orders are done)");
+            }
+    }
+
+    /** each tick: leases running out, cards nobody can take */
     void tick(WorldServer w) {
         now++;
+        if (now % 20 == 0) muster();
+        boolean stall = false;
         for (Card k : cards) {
             if (k.state == State.OPEN && !k.placeChecked && k.at != null) {   // a place nobody can walk to from the base: NO_PATH before anyone sets off
                 k.placeChecked = true;
@@ -298,14 +367,30 @@ class TaskBoard {
                     continue;
                 }
             }
+            if (k.state == State.OPEN && k.stalled > 0) stall = true;
             if (k.state == State.OPEN && ready(k) && retry.allowed(k, now) && now % 20 == 0) {   // nobody can take it (no tool, no items, no one pinned): given up after a while
-                boolean someone = false;
+                boolean someone = false, ifFree = false;   // someone may take it; someone would, were it not on the player's orders
                 Ground.Flood keep = here;
                 here = null;   // (where each one could walk is checked when it takes a card, not here)
-                for (Agent a : c.agents) if (!a.isDead && fits(k, a, w)) someone = true;
+                for (Doer a : c.doers()) {
+                    if (!a.alive()) continue;
+                    if (fits(k, a, w)) someone = true;
+                    else if (k.origin != Origin.PLAYER && a.ordered() && fits(k, a, w, true)) ifFree = true;
+                }
                 here = keep;
-                if (someone) k.unfit = 0;
-                else if ((k.unfit += 20) > 20 * 30) {
+                if (someone) { k.unfit = 0; k.stalled = 0; }
+                else if (ifFree) {   // everyone who could is on the player's orders: it waits for them (not short of anything)
+                    k.unfit = 0;
+                    k.stalled += 20;
+                    stall = true;
+                    if (k.stalled > STALL_MAX) {
+                        k.state = State.FAILED;
+                        k.last = Result.NO_AGENT;
+                        Ledger.result(k.last); if (k.phase != null) k.phase.tally(k.last);
+                        Events.log("board: " + k + " waited " + STALL_MAX / 1200 + " min for the player's orders -> NO_AGENT");
+                    }
+                } else if ((k.unfit += 20) > 20 * 30) {
+                    k.stalled = 0;
                     k.state = State.FAILED;
                     boolean needOk = false;   // what keeps everyone off it: the agent (a tool, a thing in the bag) or the chest
                     for (Agent a : c.agents) if (k.need == null || k.need.ok(a)) needOk = true;
@@ -320,51 +405,56 @@ class TaskBoard {
                 }
             }
             if (k.state != State.LEASED) continue;
-            Agent a = k.holder;
-            if (a != null && a.isDead) {   // its holder died: the card goes back as it was (not a try of its), someone takes it
+            Doer a = k.holder;
+            if (a != null && !a.alive()) {   // its holder died: the card goes back as it was (not a try of its), someone takes it
                 release(a, k);
                 k.state = State.OPEN;
-                Events.log("board: " + k + " back on the board (" + a.getCustomNameTag() + " died)");
+                Events.log("board: " + k + " back on the board (" + a.who() + " died)");
                 continue;
             }
-            if (a != null && a.slot.busy()) { k.since++; continue; }   // a reaction has its holder's body: the lease waits with the card's work
+            if (a != null && a.paused()) { k.since++; continue; }   // a reaction has its holder's body: the lease waits with the card's work
             if (a == null || now - k.since > k.lease) {
                 if (a != null) {
-                    Crew.clearJobs(a);
-                    a.body.stop();
+                    a.cancel("lease out");
                     release(a, k);
                 }
                 k.tries++;
                 k.last = Result.TIMEOUT;
                 Ledger.result(Result.TIMEOUT); if (k.phase != null) k.phase.tally(Result.TIMEOUT);
                 k.state = retry.failed(k, now) ? State.FAILED : State.OPEN;
-                Events.log("board: " + k + " lease out" + (a == null ? "" : " (" + a.getCustomNameTag() + ")") + (k.state == State.OPEN ? ", back on the board" : ", given up"));
+                Events.log("board: " + k + " lease out" + (a == null ? "" : " (" + a.who() + ")") + (k.state == State.OPEN ? ", back on the board" : ", given up"));
             }
         }
+        if (stall && !stallSaid) {   // once a stop: the player is told why the plan stands (not the guide: nothing is short)
+            stallSaid = true;
+            Crew.note("stall");
+            Events.log("board: the plan waits: everyone who could do it is on the player's orders");
+        } else if (!stall && stalled) stallSaid = false;
+        stalled = stall;
     }
 
     // ---- reservations ---------------------------------------------------------------------------------
 
-    /** a target block for one agent (a tree, a block of a plan): false when someone else has it */
-    boolean reserve(Agent a, int x, int y, int z) {
+    /** a target block for one doer (a tree, a block of a plan): false when someone else has it */
+    boolean reserve(Doer a, int x, int y, int z) {
         long key = Crew.key(x, y, z);
-        Agent o = blocks.get(key);
-        if (o != null && o != a && !o.isDead) return false;
+        Doer o = blocks.get(key);
+        if (o != null && o != a && o.alive()) return false;
         blocks.put(key, a);
         return true;
     }
 
-    boolean reserved(Agent a, int x, int y, int z) {
-        Agent o = blocks.get(Crew.key(x, y, z));
-        return o != null && o != a && !o.isDead;
+    boolean reserved(Doer a, int x, int y, int z) {
+        Doer o = blocks.get(Crew.key(x, y, z));
+        return o != null && o != a && o.alive();
     }
 
     void unreserve(int x, int y, int z) {
         blocks.remove(Crew.key(x, y, z));
     }
 
-    void releaseBlocks(Agent a) {
-        for (java.util.Iterator<Map.Entry<Long, Agent>> it = blocks.entrySet().iterator(); it.hasNext(); ) if (it.next().getValue() == a) it.remove();
+    void releaseBlocks(Doer a) {
+        for (java.util.Iterator<Map.Entry<Long, Doer>> it = blocks.entrySet().iterator(); it.hasNext(); ) if (it.next().getValue() == a) it.remove();
     }
 
     /** a station of the game with one inventory (the furnace): one agent at a time */
@@ -390,8 +480,8 @@ class TaskBoard {
         return n;
     }
 
-    /** what of an item the chest has that no other card counts on (for the card an agent holds: its share too) */
-    int chestFree(WorldServer w, Item item, Agent forAgent) {
+    /** what of an item the chest has that no other card counts on (for the card a doer holds: its share too) */
+    int chestFree(WorldServer w, Item item, Doer forAgent) {
         int n = chestCount(c.chestInv(w), item);
         Card mine = forAgent == null ? null : leased.get(forAgent);
         for (Map.Entry<Card, Map<Item, Integer>> e : held.entrySet()) {

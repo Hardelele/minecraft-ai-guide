@@ -12,7 +12,7 @@ GUARD = '''if (agents.length > 0 && who.isEmpty()) {
 
 def rejects_missing_selection(source: str) -> bool:
     method = source.split("static void designate(", 1)[1].split("static void erase(", 1)[0]
-    resolved = method.find("for (int n : agents) for (Agent g : c.agents)")
+    resolved = method.find("for (int n : agents) { Doer g = c.doer(n);")
     guard = method.find(GUARD)
     post = method.find("c.board.post(")
     return 0 <= resolved < guard < post

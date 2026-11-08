@@ -41,12 +41,73 @@ import net.minecraft.world.WorldServer;
  * integrated server: the crew is for singleplayer and the promo).
  */
 public class Crew {
-    static final String[] NAMES = { "Агент 1", "Агент 2", "Агент 3", "Агент 4", "Агент 5" };
+    /**
+     * The player is the crew's number 1 (his own character, through the autopilot: PlayerAgent), the agents are 2..5.
+     * Under a video script or the bench it is the way it was: agents 1..5 and the player not in the crew (the scripts
+     * and the bench name the agents by those numbers).
+     */
+    static final boolean PLAYER_ONE = playerOne();
+
+    static boolean playerOne() {
+        if (System.getProperty("aiguide.video") != null && !System.getProperty("aiguide.video").isEmpty() || System.getProperty("aiguide.bench") != null) return false;
+        try {
+            return FMLCommonHandler.instance().getSide().isClient();
+        } catch (Throwable t) {
+            return false;   // no game around it (a test)
+        }
+    }
+    /** the crew's size, the player among them when he is number 1 */
+    static final int MAX = 5;
     static final double REACH = 4.6;
+
+    /** the agents' names: the number is the skin and the commander's handle (Agent.skin) */
+    static String name(int n) { return "Агент " + n; }
+
+    /** the first agent's number (1 is the player's) */
+    static int first() { return PLAYER_ONE ? 2 : 1; }
+
+    /** how many agents there may be (the player is one of the five) */
+    static int maxAgents() { return PLAYER_ONE ? MAX - 1 : MAX; }
 
     static Crew instance;
 
     final List<Agent> agents = new ArrayList<Agent>();
+    /** the crew's members that are not agents: the player's own character (and a test's stand-ins) */
+    final List<Doer> extra = new ArrayList<Doer>();
+
+    /** everyone the board deals cards to */
+    List<Doer> doers() {
+        List<Doer> l = new ArrayList<Doer>(agents);
+        l.addAll(extra);
+        return l;
+    }
+
+    /** the crew's member of this number (the player's character for 1), alive, or null */
+    Doer doer(int n) {
+        for (Agent a : agents) if (a.skin() == n && !a.isDead) return a;
+        for (Doer d : extra) if (d.num() == n && d.alive()) return d;
+        return null;
+    }
+
+    /** the lowest agent's number nobody has */
+    int freeNumber() {
+        for (int n = first(); ; n++) {
+            boolean used = false;
+            for (Agent a : agents) if (!a.isDead && a.skin() == n) used = true;
+            if (!used) return n;
+        }
+    }
+
+    /** words for the player (lang keys aiguide.crew.*, with their arguments): the client shows them (KeyCheck) */
+    static final ConcurrentLinkedQueue<String[]> notes = new ConcurrentLinkedQueue<String[]>();
+
+    static void note(String key, String... args) {
+        if (notes.size() > 20) return;   // nobody reads them (the bench): not more
+        String[] n = new String[args.length + 1];
+        n[0] = key;
+        System.arraycopy(args, 0, n, 1, args.length);
+        notes.add(n);
+    }
     final Deque<Phase> phases = new ArrayDeque<Phase>();
     final ConcurrentLinkedQueue<Runnable> queue = new ConcurrentLinkedQueue<Runnable>();
     Phase current;
@@ -118,6 +179,7 @@ public class Crew {
     static Crew ensure() {
         if (instance == null) {
             instance = new Crew();
+            if (PLAYER_ONE) instance.extra.add(new PlayerAgent());   // the player's own character is number 1
             FMLCommonHandler.instance().bus().register(instance);
         }
         return instance;
@@ -133,7 +195,7 @@ public class Crew {
         final Crew c = instance;
         String w = what.trim().toLowerCase();
         Phase ph;
-        if (w.startsWith("summon") || w.startsWith("call") || w.startsWith("позв")) ph = new Summon(Math.max(1, Math.min(5, count <= 0 ? 4 : count)));
+        if (w.startsWith("summon") || w.startsWith("call") || w.startsWith("позв")) ph = new Summon(Math.max(1, Math.min(maxAgents(), count <= 0 ? 4 : count)));
         else if (w.startsWith("wood") || w.startsWith("tree") || w.startsWith("дерев")) ph = new Day1.WoodChain(Math.max(1, Math.min(4, count <= 0 ? 3 : count)));
         else if (w.startsWith("upgrade") || w.startsWith("stonetool") || w.startsWith("furnace")) ph = new Day1.Upgrade();
         else if (w.startsWith("gift") || w.startsWith("give")) ph = new Day1.Gift();
@@ -180,6 +242,7 @@ public class Crew {
         }
         respawn(w);
         Guard.watch(this, w, p);
+        if (current != null && board.stalled(current)) current.max++;   // it waits for the player's orders: its time does not run
         if (current != null && current.ticks > current.max) {   // too long: what is carried goes to the chest, the phase ends
             Events.log("crew phase " + current.name + ": out of time");
             board.cancel(current);
@@ -265,6 +328,111 @@ public class Crew {
                 if (r.failed()) Events.log("crew: " + a.getCustomNameTag() + " " + t.getClass().getSimpleName() + " -> " + r);
             }
         }
+        for (Doer d : extra) if (d instanceof PlayerAgent) ((PlayerAgent) d).work(this, w, p);   // the player's character: its card through the autopilot
+    }
+
+    // ---- members added and let go by the player (the commander's button and key, the guide's window) ------
+
+    /**
+     * n more agents (from any thread): each on a safe standing cell near the point (the commander's cursor), else near
+     * the player; no more than the crew may have (said to the player). What the crew does goes on: an agent comes as
+     * one summoned does, the board gives it work.
+     */
+    static void add(final int n, final double[] near) {
+        final Crew c = ensure();
+        c.queue.add(new Runnable() {
+            public void run() {
+                MinecraftServer s = MinecraftServer.getServer();
+                if (s == null || s.worldServers == null) return;
+                WorldServer w = s.worldServers[0];
+                EntityPlayerMP p = c.playerIn(w);
+                double[] at = near != null ? near : p == null ? null : new double[] { p.posX, p.boundingBox.minY, p.posZ };
+                if (at == null) return;
+                int made = 0;
+                for (int i = 0; i < n; i++) {
+                    int alive = 0;
+                    for (Agent a : c.agents) if (!a.isDead) alive++;
+                    if (alive >= maxAgents()) { note("full", String.valueOf(maxAgents()), String.valueOf(MAX)); break; }
+                    int[] cell = safeCell(w, MathHelper.floor_double(at[0]), MathHelper.floor_double(at[1]), MathHelper.floor_double(at[2]), made);
+                    if (cell == null) { note("nospot"); break; }
+                    int num = c.freeNumber();
+                    Agent a = new Agent(w);
+                    a.number = num;
+                    a.setCustomNameTag(name(num));
+                    a.setAlwaysRenderNameTag(true);
+                    a.setLocationAndAngles(cell[0] + 0.5, cell[1], cell[2] + 0.5, p == null ? 0 : p.rotationYaw + 180, 0);
+                    w.spawnEntityInWorld(a);
+                    w.func_147487_a("cloud", cell[0] + 0.5, cell[1] + 1, cell[2] + 0.5, 20, 0.3, 0.6, 0.3, 0.02);
+                    c.agents.add(a);
+                    Collections.sort(c.agents, new Comparator<Agent>() {
+                        @Override public int compare(Agent x, Agent y) { return x.skin() - y.skin(); }
+                    });
+                    Events.log("crew: " + a.getCustomNameTag() + " added at " + cell[0] + " " + cell[1] + " " + cell[2]);
+                    note("added", a.getCustomNameTag());
+                    made++;
+                }
+                if (made > 0) w.playSoundEffect(at[0], at[1], at[2], "random.levelup", 0.4F, 1.4F);
+            }
+        });
+    }
+
+    /** a cell to stand on near a point: firm ground (not water), room for the body, nothing hot around, the k-th such from the point */
+    static int[] safeCell(WorldServer w, int x, int y, int z, int k) {
+        int seen = 0;
+        for (int r = 0; r <= 5; r++)
+            for (int dx = -r; dx <= r; dx++)
+                for (int dz = -r; dz <= r; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
+                    for (int dy : new int[] { 0, 1, -1, 2, -2, 3, -3 }) {   // the level of the point first
+                        int cx = x + dx, cy = y + dy, cz = z + dz;
+                        if (cy < 1 || cy > 250 || !stand(w, cx, cy, cz) || hot(w, cx, cy, cz)) continue;
+                        if (seen++ == k) return new int[] { cx, cy, cz };
+                        break;
+                    }
+                }
+        return null;
+    }
+
+    /** lava or fire next to the body's cells, or under its feet */
+    static boolean hot(WorldServer w, int x, int y, int z) {
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dz = -1; dz <= 1; dz++)
+                for (int dy = -1; dy <= 2; dy++) {
+                    Material m = w.getBlock(x + dx, y + dy, z + dz).getMaterial();
+                    if (m == Material.lava || m == Material.fire) return true;
+                }
+        return false;
+    }
+
+    /** agents let go (from any thread): what they held goes back on the board, what they carried falls where they stand */
+    static void dismiss(final int[] numbers) {
+        final Crew c = ensure();
+        c.queue.add(new Runnable() {
+            public void run() {
+                for (int n : numbers) {
+                    if (PLAYER_ONE && n == 1) { note("remove.self"); continue; }
+                    Agent a = null;
+                    for (Agent g : c.agents) if (g.skin() == n && !g.isDead) a = g;
+                    if (a == null) { note("remove.none", String.valueOf(n)); continue; }
+                    c.board.giveBack(a, "let go");
+                    Orders.cancel(c, a);
+                    clearJobs(a);
+                    a.body.stop();
+                    a.setCurrentItemOrArmor(0, null);
+                    for (ItemStack it : a.bag) {   // nothing is lost: it lies there to be picked up (5 minutes)
+                        Ledger.flow(Ledger.Way.DROPPED_AT_DEATH, it);
+                        EntityItem e = new EntityItem(a.worldObj, a.posX, a.posY + 0.5, a.posZ, it.copy());
+                        e.delayBeforeCanPickup = 20;
+                        a.worldObj.spawnEntityInWorld(e);
+                    }
+                    a.bag.clear();
+                    ((WorldServer) a.worldObj).func_147487_a("cloud", a.posX, a.posY + 1, a.posZ, 20, 0.3, 0.6, 0.3, 0.02);
+                    a.setDead();
+                    Events.log("crew: " + a.getCustomNameTag() + " let go");
+                    note("removed", a.getCustomNameTag());
+                }
+            }
+        });
     }
 
     final List<Object[]> dead = new ArrayList<Object[]>();   // { the agent that died, when }
@@ -286,6 +454,7 @@ public class Crew {
             a.undo.owed.addAll(d.undo.owed);   // what it left changed (a pillar) it gives back now: those jobs are gone
             a.number = d.number;
             a.commanded = d.commanded;
+            a.held = d.held;
             a.setCustomNameTag(d.getCustomNameTag());
             a.setAlwaysRenderNameTag(true);
             a.setLocationAndAngles(at[0] + 0.5, at[1], at[2] + 0.5, d.rotationYaw, 0);
@@ -370,11 +539,21 @@ public class Crew {
 
     /** the agents the world already has (a saved world: the crew of the day before) */
     void adopt(WorldServer w) {
+        List<Agent> one = new ArrayList<Agent>();
         for (Object o : w.loadedEntityList)
             if (o instanceof Agent && !agents.contains(o) && !((Agent) o).isDead) {
-                agents.add((Agent) o);
-                Events.log("crew: " + ((Agent) o).getCustomNameTag() + " is back");
+                Agent a = (Agent) o;
+                if (PLAYER_ONE && a.skin() == 1) { one.add(a); continue; }   // after the others: it takes a number none of them has
+                agents.add(a);
+                Events.log("crew: " + a.getCustomNameTag() + " is back");
             }
+        for (Agent a : one) {   // a world of before: its "Агент 1" takes a free number (1 is the player's now)
+            int n = freeNumber();
+            Events.log("crew: " + a.getCustomNameTag() + " of a saved world is " + name(n) + " now (1 is the player)");
+            a.setCustomNameTag(name(n));
+            a.number = n;
+            agents.add(a);
+        }
         Collections.sort(agents, new Comparator<Agent>() {
             @Override public int compare(Agent x, Agent y) { return x.skin() - y.skin(); }
         });
@@ -965,8 +1144,8 @@ public class Crew {
                 int sy = ground(w, sx, py, sz);
                 if (sy < 0) { sx = px; sz = pz; sy = py; }
                 Agent a = new Agent(w);
-                a.number = i + 1;
-                a.setCustomNameTag(NAMES[i]);
+                a.number = c.freeNumber();
+                a.setCustomNameTag(name(a.number));
                 a.setAlwaysRenderNameTag(true);
                 a.setLocationAndAngles(sx + 0.5, sy, sz + 0.5, p.rotationYaw, 0);
                 w.spawnEntityInWorld(a);

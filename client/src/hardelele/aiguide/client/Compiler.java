@@ -21,7 +21,7 @@ import net.minecraft.world.WorldServer;
  * time, a base smaller than asked) are repaired here by rules first; what the rules cannot mend goes back to the guide.
  */
 class Compiler {
-    static final String VOCAB = "summon N (1-5 agents); shelter auto|hut|house|fenced; tools wood|stone; torches N; "
+    static final String VOCAB = "summon N (1-" + Crew.maxAgents() + " agents); keep orders (the agents on the player's orders stay on them); shelter auto|hut|house|fenced; tools wood|stone; torches N; "
             + "make ITEM [N], ITEM [N] (any item by its game name: iron_pickaxe, iron_sword, torch...); "
             + "gift ITEM [N], ITEM [N] (things the crew has or makes, to the player); light (torches where the base and the mine are dark); "
             + "inside (the crew goes into its house and waits there, e.g. for the night); "
@@ -42,6 +42,7 @@ class Compiler {
         int torches;
         final List<ItemStack> gift = new ArrayList<ItemStack>(), make = new ArrayList<ItemStack>();
         boolean mine, gather, summon, light, inside, guard;
+        boolean keep;               // the agents on the player's orders stay on them (else a plan the player asked for takes them back)
         public String toString() {
             return "summon " + (summon ? agents : "-") + ", shelter " + shelter + ", tools " + tools + ", torches " + torches + ", gift " + gift.size() + ", mine " + mine + ", gather " + gather;
         }
@@ -57,7 +58,8 @@ class Compiler {
             if (l.matches(".*(agent|агент|helper)\\s*\\d.*")) return "Line '" + raw.trim() + "': no assignments. Say what is wanted; the crew shares the work itself.";
             String[] w = l.split("[\\s:=]+", 2);
             String k = w[0], arg = w.length > 1 ? w[1].trim() : "";
-            if (k.startsWith("summon") || k.startsWith("call")) { g.summon = true; g.agents = clamp(num(arg, 4), 1, 5); }
+            if (k.startsWith("summon") || k.startsWith("call")) { g.summon = true; g.agents = clamp(num(arg, 4), 1, Crew.maxAgents()); }
+            else if (k.startsWith("keep")) g.keep = true;
             else if (k.startsWith("shelter") || k.startsWith("base") || k.startsWith("house")) {
                 g.shelter = arg.startsWith("hut") ? 0 : arg.startsWith("house") ? 1 : 2;   // auto and fenced: the biggest the wood allows
             } else if (k.startsWith("tool")) g.tools = arg.startsWith("wood") ? "wood" : arg.startsWith("iron") ? "iron" : "stone";
@@ -139,13 +141,21 @@ class Compiler {
 
     /** the guide's goals for a player: checked, compiled into phases, queued; the answer for the model */
     static String plan(final String player, String text, final Origin origin) {
+        return plan(player, text, origin, false);
+    }
+
+    /**
+     * fromPlayer: the plan answers the player's own request (not a crew event): the agents on his orders are taken
+     * back into it (as the commander's "?? ?????"), unless the goals say "keep orders"
+     */
+    static String plan(final String player, String text, final Origin origin, final boolean fromPlayer) {
         final Goals g = new Goals();
         String err = parse(text, g);
         if (err != null) { Events.log("compiler: rejected: " + err); return err; }
         Crew.ensure();
         final Crew c = Crew.instance;
         final StringBuilder answer = new StringBuilder();
-        java.util.concurrent.FutureTask<String> t = new java.util.concurrent.FutureTask<String>(() -> compile(c, player, g, origin));
+        java.util.concurrent.FutureTask<String> t = new java.util.concurrent.FutureTask<String>(() -> { if (fromPlayer && !g.keep) backToPlan(c); return compile(c, player, g, origin); });
         c.queue.add(t);
         try {
             answer.append(t.get(10, java.util.concurrent.TimeUnit.SECONDS));
@@ -153,6 +163,25 @@ class Compiler {
             answer.append("Queued; the crew works it out on the next tick (" + e.getClass().getSimpleName() + ").");
         }
         return answer.toString();
+    }
+
+    /** the agents on the player's orders back with the AI, their orders gone (on the server thread) */
+    static void backToPlan(Crew c) {
+        WorldServer w = net.minecraft.server.MinecraftServer.getServer().worldServers[0];
+        StringBuilder who = new StringBuilder();
+        for (Agent a : new ArrayList<Agent>(c.agents))
+            if (!a.isDead && (a.commanded || c.board.playerCards(a))) {
+                Orders.apply(c, w, a, Orders.Kind.RELEASE, 0, 0, 0, -1, false, null, 0);
+                who.append(who.length() > 0 ? ", " : "").append(a.getCustomNameTag());
+            }
+        if (who.length() > 0) Events.log("compiler: the player's plan takes back " + who + " from his orders");
+    }
+
+    /** the failed cards that failed only for want of a free agent (everyone on the player's orders): no failure of the plan */
+    static boolean onlyNoAgent(List<TaskBoard.Card> failed) {
+        if (failed.isEmpty()) return false;
+        for (TaskBoard.Card k : failed) if (k.last != Result.NO_AGENT) return false;
+        return true;
     }
 
     static Goals last;   // the goals in force (for the replanning)
@@ -305,6 +334,13 @@ class Compiler {
         List<TaskBoard.Card> failed = new ArrayList<TaskBoard.Card>();
         for (TaskBoard.Card k : c.board.cards) if (k.phase == ph && k.state == TaskBoard.State.FAILED && !k.optional) failed.add(k);
         if (failed.isEmpty() && !outOfTime) { succeeded.add(ph.kind); return; }
+        if (!outOfTime && onlyNoAgent(failed)) {   // it waited for the player's orders as long as it may: again, quietly (no replan, nothing for the guide)
+            Crew.Phase again = again(ph);
+            if (again != null) { again.origin = ph.origin; c.phases.addFirst(named(again, ph.kind)); }
+            Events.log("replan: " + ph.kind + " waited for the player's orders; it goes again (not a replan, the guide is not told)");
+            return;
+        }
+        for (java.util.Iterator<TaskBoard.Card> it = failed.iterator(); it.hasNext(); ) if (it.next().last == Result.NO_AGENT) it.remove();   // (not short of anything)
         if (ph instanceof Day1.Quarry) quarryFailed = true;   // what the quarry was for is still short: the stairs give it next time
         StringBuilder what = new StringBuilder();
         Map<Item, Integer> lack = new LinkedHashMap<Item, Integer>();

@@ -41,7 +41,8 @@ def blocked_interior_does_not_pre_fail_shelter(day2: str, board: str) -> bool:
 def existing_guard_stays_outside(day2: str) -> bool:
     return (
         'if (!card.kind.equals("guard") || !card.open()) continue;' in day2
-        and "Agent assigned = card.holder != null ? card.holder : card.only;" in day2
+        and "Doer d = card.holder != null ? card.holder : card.only;" in day2
+        and "Agent assigned = (Agent) d;" in day2
         and "outsideGuard = assigned;" in day2
         and "existingGuard = true;" in day2
         and "a != outsideGuard" in day2

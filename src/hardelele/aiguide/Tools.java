@@ -30,6 +30,15 @@ class Tools {
 
     static Tools instance;
 
+    /** the question being answered on this thread (Assistant): a crew event or the player's own words */
+    static final ThreadLocal<String> asking = new ThreadLocal<String>();
+
+    /** the tool call answers the player's own words (not a crew event, not an outside agent over MCP) */
+    static boolean fromPlayer() {
+        String q = asking.get();
+        return q != null && !q.startsWith("[crew event");
+    }
+
     Tools(AIGuide mod) {
         this.mod = mod;
         instance = this;
@@ -98,7 +107,7 @@ class Tools {
                     "dig", "one block a line: x y z; empty if none"));
             if (crewAvailable())
                 a.add(tool("crew_plan", "Your crew: helper agents with players' bodies who do the early game for the player, on their own (no yes "
-                        + "needed). Give only GOALS, one a line, from this list: summon N (1-5 agents); shelter auto|hut|house|fenced (build a base); "
+                        + "needed). Give only GOALS, one a line, from this list: summon N (1-4 agents: the player himself is the crew's number 1); keep orders (only when the player says the agents on his orders should stay on them: else a plan he asks for takes them back into it); shelter auto|hut|house|fenced (build a base); "
                         + "tools wood|stone|iron (pickaxes for the crew); torches N; make ITEM N, ITEM N (any item by its game name, e.g. "
                         + "iron_pickaxe 1, iron_sword 1: the crew finds the ore, smelts and crafts it); gift ITEM [N], ITEM [N] (to the player); "
                         + "light (torches where the base and the mine are dark); inside (the crew goes into its house and waits there, e.g. "
@@ -116,12 +125,12 @@ class Tools {
                         + "call run separately only when the player explicitly asks to start it.", P, PD,
                         "action", "save | run | list | forget", "name", "a short name in the player's language (e.g. Лесоруб)",
                         "description", "the player's own words of what it does", "target", "tree | ore BLOCK (coal_ore, iron_ore...) | block BLOCK (stone, sand, dirt...)",
-                        "until", "ITEM COUNT for the chest (e.g. log 64), or empty: until nothing is left near", "agents", "for run: all, or agent numbers 1,3; ignored when saving"));
+                        "until", "ITEM COUNT for the chest (e.g. log 64), or empty: until nothing is left near", "agents", "for run: all, or agent numbers 2,3; ignored when saving"));
             if (crewAvailable())
                 a.add(tool("crew_order", "Direct orders to the crew's agents, as the player gives them in the commander view (when the player asks "
                         + "for something at a place: 'take that hill', 'chop this tree', 'all of you here', 'kill the zombie'). The agents ordered "
                         + "do only the player's orders until released. Use find_blocks or player_status for the place.", P, PD,
-                        "agents", "all, or agent numbers: 1,3", "order", "move, chop, mine, attack (the nearest hostile mob to the place), guard (stand there and fight off mobs), stop, release (back to the plan)",
+                        "agents", "all (the agents), or numbers: 2,3 (1 is the player himself: his character walks, chops, mines, attacks on the autopilot)", "order", "move, chop, mine, attack (the nearest hostile mob to the place), guard (stand there and fight off mobs), stop, release (back to the plan)",
                         "x", "x", "y", "y", "z", "z"));
             if (false && crewAvailable())
                 a.add(tool("helpers","Your crew: helper agents with players' bodies who do the early game for the player, together and on their "
@@ -191,9 +200,17 @@ class Tools {
                 else {
                     Class<?> origin = Class.forName("hardelele.aiguide.client.Origin");
                     Object llm = origin.getField("LLM_PLAN").get(null);
-                    java.lang.reflect.Method plan = Class.forName("hardelele.aiguide.client.Compiler").getDeclaredMethod("plan", String.class, String.class, origin);
-                    plan.setAccessible(true);
-                    r = (String) plan.invoke(null, player, str(args, "goals"), llm);
+                    Class<?> compiler = Class.forName("hardelele.aiguide.client.Compiler");
+                    java.lang.reflect.Method plan;
+                    try {   // the player's own request takes his agents back into the plan (a crew event does not)
+                        plan = compiler.getDeclaredMethod("plan", String.class, String.class, origin, boolean.class);
+                        plan.setAccessible(true);
+                        r = (String) plan.invoke(null, player, str(args, "goals"), llm, fromPlayer());
+                    } catch (NoSuchMethodException old) {   // an older client mod
+                        plan = compiler.getDeclaredMethod("plan", String.class, String.class, origin);
+                        plan.setAccessible(true);
+                        r = (String) plan.invoke(null, player, str(args, "goals"), llm);
+                    }
                 }
             }
             else if (name.equals("crew_routine")) {

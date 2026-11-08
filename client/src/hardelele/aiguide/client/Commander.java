@@ -54,7 +54,8 @@ public class Commander {
     // the camera: a point on the ground it looks at, how far, the turn and the tilt (wanted and as shown, eased)
     double px, py, pz, dist = 22, yaw = 0, pitch = 56;
     double sx, sy, sz, sdist = 22, syaw = 0;
-    boolean on, placed;
+    volatile boolean on;   // (read by the crew's thread: the player's character takes cards while the commander is on)
+    boolean placed;
     long lastNanos;
     net.minecraft.client.entity.EntityOtherPlayerMP eye;
     boolean hideWas;
@@ -367,9 +368,12 @@ public class Commander {
         GL11.glLineWidth(3f);
         Tessellator t = Tessellator.instance;
         float pt = e.partialTicks;
-        for (Agent a : clientAgents()) {
-            if (!selected.contains(a.skin())) continue;
-            double x = a.lastTickPosX + (a.posX - a.lastTickPosX) * pt, y = a.lastTickPosY + (a.posY - a.lastTickPosY) * pt - a.yOffset + 0.05, z = a.lastTickPosZ + (a.posZ - a.lastTickPosZ) * pt;
+        List<EntityLivingBase> units = new ArrayList<EntityLivingBase>(clientAgents());
+        if (selfUnit()) units.add(mc.thePlayer);
+        for (EntityLivingBase a : units) {
+            if (!selected.contains(unitOf(a))) continue;
+            double x = a.lastTickPosX + (a.posX - a.lastTickPosX) * pt, z = a.lastTickPosZ + (a.posZ - a.lastTickPosZ) * pt;
+            double y = a.lastTickPosY + (a.posY - a.lastTickPosY) * pt - a.yOffset + 0.05;   // (the player's posY is his eyes': yOffset takes it down)
             double pulse = 0.7 + 0.06 * Math.sin(System.currentTimeMillis() / 180.0);
             ring(t, x, y, z, pulse, 0.35f, 1f, 0.5f, 0.95f);
             ring(t, x, y, z, pulse + 0.12, 0.35f, 1f, 0.5f, 0.35f);
@@ -403,6 +407,65 @@ public class Commander {
     Agent renderedAgent(int skin) {
         for (Agent a : clientAgents()) if (a.skin() == skin) return a;
         return null;
+    }
+
+    // ---- the player's own character as the crew's number 1 (PlayerAgent) ----
+
+    /** the player is one of the crew here (a singleplayer world, not a video script) */
+    boolean selfUnit() {
+        return Crew.PLAYER_ONE && mc.isSingleplayer() && mc.thePlayer != null;
+    }
+
+    /** the crew's number of what was clicked: an agent's, 1 for the player himself, -1 for anything else */
+    int unitOf(Object o) {
+        if (o instanceof Agent) return ((Agent) o).skin();
+        if (o != null && o == mc.thePlayer && selfUnit()) return 1;
+        return -1;
+    }
+
+    /** the player as the commander names him: his name with his number */
+    String selfLabel() {
+        return CrewKeys.tr("self.label", mc.thePlayer == null ? "" : mc.thePlayer.getCommandSenderName());
+    }
+
+    /** what the player's character does for the crew now */
+    String selfDoing() {
+        PlayerAgent me = me();
+        TaskBoard.Card k = me == null ? null : me.card;
+        if (k != null) return CrewKeys.tr("self.doing", k.kind.replace("order ", "").replace("paint ", ""));
+        return PlayerAgent.givenToAI ? CrewKeys.tr("self.ai") : CrewKeys.tr("self.free");
+    }
+
+    static PlayerAgent me() {
+        Crew c = Crew.instance;
+        if (c == null) return null;
+        for (Doer d : c.extra) if (d instanceof PlayerAgent) return (PlayerAgent) d;
+        return null;
+    }
+
+    /** the picked agents, not the player (whom one cannot let go) */
+    int[] agentsPicked() {
+        List<Integer> l = new ArrayList<Integer>();
+        for (int s : selected) if (!(s == 1 && selfUnit())) l.add(s);
+        int[] out = new int[l.size()];
+        for (int i = 0; i < out.length; i++) out[i] = l.get(i);
+        return out;
+    }
+
+    /** one more agent: at the point under the cursor (on the block's top; from the panel's button: where the camera looks), else by the player */
+    void addAgent(boolean atCursor) {
+        Object o = atCursor && curIn() ? pick(curX(), curY()) : null;
+        double[] at = atCursor ? null : new double[] { px, py, pz };
+        if (o instanceof MovingObjectPosition) { MovingObjectPosition m = (MovingObjectPosition) o; at = new double[] { m.blockX + 0.5, m.blockY + 1, m.blockZ + 0.5 }; }
+        if (CrewKeys.instance != null) CrewKeys.instance.addAgents(1, at);
+    }
+
+    /** the picked agents let go (the player stays) */
+    void dismissPicked() {
+        int[] who = agentsPicked();
+        if (who.length == 0) { if (CrewKeys.instance != null) CrewKeys.instance.say(CrewKeys.tr("remove.which")); return; }
+        Crew.dismiss(who);
+        for (int s : who) selected.remove(s);
     }
 
     // ---- from the screen to the world and back ---------------------------------------------------------
@@ -497,7 +560,7 @@ public class Commander {
         Entity best = null;
         double bd = limit;
         for (Object o : mc.theWorld.loadedEntityList) {
-            if (!(o instanceof EntityLivingBase) || o == mc.thePlayer || o == eye) continue;
+            if (!(o instanceof EntityLivingBase) || o == mc.thePlayer && !selfUnit() || o == eye) continue;   // the player himself: the crew's number 1
             Entity en = (Entity) o;
             if (Slice.active() && en.boundingBox.minY >= Slice.level) continue;
             if (Fog.instance != null && Fog.instance.active() && !(en instanceof Agent) && Fog.instance.stateAt(en.posX, en.posZ) != 2) continue;   // hidden in the fog
@@ -520,10 +583,18 @@ public class Commander {
 
     void selectBox(int x0, int y0, int x1, int y1, boolean add) {
         if (!add) selected.clear();
-        for (Agent a : clientAgents()) {
+        List<EntityLivingBase> units = new ArrayList<EntityLivingBase>(clientAgents());
+        if (selfUnit()) units.add(mc.thePlayer);
+        for (EntityLivingBase a : units) {
             float[] s = toScreen(a.posX, a.boundingBox.minY + 0.9, a.posZ);
-            if (s != null && s[0] >= Math.min(x0, x1) && s[0] <= Math.max(x0, x1) && s[1] >= Math.min(y0, y1) && s[1] <= Math.max(y0, y1)) selected.add(a.skin());
+            if (s != null && s[0] >= Math.min(x0, x1) && s[0] <= Math.max(x0, x1) && s[1] >= Math.min(y0, y1) && s[1] <= Math.max(y0, y1)) selected.add(unitOf(a));
         }
+    }
+
+    /** every unit there is: the agents in sight and the player (a double click) */
+    void selectAll() {
+        for (Agent a : clientAgents()) selected.add(a.skin());
+        if (selfUnit()) selected.add(1);
     }
 
     int[] picked() {
@@ -727,6 +798,7 @@ public class Commander {
             AxisAlignedBB bb = en.boundingBox;
             hoverBlocks.add(new int[] { Integer.MIN_VALUE });   // an entity: its box is drawn from hoverEntity
             if (en instanceof Agent) { lmb = "выбрать " + ((Agent) en).getCustomNameTag(); rmb = "идти к нему"; }
+            else if (unitOf(en) == 1) { lmb = CrewKeys.tr("self.pick", selfLabel()); rmb = "идти к нему"; }
             else if (en instanceof IMob) { rmb = "атаковать: " + en.getCommandSenderName(); lmb = armed == Armed.ATTACK ? "атаковать" : null; }
             else rmb = "идти сюда";
         } else if (hover instanceof MovingObjectPosition && Fog.instance != null && Fog.instance.active() && !Fog.known(((MovingObjectPosition) hover).blockX, ((MovingObjectPosition) hover).blockZ)) {
@@ -924,10 +996,11 @@ public class Commander {
         /** the panel's height for what is shown now */
         int panelH() {
             int h = 8 + 16 + (reply() != null ? 22 : 0) + 6 + 18;   // chat, reply, scenario manager
+            if (selected.contains(1) && selfUnit()) h += 18;   // the player's own line
             List<Agent> sel = selAgents();
             if (sel.size() == 1) h += 14 + (fullInv ? 4 * 20 : 2 * 20) + 18;
             else if (sel.size() > 1) h += sel.size() * 20 + 18;
-            else h += 12;
+            else h += selected.contains(1) && selfUnit() ? 18 : 12;
             return h;
         }
 
@@ -970,7 +1043,8 @@ public class Commander {
             if (text.trim().isEmpty()) return;
             StringBuilder who = new StringBuilder();
             for (int s : selected) who.append(who.length() > 0 ? "," : "").append(s);
-            final String ask = (who.length() > 0 ? "[из режима командира; выбраны агенты " + who + " — приказы только им: crew_order с agents=" + who + " или цели crew_plan] "
+            final String ask = (who.length() > 0 ? "[из режима командира; выбраны агенты " + who + (selected.contains(1) && selfUnit() ? " (1 — это сам игрок, его персонаж ведёт автопилот: только идти, рубить, копать, сложить в сундук, бить, ставить)" : "")
+                    + " — приказы только им: crew_order с agents=" + who + " или цели crew_plan] "
                     : "[из режима командира; вся команда] ")
                     + "[ответ игроку — коротко и его словами: без названий инструментов, параметров и координат; остановить — кнопка «Стоп» на панели или клавиша H; вернуть под план — «По плану» или R] "
                     + text.trim();
@@ -1080,6 +1154,9 @@ public class Commander {
             if (code == Keyboard.KEY_V && Cam.instance != null) { Cam.instance.autoOn = false; Cam.instance.release(); }
             if (code == Keyboard.KEY_H && !selected.isEmpty()) Orders.give(picked(), Orders.Kind.STOP, 0, 0, 0, -1, false);
             if (code == Keyboard.KEY_R && !selected.isEmpty()) Orders.give(picked(), Orders.Kind.RELEASE, 0, 0, 0, -1, false);
+            if (CrewKeys.add != null && code == CrewKeys.add.getKeyCode()) addAgent(true);   // one more agent, at the cursor
+            if (code == Keyboard.KEY_DELETE) dismissPicked();                             // the picked agents let go
+            if (CrewKeys.self != null && code == CrewKeys.self.getKeyCode() && CrewKeys.instance != null) CrewKeys.instance.toggleSelf();
         }
 
         /** an armed order at the click: go there only, chop the tree, attack the mob, guard the place */
@@ -1152,6 +1229,9 @@ public class Commander {
                 localReply = "Сценарий «" + what.substring(8) + "» запущен для выбранных агентов.";
                 return;
             }
+            if (what.equals("add")) { addAgent(false); return; }
+            if (what.equals("dismiss")) { dismissPicked(); return; }
+            if (what.equals("self")) { if (CrewKeys.instance != null) CrewKeys.instance.toggleSelf(); return; }
             if (what.equals("inv")) fullInv = !fullInv;
             else if (what.equals("stop")) Orders.give(picked(), Orders.Kind.STOP, 0, 0, 0, -1, false);
             else if (what.equals("ai")) Orders.give(picked(), Orders.Kind.RELEASE, 0, 0, 0, -1, false);
@@ -1378,11 +1458,11 @@ public class Commander {
                 if (b == 0) {
                     Object o = pick(mx, my);
                     if (armed != Armed.NONE) { armedClick(o, shift); downButton = -1; return; }
-                    if (!(o instanceof Agent) && PlaceLayer.shown()) {   // the places' layer on: a click on a place rates it (an agent is still picked)
+                    if (unitOf(o) < 0 && PlaceLayer.shown()) {   // the places' layer on: a click on a place rates it (an agent is still picked)
                         PlaceView p = PlaceLayer.hit(ray(mx, my));
                         if (p != null) { fb.openPlace(p); downButton = -1; return; }
                     }
-                    if (o instanceof Agent) { selecting = true; return; }
+                    if (unitOf(o) > 0) { selecting = true; return; }   // an agent, or the player himself
                     if (o instanceof MovingObjectPosition) {   // a stroke: dig (or, with Ctrl, build on top of what is clicked)
                         MovingObjectPosition m = (MovingObjectPosition) o;
                         paintBuild = ctrl;
@@ -1414,9 +1494,9 @@ public class Commander {
                 } else if (selecting && dragging) selectBox(downX, downY, mx, my, shift);
                 else if (selecting) {
                     Object o = pick(mx, my);
-                    if (o instanceof Agent) {
-                        int s = ((Agent) o).skin();
-                        if (s == lastClickSkin && System.currentTimeMillis() - lastClick < 350) { for (Agent a : clientAgents()) selected.add(a.skin()); }
+                    if (unitOf(o) > 0) {
+                        int s = unitOf(o);
+                        if (s == lastClickSkin && System.currentTimeMillis() - lastClick < 350) selectAll();
                         else select(s, shift);
                         lastClickSkin = s;
                         lastClick = System.currentTimeMillis();
@@ -1480,6 +1560,17 @@ public class Commander {
                 int nw = fontRendererObj.getStringWidth(n);
                 Ui.round(x - nw / 2 - 4, y - 12, x + nw / 2 + 4, y - 1, 4, sel ? 0xB0204828 : 0x90101418);   // a chip under the name
                 fontRendererObj.drawStringWithShadow(n, x - nw / 2, y - 10, sel ? 0x90FF90 : 0xFFFFFF);
+            }
+            if (selfUnit() && !(Slice.active() && mc.thePlayer.boundingBox.minY >= Slice.level) && !CaveView.active()) {   // the player himself: number 1
+                float[] s = toScreen(mc.thePlayer.posX, mc.thePlayer.boundingBox.maxY + 0.45, mc.thePlayer.posZ);
+                if (s != null) {
+                    int x = (int) (s[0] / scale), y = (int) ((mc.displayHeight - s[1]) / scale);
+                    boolean sel = selected.contains(1);
+                    String n = selfLabel() + (PlayerAgent.givenToAI ? " · " + CrewKeys.tr("self.ai.short") : "");
+                    int nw = fontRendererObj.getStringWidth(n);
+                    Ui.round(x - nw / 2 - 4, y - 12, x + nw / 2 + 4, y - 1, 4, sel ? 0xB0204828 : 0x90183048);
+                    fontRendererObj.drawStringWithShadow(n, x - nw / 2, y - 10, sel ? 0x90FF90 : 0xBFE0FF);
+                }
             }
             PlaceLayer.labels(Commander.this, fontRendererObj, scale, mc.displayHeight);
             if (CaveView.active() && !CaveView.focused() && CaveView.liveExit()) {
@@ -1569,12 +1660,22 @@ public class Commander {
             List<Agent> roster = new ArrayList<Agent>();
             if (Crew.instance != null) for (Agent a : Crew.instance.agents) if (!a.isDead) roster.add(a);
             if (roster.isEmpty()) roster = clientAgents();
-            if (roster.isEmpty()) return;
+            boolean me = selfUnit();
+            if (roster.isEmpty() && !me) return;
             int x0 = px0() + 4, w = bandW() - 8;
-            int cell = w / roster.size();
+            int cells = roster.size() + (me ? 1 : 0), cell = w / cells;
+            if (me) {   // the player first: number 1
+                int right = cells == 1 ? x0 + w : x0 + cell - 3;
+                boolean current = selected.size() == 1 && selected.contains(1);
+                Ui.round(x0, 5, right, 24, 4, current ? 0xE02A5C4A : 0xD01A2A3A);
+                String line = selfLabel() + " Y" + MathHelper.floor_double(mc.thePlayer.boundingBox.minY);
+                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(line, right - x0 - 8), x0 + 4, 10, current ? 0xB9FFCE : 0xBFE0FF);
+                hit("view", 1, -1, x0, 5, right, 24, null);
+            }
+            int bx = x0 + (me ? cell : 0);
             for (int i = 0; i < roster.size(); i++) {
                 Agent a = roster.get(i);
-                int x = x0 + cell * i, right = i == roster.size() - 1 ? x0 + w : x + cell - 3;
+                int x = bx + cell * i, right = i == roster.size() - 1 ? x0 + w : x + cell - 3;
                 boolean current = selected.size() == 1 && selected.contains(a.skin());
                 Ui.round(x, 5, right, 24, 4, current ? 0xE02A5C4A : 0xD01A2630);
                 String line = a.getCustomNameTag() + " Y" + MathHelper.floor_double(a.boundingBox.minY);
@@ -1603,7 +1704,7 @@ public class Commander {
                 fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth("PgUp/PgDn: этаж · Home: следить · U: выкл", w - 8), x0 + 4, 45, 0xC6DEE0);
             } else {
                 Ui.round(x0, 28, x0 + w, 46, 4, 0xB01A2630);
-                String hint = selected.size() == 1 && viewedSkin < 0 ? "Агент вне прорисовки · подойди ближе" : viewedUnderground ? "C: 3D пещера · U: слой" : "Выбери подземного агента · U: слой";
+                String hint = selected.size() == 1 && viewedSkin < 0 && !(selected.contains(1) && selfUnit()) ?"Агент вне прорисовки · подойди ближе" : viewedUnderground ? "C: 3D пещера · U: слой" : "Выбери подземного агента · U: слой";
                 fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(hint, w - 8), x0 + 4, 33, 0xC6DEE0);
             }
         }
@@ -1655,13 +1756,25 @@ public class Commander {
             } else if (sentAt >= 0 && sentText.length() > 0) { fontRendererObj.drawStringWithShadow("…", x0 + 12, y, 0x708090); }
             y += 2;
             int rx = pill("Сценарии", "routines", x0 + 12, y, gmx, gmy);
+            rx = pill(CrewKeys.tr("pill.add"), "add", rx, y, gmx, gmy);   // one more agent (where the camera looks; the key: at the cursor)
+            if (selfUnit()) rx = pill((PlayerAgent.givenToAI ? "● " : "") + CrewKeys.tr("pill.self"), "self", rx, y, gmx, gmy);
             // the ratings and the share: as many of them as the band has room for (L, J are the keys anyway)
             String[][] more = { { (PlaceLayer.on ? "● " : "") + FeedbackUi.t("pill.places"), "places" }, { FeedbackUi.t("pill.actions"), "actions" }, { FeedbackUi.t("pill.share"), "share" } };
             for (String[] m : more) if (rx + fontRendererObj.getStringWidth(m[0]) + 12 <= x1 - 8) rx = pill(m[0], m[1], rx, y, gmx, gmy);
             y += 18;
             List<Agent> sel = selAgents();
+            boolean self = selected.contains(1) && selfUnit();
+            if (self) {   // the player himself, number 1: what his character does for the crew, health
+                String n = selfLabel() + "  " + Math.round(mc.thePlayer.getHealth()) + "♥  " + selfDoing();
+                fontRendererObj.drawStringWithShadow(fontRendererObj.trimStringToWidth(n, x1 - x0 - 24), x0 + 12, y + 3, 0xBFE0FF);
+                y += 18;
+            }
             if (sel.isEmpty()) {
-                fontRendererObj.drawStringWithShadow("ЛКМ — копать, Ctrl — строить, клик по агенту — выбрать", x0 + 12, y, 0x9AA8B8);
+                if (!self) fontRendererObj.drawStringWithShadow("ЛКМ — копать, Ctrl — строить, клик по агенту — выбрать", x0 + 12, y, 0x9AA8B8);
+                else {
+                    int px = pill("Стоп", "stop", x0 + 12, y, gmx, gmy);
+                    pill("По плану", "ai", px, y, gmx, gmy);
+                }
                 return;
             }
             if (sel.size() == 1) {   // one agent: its inventory; a click on an item: it works with it; drag onto someone: hand it over
@@ -1684,7 +1797,8 @@ public class Commander {
                 int px = x0 + 12;
                 px = pill(fullInv ? "Свернуть" : "Весь инвентарь", "inv", px, y, gmx, gmy);
                 px = pill("Стоп", "stop", px, y, gmx, gmy);
-                pill("По плану", "ai", px, y, gmx, gmy);
+                px = pill("По плану", "ai", px, y, gmx, gmy);
+                pill(CrewKeys.tr("pill.dismiss"), "dismiss", px, y, gmx, gmy);
                 return;
             }
             for (Agent a : sel) {   // several: a line each (name, health, what it does, what it carries); drag an item onto another's line: handed over
@@ -1710,7 +1824,8 @@ public class Commander {
             int px = x0 + 12;
             px = pill("Собраться", "gather", px, y, gmx, gmy);
             px = pill("Стоп", "stop", px, y, gmx, gmy);
-            pill("По плану", "ai", px, y, gmx, gmy);
+            px = pill("По плану", "ai", px, y, gmx, gmy);
+            pill(CrewKeys.tr("pill.dismiss"), "dismiss", px, y, gmx, gmy);
         }
 
         void tip(String t, int gmx, int gmy) {

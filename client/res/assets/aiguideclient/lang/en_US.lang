@@ -1,6 +1,8 @@
 key.aiguide.window=Guide window
 key.categories.aiguide=AI Guide
 key.aiguide.commander=Commander mode
+key.aiguide.selfai=Give yourself to the AI
+key.aiguide.addagent=One more agent
 
 # the person's ratings (FeedbackUi, PlaceLayer) and the share archive (GuiShare)
 aiguide.fb.pill.places=Places
@@ -57,6 +59,7 @@ aiguide.fb.result.blocked=blocked
 aiguide.fb.result.busy=busy
 aiguide.fb.result.not_visible=not visible
 aiguide.fb.result.out_of_reach=out of reach
+aiguide.fb.result.no_agent=everyone on the player's orders
 aiguide.fb.result.pushed=taken over by another reflex
 aiguide.fb.share.title=Share data
 aiguide.fb.share.intro=The archive is built on this computer, in the aiguide-share folder. It is not sent anywhere by itself. Tick what goes in.
@@ -96,3 +99,31 @@ aiguide.fb.share.err.too_large=The archive is larger than the service takes (up 
 aiguide.fb.share.err.not_configured=The receiving service is not set up yet. The archive stays in the folder.
 aiguide.fb.share.err.storage=The storage did not take the archive (code %s). Try later; the archive stays in the folder.
 aiguide.fb.share.err.check=The upload was not confirmed (the archive did not arrive whole). Try sending again.
+
+# the crew: the player as its number 1, agents added and let go, the keys (CrewKeys, Commander, Pilot)
+aiguide.crew.tag=Crew
+aiguide.crew.nocrew=The crew is there in singleplayer only.
+aiguide.crew.usage=Crew commands: /агент [N] or /crew add [N] calls agents; /агент убрать K or /crew remove K lets agent K go.
+aiguide.crew.remove.which=Whom to let go? Pick agents in the commander or give a number: /crew remove 3.
+aiguide.crew.remove.self=Agent 1 is you: you cannot be let go.
+aiguide.crew.remove.none=There is no agent %s.
+aiguide.crew.added=%s has come.
+aiguide.crew.removed=%s has gone; what it carried lies on the ground.
+aiguide.crew.full=No more agents: there are %s already, and the crew with you is %s.
+aiguide.crew.nospot=No place near where an agent could stand safely.
+aiguide.crew.stall=The plan stands still: all the agents are doing your orders. Press "По плану" to give them back to it.
+aiguide.crew.self.given=You gave yourself to the AI: your character takes work from the board by itself. Any movement key or %s gives you the controls back.
+aiguide.crew.self.back=The controls are yours.
+aiguide.crew.self.danger=Danger (a fall, lava or fire): the autopilot let go, the controls are yours.
+aiguide.crew.self.cannot=Your character cannot do that: the autopilot only walks, chops, digs, puts things into the chest, hits and places blocks.
+aiguide.crew.self.label=%s (1)
+aiguide.crew.self.doing=doing: %s
+aiguide.crew.self.ai=given to the AI, waiting for work
+aiguide.crew.self.free=on your own
+aiguide.crew.self.ai.short=AI
+aiguide.crew.self.pick=pick yourself: %s
+aiguide.crew.pill.add=+ agent
+aiguide.crew.pill.self=Give myself to the AI
+aiguide.crew.pill.dismiss=Let go
+aiguide.crew.key.conflict=AI Guide's key %s ("%s") is taken: %s - "%s" holds it too. %s is free, for example (Options - Controls).
+aiguide.crew.overlay=[Crew] your character is agent 1 and does a task. WASD takes the controls
