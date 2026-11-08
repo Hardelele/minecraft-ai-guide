@@ -107,7 +107,7 @@ final class MindSkills {
             case "take": case "put": return chest(c, a, w, call.tool.equals("take"), call.arg("chest"), call.arg("item"), clamp(n, 1, 64 * 27));
             case "give": return give(c, a, w, call.arg("to"), call.arg("item"), clamp(n, 1, 64 * 9));
             case "wait": return new Wait(clamp(call.num("seconds", 5), 1, 120));
-            default: return failed("UNKNOWN_TOOL", call.tool);
+            default: return DefenseSkills.make(c, a, w, call);   // the defence's (or UNKNOWN_TOOL)
         }
     }
 

@@ -31,16 +31,24 @@ final class Mind {
         int sameFailure = 3;   // the same step failing with the same reason this many times in a row: the next one ends the goal
         int recent = 10;       // last steps shown to the model
         int says = 8;
+
+        /** a goal of defence has no end of its own (the waves do not end): more steps and time than a goal of things, the tokens as set */
+        Limits defense() {
+            steps = Math.max(steps, 300);
+            seconds = Math.max(seconds, 3 * 3600);
+            return this;
+        }
     }
 
     /** a goal: the words, optionally an item to have (structural: "stone_pickaxe 1"), alone or shared by a few agents */
     static final class Goal {
         final String text, item;
         final int count;
+        final boolean defense;   // a goal of defence ("защищай базу"): the defence's tools and rules too
         final List<String> members = new ArrayList<String>();   // the agents sharing it (one: its own)
         volatile String state = "OPEN";   // OPEN, DONE, GAVE_UP
         volatile String summary = "";
-        Goal(String text, String item, int count) { this.text = text; this.item = item; this.count = count; }
+        Goal(String text, String item, int count) { this.text = text; this.item = item; this.count = count; this.defense = Defense.isGoal(text); }
         boolean open() { return state.equals("OPEN"); }
         boolean shared() { return members.size() > 1; }
         String want() { return item == null ? "" : item + " " + count; }
@@ -88,8 +96,20 @@ final class Mind {
     // ---- the tools the model sees -----------------------------------------------------------------------------
 
     static final String[] SKILLS = { "look_around", "go_to", "chop_tree", "mine", "craft", "smelt", "place", "take", "put", "give", "say", "wait", "how_to_make", "done", "give_up" };
+    /** the defence's, for a goal of defence only (DefenseSkills) */
+    static final String[] DEFENSE = { "build_wall", "repair_wall", "dig_moat", "light_area", "make_weapon", "equip", "take_post", "hold_line", "guard_ally", "retreat", "eat" };
 
-    static JsonArray tools() {
+    static String[] skills(boolean defense) {
+        if (!defense) return SKILLS;
+        String[] s = new String[SKILLS.length + DEFENSE.length];
+        System.arraycopy(SKILLS, 0, s, 0, SKILLS.length);
+        System.arraycopy(DEFENSE, 0, s, SKILLS.length, DEFENSE.length);
+        return s;
+    }
+
+    static JsonArray tools() { return tools(false); }
+
+    static JsonArray tools(boolean defense) {
         JsonArray a = new JsonArray();
         a.add(tool("look_around", "Turn round for a few seconds: the crew's memory sees what is around (trees, stone, ores, stations). For when SEEN NEAR lacks what you need."));
         a.add(tool("go_to", "Walk to a place. Fails NO_PATH when there is no way on foot.",
@@ -120,7 +140,38 @@ final class Mind {
                 + "Takes a step but no game time.", "item", "string", "the item"));
         a.add(tool("done", "The goal is reached.", "summary", "string", "one short sentence for the player, in Russian"));
         a.add(tool("give_up", "The goal cannot be reached from here.", "reason", "string", "why, one short sentence for the player, in Russian"));
+        if (defense) defenseTools(a);
         return a;
+    }
+
+    static void defenseTools(JsonArray a) {
+        a.add(tool("build_wall", "Build wall blocks from your bag where the eyes see them go: a ring round the base (a gate left open, posts inside) or a line. "
+                + "Builds up to 24 cells a call, bottom first, the cells others reserved left to them; call again for the rest. "
+                + "Fails NO_BASE, NO_ITEMS (how many blocks it takes), ALL_TAKEN, DONE_ALREADY, BAD_ARG.",
+                "shape", "string", "'around base' (optionally 'around base 8': the radius 3-24), or 'line x1 z1 x2 z2'",
+                "height", "integer", "1-4 blocks (2 keeps zombies out)?", "material", "string", "cobblestone, planks, dirt... or 'any' (the most in the bag)?",
+                "gate", "string", "the ring's gate side: north, south, east, west?"));
+        a.add(tool("repair_wall", "Fill the holes of the planned wall (a creeper's, a dug block) from your bag. Fails NO_PERIMETER, NO_HOLES, NO_ITEMS."));
+        a.add(tool("dig_moat", "Dig a trench two cells outside the ring wall (its gate's way left), up to 16 blocks a call. Fails NO_PERIMETER, DONE_ALREADY, NO_TOOL.",
+                "depth", "integer", "1-2?"));
+        a.add(tool("light_area", "Put torches from your bag on dark ground round the base (every 5 blocks), so mobs do not spawn there. Fails NO_TORCHES, NO_SPOT.",
+                "radius", "integer", "2-24 blocks from the base?"));
+        a.add(tool("make_weapon", "Craft a weapon by the game's recipes (as craft): sword (the best the bag allows: diamond, iron, stone, wooden), bow, arrows. "
+                + "Fails as craft does (MISSING says what it takes), UNKNOWN_WEAPON.",
+                "type", "string", "sword, bow or arrows", "count", "integer", "how many (arrows: 4 a craft)?"));
+        a.add(tool("equip", "Take the best weapon into the hand, or put on the armour of the bag. Fails NO_WEAPON, NO_ARMOR.",
+                "what", "string", "weapon, armor or best (both)"));
+        a.add(tool("take_post", "Walk to a post of the perimeter and hold it (reserved: nobody else takes it). Fails NO_PERIMETER, UNKNOWN_POST, POST_TAKEN, NO_PATH.",
+                "where", "string", "'auto' (the free post that falls to you), a post's name from PERIMETER (gate, north, north-east...) or 'x y z'"));
+        a.add(tool("hold_line", "Fight at your post (or where you stand): the body picks its targets (nearest the base, those on a wounded ally, never a creeper "
+                + "in melee), stays within radius of the post and inside the wall, falls back when hurt. Ends when the time is up, the wave is over, "
+                + "or an event (a breach, a creeper at the wall). Fails LOW_HEALTH (it fell back), INTERRUPTED.",
+                "radius", "integer", "1-8 blocks from the post it may go?", "seconds", "integer", "5-600?"));
+        a.add(tool("guard_ally", "Keep by an ally and fight what comes at it (inside the wall when it is). Fails GONE, BAD_ARG, LOW_HEALTH, INTERRUPTED.",
+                "ally", "string", "agent N, or player", "seconds", "integer", "5-600?"));
+        a.add(tool("retreat", "Fall back inside: to the base's middle (home) or behind the wall. Fails NO_HOME, NO_PATH.",
+                "where", "string", "home or wall?"));
+        a.add(tool("eat", "Eat food of the bag to heal (bread, cooked meat, apples...). Fails NO_FOOD, FULL_HEALTH.", "count", "integer", "how many at most?"));
     }
 
     /** a function tool: name, description, then params as name, type, description (a description ending in '?' is optional); every skill but done/give_up says why */
@@ -223,10 +274,10 @@ final class Mind {
         st.repeated = repeated();
         JsonObject body = new JsonObject();
         JsonArray m = new JsonArray();
-        m.add(message("system", SYSTEM));
+        m.add(message("system", goal.defense ? SYSTEM + Defense.RULES : SYSTEM));
         m.add(message("user", st.render()));
         body.add("messages", m);
-        body.add("tools", tools());
+        body.add("tools", tools(goal.defense));
         body.addProperty("tool_choice", "auto");
         requests++;
         status = "THINKING";
@@ -269,6 +320,7 @@ final class Mind {
             JsonObject f = t.getAsJsonObject("function");
             c.id = t.has("id") ? t.get("id").getAsString() : "";
             c.tool = f.has("name") ? f.get("name").getAsString().trim() : "";
+            if (c.tool.equals("heal")) c.tool = "eat";   // the same skill by its other name
             c.args = args(f.get("arguments"));
             if (c.args == null) { c.args = new JsonObject(); c.error = "BAD_ARGS: the arguments of " + c.tool + " are not a JSON object"; }
             if (tc.size() > 1) c.text = (c.text + " [" + tc.size() + " calls: only the first is done]").trim();
@@ -315,7 +367,7 @@ final class Mind {
                         JsonObject o = new JsonParser().parse(t.substring(i, j + 1)).getAsJsonObject();
                         String name = o.has("name") ? o.get("name").getAsString() : o.has("tool") ? o.get("tool").getAsString() : null;
                         if (name != null) {
-                            c.tool = name.trim();
+                            c.tool = name.trim().equals("heal") ? "eat" : name.trim();
                             JsonObject a = args(o.has("arguments") ? o.get("arguments") : o.get("parameters"));
                             c.args = a == null ? new JsonObject() : a;
                             return true;
@@ -334,8 +386,18 @@ final class Mind {
     String check(Call c, MindState st) {
         if (c.error != null) return c.error;
         boolean known = false;
-        for (String s : SKILLS) if (s.equals(c.tool)) known = true;
-        if (!known) return "UNKNOWN_TOOL: " + c.tool + "; the tools: " + String.join(", ", SKILLS);
+        String[] all = skills(goal.defense);
+        for (String s : all) if (s.equals(c.tool)) known = true;
+        if (!known) return "UNKNOWN_TOOL: " + c.tool + "; the tools: " + String.join(", ", all);
+        if (c.tool.equals("make_weapon") && c.arg("type").isEmpty()) return "MISSING_ARG: make_weapon needs type";
+        if (c.tool.equals("guard_ally") && c.arg("ally").isEmpty()) return "MISSING_ARG: guard_ally needs ally";
+        if (c.tool.equals("build_wall") && !c.arg("height").isEmpty() && (c.num("height", 2) < 1 || c.num("height", 2) > Defense.MAX_HEIGHT)) return "BAD_ARG: build_wall height 1-" + Defense.MAX_HEIGHT;
+        if (c.tool.equals("hold_line") && !c.arg("radius").isEmpty() && (c.num("radius", 4) < 1 || c.num("radius", 4) > 8)) return "BAD_ARG: hold_line radius 1-8";
+        if ((c.tool.equals("hold_line") || c.tool.equals("guard_ally")) && !c.arg("seconds").isEmpty() && (c.num("seconds", 60) < 5 || c.num("seconds", 60) > 600))
+            return "BAD_ARG: " + c.tool + " seconds 5-600";
+        if (c.tool.equals("light_area") && !c.arg("radius").isEmpty() && (c.num("radius", 12) < 2 || c.num("radius", 12) > Defense.MAX_RADIUS)) return "BAD_ARG: light_area radius 2-" + Defense.MAX_RADIUS;
+        if (c.tool.equals("dig_moat") && !c.arg("depth").isEmpty() && (c.num("depth", 1) < 1 || c.num("depth", 1) > 2)) return "BAD_ARG: dig_moat depth 1-2";
+        if (c.tool.equals("done") && goal.defense && st.waveOn) return "NOT_DONE: a wave is on; the defence goes on";
         String[] need = c.tool.equals("go_to") ? new String[] { "target" } : c.tool.equals("mine") ? new String[] { "block" }
                 : c.tool.equals("craft") || c.tool.equals("smelt") || c.tool.equals("how_to_make") ? new String[] { "item" }
                 : c.tool.equals("place") ? new String[] { "item" } : c.tool.equals("take") || c.tool.equals("put") ? new String[] { "item" }

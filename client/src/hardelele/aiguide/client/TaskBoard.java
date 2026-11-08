@@ -474,6 +474,40 @@ class TaskBoard {
         if (s != null) s.remove(a);
     }
 
+    /**
+     * The defence's posts (a name of the perimeter's, or "x y z"): one doer each, held across the doer's cards (a mind's
+     * steps come and go, its post stays) until it takes another, leaves it, dies, or its mind's goal is over.
+     */
+    final Map<String, Doer> posts = new LinkedHashMap<String, Doer>();
+
+    /** the post for this doer (its old one let go): false when someone else alive holds it */
+    boolean takePost(String post, Doer a) {
+        Doer o = posts.get(post);
+        if (o != null && o != a && o.alive()) return false;
+        leavePost(a);
+        posts.put(post, a);
+        return true;
+    }
+
+    /** the post it holds, or null */
+    String postOf(Doer a) {
+        for (Map.Entry<String, Doer> e : posts.entrySet()) if (e.getValue() == a) return e.getKey();
+        return null;
+    }
+
+    /** who holds it (alive), or null */
+    Doer postHolder(String post) {
+        Doer o = posts.get(post);
+        return o != null && o.alive() ? o : null;
+    }
+
+    void leavePost(Doer a) {
+        for (java.util.Iterator<Map.Entry<String, Doer>> it = posts.entrySet().iterator(); it.hasNext(); ) {
+            Doer d = it.next().getValue();
+            if (d == a || !d.alive()) it.remove();
+        }
+    }
+
     static int chestCount(IInventory inv, Item item) {
         if (inv == null) return 0;
         int n = Crew.count(inv, item);

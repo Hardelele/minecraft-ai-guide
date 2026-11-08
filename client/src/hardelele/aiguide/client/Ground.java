@@ -285,6 +285,7 @@ class Ground {
             }
             for (int[] p : mineWay) z.add(new Zone("way", null, p[0], p[1] - 1, p[2], p[0], p[1] - 1, p[2]));   // the floor of the way to it
         }
+        z.addAll(DefenseWorld.zones());   // the defence's walls and the ground under them
         return z;
     }
 

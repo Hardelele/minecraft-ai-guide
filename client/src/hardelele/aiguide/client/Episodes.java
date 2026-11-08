@@ -19,11 +19,11 @@ final class Episodes {
     static final int KEEP = 4000;
     private static final ArrayDeque<String[]> lines = new ArrayDeque<String[]>();   // { wall ms, line }
 
-    /** one episode: a reflex's case or a card's end */
+    /** one episode: a reflex's case, a card's end, or a step of the defence (a fight) */
     static final class Ep {
-        String type = "case";          // "case" or "card"
-        long t = -1, ms = -1;          // world tick (a case), wall clock (a card's line)
-        String agent = "", reflex = "", reaction = "", result = "", escalated, card = "";
+        String type = "case";          // "case", "card" or "fight"
+        long t = -1, ms = -1;          // world tick (a case), wall clock (a card's line, a fight's)
+        String agent = "", reflex = "", reaction = "", result = "", escalated, card = "", detail = "";
         int ticks;
         int[] at;                      // where (a case: the agent's feet), null: not known
 
@@ -44,12 +44,13 @@ final class Episodes {
                 o.addProperty("agent", agent);
                 o.addProperty("card", card);
                 o.addProperty("result", result);
+                if ("fight".equals(type)) o.addProperty("detail", detail);
             }
             if (at != null) o.add("at", Labels.ints(at));
             return o;
         }
 
-        String key() { return "case".equals(type) ? "c:" + t + ":" + agent + ":" + reflex : "k:" + ms + ":" + agent + ":" + card; }
+        String key() { return "case".equals(type) ? "c:" + t + ":" + agent + ":" + reflex : ("fight".equals(type) ? "f:" : "k:") + ms + ":" + agent + ":" + card; }
 
         boolean ok() { return "OK".equals(result) && (escalated == null || escalated.isEmpty()); }
     }
@@ -80,6 +81,34 @@ final class Episodes {
         e.agent = m.group(2);
         e.result = m.group(3);
         return e;
+    }
+
+    /** "defense: <agent> <skill> -> <result> (<the fight's numbers; what it said>)" (AgentMind's line when a step of the defence ends) */
+    static final Pattern FIGHT = Pattern.compile("^defense: (.+?) ([a-z_]+) -> ([A-Z_]+)(?: \\((.*)\\))?$");
+
+    static Ep fight(long ms, String line) {
+        Matcher m = FIGHT.matcher(line);
+        if (!m.matches()) return null;
+        Ep e = new Ep();
+        e.type = "fight";
+        e.ms = ms;
+        e.agent = m.group(1);
+        e.card = m.group(2);
+        e.result = m.group(3);
+        e.detail = m.group(4) == null ? "" : m.group(4);
+        return e;
+    }
+
+    /** the last n steps of the defence ended (from the kept lines), newest first */
+    static List<Ep> fights(int n) {
+        List<Ep> out = new ArrayList<Ep>();
+        List<String[]> l;
+        synchronized (lines) { l = new ArrayList<String[]>(lines); }
+        for (int i = l.size() - 1; i >= 0 && out.size() < n; i--) {
+            Ep e = fight(Long.parseLong(l.get(i)[0]), l.get(i)[1]);
+            if (e != null) out.add(e);
+        }
+        return Collections.unmodifiableList(out);
     }
 
     static void event(long ms, String line) {

@@ -71,6 +71,7 @@ class Guard {
         double bs = -1e9;
         for (Agent a : c.agents) {
             if (a.isDead || a.getHealth() < LOW + 4 || a.commanded) continue;   // the player's units take the player's orders only
+            if (AgentMind.defends(a)) continue;   // its own mind defends the base (its posts, its fights): the watch does not take it off them
             TaskBoard.Card k = c.board.leased.get(a);
             if (k != null && k.kind.equals("guard")) return null;   // someone guards already
             double s = a.weapon() * 3 + (k == null ? 4 : -k.prio) - (near == null || near.isEmpty() ? 0 : a.getDistanceToEntity(near.get(0)) * 0.1);
@@ -85,6 +86,7 @@ class Guard {
     static void watch(Crew c, WorldServer w, EntityPlayerMP p) {
         if (w.getTotalWorldTime() % 10 != 0 || c.agents.isEmpty()) return;
         for (TaskBoard.Card k : c.board.cards) if (k.kind.equals("guard") && k.open()) return;   // a guard is on it (or planned)
+        for (Agent a : c.agents) if (!a.isDead && DefenseSkills.fighting(a)) return;   // a post holds the line (hold_line, guard_ally): the defence is on it
         List<EntityLiving> t = threats(c, w, p);
         if (t.isEmpty()) return;
         Agent g = pick(c, t);
@@ -143,6 +145,7 @@ class Guard {
                 back = new Crew.GoTo(in[0] + 0.5, in[1], in[2] + 0.5, 1.0);
                 Events.log("crew: " + a.getCustomNameTag() + " falls back to the house (health " + Math.round(a.getHealth()) + ")");
                 Ledger.act(a, "fall back");
+                Defense.of(a.who()).retreats++;
                 return Result.RUNNING;
             }
             if (loot != null) {   // what the kill dropped
@@ -154,6 +157,7 @@ class Guard {
             if (target == null || !hostile(target) || ticks % 10 == 0) {
                 if (target != null && target.isDead || target != null && target.getHealth() <= 0) {
                     kills++;
+                    Defense.of(a.who()).kills++;
                     Ledger.act(a, "kill " + target.getCommandSenderName());
                     Events.log("crew: " + a.getCustomNameTag() + " killed " + target.getCommandSenderName());
                     loot = new Crew.Collect(target.posX, target.posY, target.posZ, 3);
@@ -196,24 +200,33 @@ class Guard {
             if (cool > 0) return Result.RUNNING;
             if (!a.body.facing(target.posX, target.posY + target.getEyeHeight() * 0.8, target.posZ, 25)) return Result.RUNNING;   // the eyes on it first
             cool = 11;   // about twice a second, as a player clicking (a mob is hurt at most every half second anyway)
-            FakePlayer h = Skills.hands(a, w);
-            ItemStack held = a.getHeldItem();
-            grip(h, held);
-            a.swingItem();
-            h.attackTargetEntityWithCurrentItem(target);
-            if (held != null && held.stackSize <= 0) {   // the weapon broke
-                Ledger.flow(Ledger.Way.INGREDIENT, held, "worn out");
-                a.bag.remove(held);
-                a.body.hold(null);
-                grip(h, null);
-            }
-            h.inventory.mainInventory[0] = null;
-            // the hit was the agent's (its hands are its own): the mob strikes back at the agent, not at the hands
-            target.setRevengeTarget(a);
-            if (target.getAttackTarget() == h) target.setAttackTarget(a);
-            if (target instanceof EntityCreature && ((EntityCreature) target).getEntityToAttack() == h) ((EntityCreature) target).setTarget(a);
-            Ledger.act(a, "hit " + target.getCommandSenderName());
+            strike(a, w, target);
             return Result.RUNNING;
         }
+    }
+
+    /** one hit as a player's: the hands with the weapon in hand, the mob strikes back at the agent; the damage in its tally */
+    static void strike(Agent a, WorldServer w, EntityLiving target) {
+        FakePlayer h = Skills.hands(a, w);
+        ItemStack held = a.getHeldItem();
+        grip(h, held);
+        a.swingItem();
+        float before = target.getHealth();
+        h.attackTargetEntityWithCurrentItem(target);
+        Defense.Tally t = Defense.of(a.who());
+        t.hits++;
+        t.dealt += Math.max(0, before - Math.max(0, target.getHealth()));
+        if (held != null && held.stackSize <= 0) {   // the weapon broke
+            Ledger.flow(Ledger.Way.INGREDIENT, held, "worn out");
+            a.bag.remove(held);
+            a.body.hold(null);
+            grip(h, null);
+        }
+        h.inventory.mainInventory[0] = null;
+        // the hit was the agent's (its hands are its own): the mob strikes back at the agent, not at the hands
+        target.setRevengeTarget(a);
+        if (target.getAttackTarget() == h) target.setAttackTarget(a);
+        if (target instanceof EntityCreature && ((EntityCreature) target).getEntityToAttack() == h) ((EntityCreature) target).setTarget(a);
+        Ledger.act(a, "hit " + target.getCommandSenderName());
     }
 }

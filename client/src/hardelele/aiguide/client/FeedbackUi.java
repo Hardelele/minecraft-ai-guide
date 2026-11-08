@@ -29,7 +29,7 @@ final class FeedbackUi {
     GuiTextField comment;
 
     // what the agents did
-    int tab;   // 0 reflexes' cases, 1 cards
+    int tab;   // 0 reflexes' cases, 1 cards, 2 the defence's fights
     int offset;
     List<Episodes.Ep> eps = new ArrayList<Episodes.Ep>();
     Episodes.Ep picked;
@@ -62,7 +62,7 @@ final class FeedbackUi {
         refresh();
     }
 
-    void refresh() { eps = tab == 0 ? Episodes.cases(Feedback.recentCases(200), 200) : Episodes.cards(200); }
+    void refresh() { eps = tab == 0 ? Episodes.cases(Feedback.recentCases(200), 200) : tab == 1 ? Episodes.cards(200) : Episodes.fights(200); }
 
     /** what was written: a message of the commander's (its one place for them) */
     void say(String s) {
@@ -138,10 +138,11 @@ final class FeedbackUi {
         fr.drawStringWithShadow(t("actions.title"), x + 12, y + 9, 0xFFFFFF);
         kit.closeCross(hits, "close", x + w, y);
         int bx = button(fr, t("actions.reflexes"), "tab:0", x + 12, y + 22, mx, my, tab == 0);
-        button(fr, t("actions.cards"), "tab:1", bx, y + 22, mx, my, tab == 1);
+        bx = button(fr, t("actions.cards"), "tab:1", bx, y + 22, mx, my, tab == 1);
+        button(fr, t("actions.fights"), "tab:2", bx, y + 22, mx, my, tab == 2);
         int yy = y + 42;
         offset = Math.max(0, Math.min(offset, Math.max(0, eps.size() - ROWS)));
-        if (eps.isEmpty()) fr.drawString(t(tab == 0 ? "actions.none" : "actions.nocards"), x + 12, yy + 4, 0xB9CBD8);
+        if (eps.isEmpty()) fr.drawString(t(tab == 0 ? "actions.none" : tab == 1 ? "actions.nocards" : "actions.nofights"), x + 12, yy + 4, 0xB9CBD8);
         for (int i = offset; i < eps.size() && i < offset + ROWS; i++) {
             Episodes.Ep e = eps.get(i);
             boolean sel = picked != null && picked.key().equals(e.key());
@@ -150,6 +151,7 @@ final class FeedbackUi {
             Integer r = rated.get(e.key());
             String mark = r == null ? "" : r > 0 ? "§a+ " : "§c- ";
             String what = e.type.equals("case") ? t("actions.case", e.agent, e.reflex, e.reaction, result(e), e.ticks)
+                    : e.type.equals("fight") ? t("actions.fight", e.agent, e.card, result(e), e.detail)
                     : t("actions.card", e.agent, e.card, result(e));
             String when = e.type.equals("case") ? t("actions.tick", e.t) : new java.text.SimpleDateFormat("HH:mm:ss").format(new java.util.Date(e.ms));
             int ww = fr.getStringWidth(when);
@@ -163,7 +165,7 @@ final class FeedbackUi {
         yy = y + 56 + ROWS * rowH;
         bx = button(fr, t("actions.good"), "good", x + 12, yy, mx, my, rating > 0);
         bx = button(fr, t("actions.bad"), "bad", bx, yy, mx, my, rating < 0);
-        if (picked.at != null || picked.type.equals("card")) bx = button(fr, t("actions.goto"), "goto", bx + 8, yy, mx, my, false);
+        if (picked.at != null || !picked.type.equals("case")) bx = button(fr, t("actions.goto"), "goto", bx + 8, yy, mx, my, false);
         yy += 18;
         bx = x + 12;
         for (String rs : Labels.REASONS) {

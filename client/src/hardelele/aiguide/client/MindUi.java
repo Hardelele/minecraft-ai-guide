@@ -22,6 +22,17 @@ final class MindUi {
             case "put": return CrewKeys.tr("mind.do.put");
             case "give": return CrewKeys.tr("mind.do.give");
             case "wait": return CrewKeys.tr("mind.do.wait");
+            case "build_wall": return CrewKeys.tr("mind.do.build_wall");
+            case "repair_wall": return CrewKeys.tr("mind.do.repair_wall");
+            case "dig_moat": return CrewKeys.tr("mind.do.dig_moat");
+            case "light_area": return CrewKeys.tr("mind.do.light_area");
+            case "make_weapon": return CrewKeys.tr("mind.do.make_weapon");
+            case "equip": return CrewKeys.tr("mind.do.equip");
+            case "take_post": return CrewKeys.tr("mind.do.take_post");
+            case "hold_line": return CrewKeys.tr("mind.do.hold_line");
+            case "guard_ally": return CrewKeys.tr("mind.do.guard_ally");
+            case "retreat": return CrewKeys.tr("mind.do.retreat");
+            case "eat": return CrewKeys.tr("mind.do.eat");
             default: return s[0];
         }
     }

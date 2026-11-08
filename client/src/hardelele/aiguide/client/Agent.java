@@ -148,6 +148,7 @@ public class Agent extends EntityCreature implements Doer {
         if (hit && !worldObj.isRemote) {
             hurtAt = ticksExisted;
             hurtBy = s.getEntity() != null ? s.getEntity().getCommandSenderName() : s.getDamageType();
+            Defense.of(who()).taken += Math.max(0, before - getHealth());
             Events.log("crew: " + getCustomNameTag() + " hurt by " + (s.getEntity() != null ? s.getEntity().getCommandSenderName() : s.getDamageType())
                     + ", health " + Math.round(before) + " -> " + Math.round(getHealth()));
         }
@@ -207,7 +208,14 @@ public class Agent extends EntityCreature implements Doer {
     @Override
     public void onDeath(DamageSource s) {
         if (!worldObj.isRemote && slot.busy()) Cases.drop(this, "DIED");   // a reaction open: its case ends so
-        if (!worldObj.isRemote) setCurrentItemOrArmor(0, null);   // the held thing is in the bag: it falls once, with the bag
+        if (!worldObj.isRemote) {
+            setCurrentItemOrArmor(0, null);   // the held thing is in the bag: it falls once, with the bag
+            for (int i = 1; i <= 4; i++) {   // the armour worn (DefenseSkills.Equip took it out of the bag): back in it, to fall with it
+                ItemStack worn = getEquipmentInSlot(i);
+                if (worn != null) { bag.add(worn); setCurrentItemOrArmor(i, null); }
+            }
+            Defense.of(who()).deaths++;
+        }
         super.onDeath(s);
         if (worldObj.isRemote) return;
         for (ItemStack it : bag) {   // the bag falls where it died, as a player's inventory does

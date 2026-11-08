@@ -299,6 +299,7 @@ final class Reacts {
         if (to == null) { double[] p = Moves.away(a.posX, a.posZ, m.posX, m.posZ, 10); to = new int[] { MathHelper.floor_double(p[0]), MathHelper.floor_double(a.posY), MathHelper.floor_double(p[1]) }; }
         Walk back = new Walk("fall back", to, 200, false, ag -> m.isDead || ag.getDistanceToEntity(m) > 10, Result.BLOCKED);
         back.nav = true;
+        Defense.of(a.who()).retreats++;
         return back;
     }
 

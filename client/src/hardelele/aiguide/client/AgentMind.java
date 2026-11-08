@@ -56,6 +56,7 @@ final class AgentMind {
     MindSkills.Skill skill;
     TaskBoard.Card card;
     Map<String, Integer> before;
+    Defense.Tally fightBefore;   // the agent's fight when its step began
     long began;
     int entity;
     final List<String> events = new ArrayList<String>();
@@ -81,6 +82,26 @@ final class AgentMind {
             m.mind.end("GAVE_UP", "error: " + e);
             m.close(c, a);
             return false;
+        }
+    }
+
+    /** its mind's goal is the defence (the guard's watch leaves it be: its own posts and fights) */
+    static boolean defends(Agent a) {
+        AgentMind m = minds.get(a.skin());
+        return m != null && m.goal.defense && !m.mind.over();
+    }
+
+    static boolean anyDefense() {
+        for (AgentMind m : minds.values()) if (m.goal.defense && !m.mind.over()) return true;
+        return false;
+    }
+
+    /** an event of the defence (a wave, a breach, a creeper at the wall, an ally hurt) for every mind of defence; one that calls for a decision ends a wait or a fight */
+    static void tell(String e, boolean interrupt) {
+        for (AgentMind m : minds.values()) {
+            if (!m.goal.defense || m.mind.over()) continue;
+            if (m.events.size() < 8) m.events.add(e);
+            if (interrupt && (m.skill instanceof MindSkills.Wait || m.skill instanceof DefenseSkills.Fighter)) m.skill.interrupt = e;
         }
     }
 
@@ -188,6 +209,7 @@ final class AgentMind {
         skill = s;
         call = cl;
         before = MindSkills.bag(a);
+        fightBefore = Defense.of(a.who()).copy();
         began = w.getTotalWorldTime();
         entity = a.getEntityId();
         Origin was = Crew.originNow;
@@ -213,6 +235,9 @@ final class AgentMind {
         if (skill != null && skill.result == null) skill.result = Result.GONE;   // a card job left over (if any) ends at once
         if (call.tool.equals("look_around") && "OK".equals(result)) detail = seen(c, a, w);
         String changes = MindSkills.diff(before, MindSkills.bag(a));
+        if (DefenseSkills.isDefense(call.tool))   // an episode of the fight: the ratings' fights tab reads this line (Episodes.FIGHT)
+            Events.log("defense: " + a.who() + " " + call.tool + " -> " + (result == null ? "OK" : result) + " (" + Defense.of(a.who()).since(fightBefore).line()
+                    + (detail == null || detail.isEmpty() ? "" : "; " + cut(detail, 160)) + ")");
         record(c, a, w, call, result == null ? "OK" : result, detail, changes, (w.getTotalWorldTime() - began) / 20.0);
         skill = null;
         call = null;
@@ -222,7 +247,16 @@ final class AgentMind {
         Mind.Step s = mind.record(cl, result, detail, changes, sec);
         if (!cl.tool.equals("how_to_make") || !result.equals("OK"))
             Events.log("mind: " + a.who() + " " + cl.tool + " -> " + result + (s.detail.isEmpty() ? "" : " (" + cut(s.detail, 240) + ")") + (changes.isEmpty() ? "" : "; " + changes));
-        write(w, mind.logLine(w.getTotalWorldTime(), asked, cl, s, tokens, ms));
+        JsonObject line = mind.logLine(w.getTotalWorldTime(), asked, cl, s, tokens, ms);
+        Defense.Tally t = Defense.peek(a.who());
+        if (goal.defense || t != null && !t.empty()) {   // the fight: the agent's tally so far and what this step came to
+            JsonObject f = new JsonObject();
+            f.add("total", (t == null ? new Defense.Tally() : t).json());
+            if (fightBefore != null && t != null) f.add("step", t.since(fightBefore).json());
+            line.add("combat", f);
+        }
+        fightBefore = null;
+        write(w, line);
         tokens = new int[3];
     }
 
@@ -238,6 +272,7 @@ final class AgentMind {
         if (thinking != null) thinking.cancel(true);
         if (minds.get(num) != this) return;   // closed already
         minds.remove(num);
+        c.board.leavePost(a);   // its post is free for the others
         if (mind.status.equals("DONE")) Crew.note("mind.done", a.who(), mind.endReason);
         else if (!mind.endReason.equals("a new goal") && !mind.endReason.equals("stopped by the player")) Crew.note("mind.gaveup", a.who(), mind.endReason);
         shown.remove(num);
@@ -343,6 +378,11 @@ final class AgentMind {
             st.reserved.add(q[0] + " " + q[1] + " " + q[2] + " (" + ((Doer) by).who() + ")");
         }
         st.events.addAll(events);
+        try {   // the defence's part: the waves, the wall, the posts, the allies (a goal of defence, or a wave on)
+            DefenseWorld.fill(st, c, a, w, goal.defense);
+        } catch (Exception e) {
+            Events.log("mind: the defence's state failed: " + e);
+        }
         return st;
     }
 
@@ -480,6 +520,7 @@ final class AgentMind {
         Mind.Goal g = new Mind.Goal(text, want == null ? null : want[0], want == null ? 0 : Integer.parseInt(want[1]));
         for (Agent a : who) g.members.add(a.who());
         Mind.Limits lim = limits();
+        if (g.defense) lim.defense();
         long now = System.currentTimeMillis();
         for (Agent a : who) {
             AgentMind old = minds.get(a.skin());

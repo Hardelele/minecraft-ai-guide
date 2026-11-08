@@ -119,7 +119,9 @@ class Tools {
                         + "Give agents a GOAL in words: each agent's own mind then decides its steps (look around, chop, mine, craft at a table, "
                         + "smelt, place, carry, hand over) by the game's recipes and what the crew has seen, shares the work with the others and "
                         + "makes only what the goal needs. Use it when the player wants the crew to get or do something: 'make me a stone pickaxe', "
-                        + "'chop the trees by the house', 'build a small shelter'. They tell the player when done or why not. goal 'stop' clears "
+                        + "'chop the trees by the house', 'build a small shelter'. A goal of defence ('защищай базу', 'defend the base from the waves', "
+                        + "all agents, no want) gives them the defence's skills too: weapons, a wall with a gate round the base, posts, fighting the waves; "
+                        + "it has no end of its own. They tell the player when done or why not. goal 'stop' clears "
                         + "the goals. For an action at a place the player points at use crew_order instead.", P, PD,
                         "agents", "all, or agent numbers: 2,3",
                         "goal", "the goal in the player's words (or clearer), e.g. 'have a stone pickaxe', 'chop the trees near the house', or stop",

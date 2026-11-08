@@ -269,6 +269,8 @@ public final class Cases {
         o.addProperty("inWater", s.inWater);
         o.addProperty("inLava", s.inLava);
         o.addProperty("burning", s.burning);
+        Defense.Tally t = Defense.peek(a.getCustomNameTag());   // the agent's fight so far (for training: what the case came to in the fight)
+        if (t != null && !t.empty()) o.add("combat", t.json());
         return o;
     }
 }

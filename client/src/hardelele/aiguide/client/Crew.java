@@ -242,6 +242,7 @@ public class Crew {
         }
         respawn(w);
         Guard.watch(this, w, p);
+        DefenseWorld.watch(this, w);   // the waves, the wall's breaches, a creeper at it: events for the minds of defence (once a second)
         if (current != null && board.stalled(current)) current.max++;   // it waits for the player's orders: its time does not run
         if (current != null && current.ticks > current.max) {   // too long: what is carried goes to the chest, the phase ends
             Events.log("crew phase " + current.name + ": out of time");

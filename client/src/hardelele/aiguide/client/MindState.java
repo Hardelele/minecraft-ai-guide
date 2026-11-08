@@ -22,6 +22,10 @@ final class MindState {
     final Map<String, Integer> bag = new LinkedHashMap<String, Integer>();
     final List<String> near = new ArrayList<String>(), stations = new ArrayList<String>(), places = new ArrayList<String>(),
             others = new ArrayList<String>(), reserved = new ArrayList<String>(), events = new ArrayList<String>();
+    // the defence's (a goal of defence, or a wave on): the waves, the wall and its posts, the allies' health and posts
+    String wave = "", wearing = "", post = "";
+    boolean waveOn;
+    final List<String> perimeter = new ArrayList<String>(), allies = new ArrayList<String>();
     // set by Mind.request
     final List<Mind.Step> recent = new ArrayList<Mind.Step>();
     int firstStep = 1, stepsLeft, minutesLeft, tokensLeft, repeated;
@@ -34,8 +38,12 @@ final class MindState {
         b.append("YOU: ").append(agent).append(" at ").append(x).append(' ').append(y).append(' ').append(z);
         if (!on.isEmpty()) b.append(" on ").append(on);
         b.append(", health ").append(Math.round(health)).append('/').append(Math.round(maxHealth));
-        b.append(", holding ").append(held.isEmpty() ? "nothing" : held).append('\n');
+        b.append(", holding ").append(held.isEmpty() ? "nothing" : held);
+        if (!wearing.isEmpty()) b.append(", wearing ").append(wearing);
+        if (!post.isEmpty()) b.append(", your post ").append(post);
+        b.append('\n');
         if (!time.isEmpty()) b.append("TIME: ").append(time).append('\n');
+        if (!wave.isEmpty()) b.append("WAVE: ").append(wave).append('\n');
         b.append("BAG: ");
         if (bag.isEmpty()) b.append("empty");
         else {
@@ -48,6 +56,10 @@ final class MindState {
         if (!places.isEmpty()) list(b, "PLACES", places, "");
         if (!player.isEmpty()) b.append("PLAYER: ").append(player).append('\n');
         if (!others.isEmpty()) list(b, "OTHERS", others, "");
+        if (!wave.isEmpty()) {
+            list(b, "PERIMETER", perimeter, "no wall planned: build_wall around base");
+            if (!allies.isEmpty()) list(b, "ALLIES", allies, "");
+        }
         if (!reserved.isEmpty()) list(b, "RESERVED BY OTHERS (do not take)", reserved, "");
         if (!events.isEmpty()) list(b, "EVENTS SINCE YOUR LAST STEP", events, "");
         b.append("YOUR LAST STEPS:");
@@ -88,6 +100,14 @@ final class MindState {
         o.add("others", arr(others));
         o.add("reserved", arr(reserved));
         o.add("events", arr(events));
+        if (!wave.isEmpty()) {
+            o.addProperty("wave", wave);
+            o.addProperty("waveOn", waveOn);
+            if (!wearing.isEmpty()) o.addProperty("wearing", wearing);
+            if (!post.isEmpty()) o.addProperty("post", post);
+            o.add("perimeter", arr(perimeter));
+            o.add("allies", arr(allies));
+        }
         return o;
     }
 

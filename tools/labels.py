@@ -212,7 +212,8 @@ def places_set(recs, strong=4.0, onehot=False):
 def case_key(t):
     if t.get("type") == "case":
         return ("case", int(t.get("t", -1)), t.get("agent", ""), t.get("reflex", ""))
-    return ("card", int(t.get("ms", -1)), t.get("agent", ""), t.get("card", ""))
+    kind = "fight" if t.get("type") == "fight" else "card"   # a step of the defence is rated as a card is, by its line's time
+    return (kind, int(t.get("ms", -1)), t.get("agent", ""), t.get("card", ""))
 
 
 FIELDS = ["type", "t", "agent", "reflex", "reaction", "result", "ticks", "card", "ms", "rating", "n", "good", "bad",
