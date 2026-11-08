@@ -49,3 +49,11 @@ def tensor_names(net: PlacesNet) -> list[tuple[str, torch.Tensor]]:
     out.append(("head.w", net.head.weight))
     out.append(("head.b", net.head.bias))
     return out
+
+
+def place_embedding(bottleneck: torch.Tensor, cells: torch.Tensor) -> torch.Tensor:
+    """bottleneck [64, 8, 8, 8], cells [32, 32, 32] bool: the mean of the bottleneck vectors over the place's cells
+    (nearest upsampling x4), L2-normalised (places/CONTRACT.md)."""
+    up = bottleneck.repeat_interleave(4, 1).repeat_interleave(4, 2).repeat_interleave(4, 3)
+    v = up[:, cells].mean(1)
+    return v / v.norm().clamp_min(1e-12)

@@ -67,7 +67,16 @@ if __name__ == "__main__":
     ap.add_argument("--n", type=int, default=10)
     ap.add_argument("--out", default=str(Path(__file__).resolve().parent.parent / "build" / "places" / "viz"))
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--ckpt", help="add the prediction of this checkpoint (masked by the stored visibility if --masked)")
+    ap.add_argument("--masked", action="store_true")
     a = ap.parse_args()
+    net = None
+    if a.ckpt:
+        import torch
+        from model import PlacesNet
+        net = PlacesNet()
+        net.load_state_dict(torch.load(a.ckpt, map_location="cpu")["model"])
+        net.eval()
     d = np.load(a.npz)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -77,8 +86,19 @@ if __name__ == "__main__":
     for i in idx:
         m = d["meta"][i] if "meta" in d else None
         lab = d["lab"][i]
+        ch = d["ch"][i]
+        pred = None
+        if a.masked:
+            vis = np.unpackbits(d["vis"][i], axis=-1, count=32).astype(bool)
+            ch = np.where(vis, ch, 1).astype(np.uint8)
+            lab = np.where(vis, lab, 255).astype(np.uint8)
+        if net is not None:
+            import torch
+            from channels import onehot
+            with torch.no_grad():
+                pred = net(torch.from_numpy(onehot(ch)[None]))[0].argmax(0).numpy().astype(np.uint8)
         # pick slices where there is the most non-solid
         ny = ((lab >= 2) & (lab != 255)).sum((0, 2)) * 100 + ((lab != 0) & (lab != 255)).sum((0, 2))
         ys = sorted(np.argsort(ny)[-3:].tolist())
-        panel(d["ch"][i], lab, ys=ys, title=f"{stem} #{i} meta={None if m is None else m.tolist()}").save(out / f"{stem}-{i}.png")
+        panel(ch, lab, pred, ys=ys, title=f"{stem} #{i} meta={None if m is None else m.tolist()}").save(out / f"{stem}-{i}{'-pred' if net is not None else ''}{'-masked' if a.masked else ''}.png")
     print(out)
