@@ -5,6 +5,7 @@ where the reflexes help and where they do not.
     python tools/cases.py <world> --events video-events.txt     # also the log metrics of REFLEX-CASES.md
     python tools/cases.py <world> --embed                       # also group the cases' words by OpenAI embeddings
     python tools/cases.py --events before.txt --events after.txt  # the log metrics alone, side by side
+    python tools/cases.py <world> --ratings case-ratings.csv     # also the person's ratings (tools/labels.py actions)
 
 Without --embed nothing goes over the network. With it the cases' words ("text") are embedded by
 text-embedding-3-small through the local proxy (127.0.0.1:3128), the key read from config/aiguide/openai.key as the
@@ -295,6 +296,46 @@ def embedded_groups(cases, paths, key_path, threshold):
     return out
 
 
+# ---- the person's ratings (tools/labels.py): a reward from a human, set against the journal's own result -------------
+
+def ratings(paths):
+    """per reflex and reaction: how the person rated its cases, and where that and the automatic result disagree"""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import labels  # noqa: E402
+    rows = []
+    for p in paths:
+        rows += labels.read_table(p)
+    by = collections.defaultdict(lambda: {"rated": 0, "good": 0, "bad": 0, "auto_ok": 0, "disagree": 0, "reasons": collections.Counter()})
+    disagree = []
+    for r in rows:
+        if r.get("type") != "case":
+            continue
+        k = f"{r.get('reflex')} / {r.get('reaction')}"
+        g = by[k]
+        rating, auto = float(r.get("rating") or 0), str(r.get("auto_ok")) in ("1", "True", "true")
+        g["rated"] += 1
+        g["good" if rating > 0 else "bad"] += 1
+        g["auto_ok"] += int(auto)
+        for part in str(r.get("reasons") or "").split(";"):
+            if part:
+                n, _, c = part.partition(":")
+                g["reasons"][n] += int(c or 1)
+        if (rating > 0) != auto:
+            g["disagree"] += 1
+            disagree.append(r)
+    out = {k: dict(v, reasons=dict(v["reasons"])) for k, v in sorted(by.items(), key=lambda kv: -kv[1]["disagree"])}
+    return {"by_reaction": out, "disagreements": disagree[:20]}
+
+
+def print_ratings(rep):
+    print("\nThe person's ratings (good / bad by the person; ok by the journal's result; where they disagree):")
+    for k, g in rep["by_reaction"].items():
+        reasons = ", ".join(f"{n} {c}" for n, c in sorted(g["reasons"].items(), key=lambda x: -x[1]))
+        print(f"  {k}: rated {g['rated']}, good {g['good']}, bad {g['bad']}, journal ok {g['auto_ok']}, disagree {g['disagree']}" + (f"  ({reasons})" if reasons else ""))
+    for r in rep["disagreements"][:5]:
+        print(f"    t {r.get('t')} {r.get('agent')} {r.get('reflex')} {r.get('reaction')} -> {r.get('result')}: person {r.get('rating')} {r.get('reasons') or ''}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("journal", nargs="*", help="a world folder or a crew-cases.jsonl")
@@ -302,10 +343,12 @@ def main():
     ap.add_argument("--embed", action="store_true", help="group the cases' words by OpenAI embeddings (through the proxy)")
     ap.add_argument("--key-file", help="the OpenAI key's file (default: config/aiguide/openai.key of the game)")
     ap.add_argument("--alike", type=float, default=0.9, help="cosine for one group of words (default 0.9)")
+    ap.add_argument("--ratings", action="append", default=[], help="the person's ratings: tools/labels.py's table (csv/jsonl), "
+                                                                   "an aiguide-labels folder, a world or a share zip")
     ap.add_argument("--json", help="the report into this file too")
     a = ap.parse_args()
-    if not a.journal and not a.events:
-        ap.error("a journal or an events log")
+    if not a.journal and not a.events and not a.ratings:
+        ap.error("a journal, an events log or ratings")
     report = {}
     if a.journal:
         cases, bad = read_cases(a.journal)
@@ -318,6 +361,9 @@ def main():
         named = [(p, log_metrics(p)) for p in a.events]
         report["logs"] = {p: m for p, m in named}
         print_logs(named)
+    if a.ratings:
+        report["ratings"] = ratings(a.ratings)
+        print_ratings(report["ratings"])
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=1)

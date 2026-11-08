@@ -121,6 +121,11 @@ final class CaseBook {
 
     synchronized int size() { return cases.size(); }
 
+    /** the last n cases in memory, oldest first (a copy: for the person's rating panel) */
+    synchronized List<Case> recent(int n) {
+        return new ArrayList<Case>(cases.subList(Math.max(0, cases.size() - n), cases.size()));
+    }
+
     // ---- the nearest cases and the advice -------------------------------------------------------------
 
     /** how alike two vectors are, 0..1: one minus the root of the weighted mean squared difference */

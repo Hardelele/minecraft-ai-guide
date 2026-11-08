@@ -13,9 +13,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "client", "src", "hardelele", "aiguide", "client")
 TEST = os.path.join(ROOT, "client", "test")
 OUT = os.path.join(ROOT, "build", "test-classes")
-PURE = ["Sight.java", "CaseVec.java", "CaseBook.java", "Events.java", "Result.java", "Retry.java", "Situation.java", "Reflex.java", "Reflexes.java", "Undo.java", "Moves.java"]   # the classes with no game in them (Gson aside)
-TESTS = ["hardelele.aiguide.client.SightTest", "hardelele.aiguide.client.CaseTest", "hardelele.aiguide.client.ReflexesTest"]
+PURE = ["Sight.java", "CaseVec.java", "CaseBook.java", "Events.java", "Result.java", "Retry.java", "Situation.java", "Reflex.java", "Reflexes.java", "Undo.java", "Moves.java",
+        "PlaceView.java", "PlaceSource.java", "Labels.java", "Episodes.java", "Scrub.java", "ShareBuild.java", "ShareUpload.java"]   # the classes with no game in them (Gson aside)
+TESTS = ["hardelele.aiguide.client.SightTest", "hardelele.aiguide.client.CaseTest", "hardelele.aiguide.client.ReflexesTest", "hardelele.aiguide.client.FeedbackTest"]
 GAME_TESTS = ["CaveGeometryTest", "CaveRetentionTest", "RoutineIntentTest", "RoutineLayoutTest", "RoutineSnapshotTest", "ShelterRouteTest"]   # against the built client
+PY_TESTS = ["test_labels.py", "test_feedback_lang.py"]   # the ratings' offline tool, the ratings' words
 GSON = os.path.join(ROOT, "lib", "gson-2.2.4.jar")
 GAME_OUT = os.path.join(ROOT, "build", "test-game")
 PKG = os.path.join(TEST, "hardelele", "aiguide", "client")
@@ -44,6 +46,10 @@ def main():
     subprocess.check_call([tool("javac"), "-encoding", "UTF-8", "-nowarn", "-d", GAME_OUT, "-cp", cp] + release + [os.path.join(PKG, t + ".java") for t in GAME_TESTS])
     for t in GAME_TESTS:
         r = subprocess.call([tool("java"), "-Dfile.encoding=UTF-8", "-cp", os.pathsep.join([GAME_OUT, cp]), "hardelele.aiguide.client." + t])
+        print(("ok   " if r == 0 else "FAIL ") + t)
+        bad |= r
+    for t in PY_TESTS:   # after the Java ones: test_labels.py also reads what FeedbackTest wrote
+        r = subprocess.call([sys.executable, os.path.join(ROOT, "tools", "tests", t)])
         print(("ok   " if r == 0 else "FAIL ") + t)
         bad |= r
     sys.exit(bad)
