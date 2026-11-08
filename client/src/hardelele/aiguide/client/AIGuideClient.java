@@ -33,5 +33,31 @@ public class AIGuideClient {
     @Mod.EventHandler
     public void serverStarted(cpw.mods.fml.common.event.FMLServerStartedEvent e) {
         if (System.getProperty("aiguide.bench") != null) Bench.start();
+        else if (e.getSide() == Side.CLIENT) autoRecord();
+    }
+
+    /** a singleplayer game is recorded (WorldRec) from the world's start to its end, to be watched and filmed afterwards */
+    static final long RECORD_MAX_WORLD = 1L << 30;   // a bigger world is not copied for it
+    static boolean recording;
+
+    static void autoRecord() {
+        if ("false".equals(System.getProperty("aiguide.record")) || Director.SCRIPT != null) return;   // off, or a script records its own takes
+        net.minecraft.server.MinecraftServer s = net.minecraft.server.MinecraftServer.getServer();
+        if (s == null || s.worldServers == null || s.worldServers.length == 0) return;
+        long size = WorldRec.size(s.worldServers[0].getSaveHandler().getWorldDirectory());
+        if (size > RECORD_MAX_WORLD) {
+            Events.log("worldrec: the game is not recorded: the world is " + size / 1024 / 1024 + " MB");
+            return;
+        }
+        String name = "play-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss").format(new java.util.Date());
+        recording = "ok".equals(WorldRec.start(name));
+    }
+
+    @Mod.EventHandler
+    public void serverStopping(cpw.mods.fml.common.event.FMLServerStoppingEvent e) {
+        if (recording) {
+            recording = false;
+            WorldRec.stop();
+        }
     }
 }
