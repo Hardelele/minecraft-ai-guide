@@ -18,14 +18,15 @@ PURE = ["Sight.java", "CaseVec.java", "CaseBook.java", "Events.java", "Result.ja
         "PlaceView.java", "PlaceSource.java", "Labels.java", "Episodes.java", "Scrub.java", "ShareBuild.java", "ShareUpload.java", "CrewCommand.java",
         "UiIcon.java", "UiLayout.java", "UiToasts.java", "Mind.java", "MindState.java", "Defense.java",
         "WavePlan.java", "WaveRing.java", "WaveCycle.java", "WaveReport.java", "WaveCommand.java",
-        "EpochScore.java", "Lessons.java", "EpochKnobs.java", "EpochRun.java"]   # the classes with no game in them (Gson aside)
+        "EpochScore.java", "Lessons.java", "EpochKnobs.java", "EpochRun.java", "RlSpec.java", "PolicyNet.java"]   # the classes with no game in them (Gson aside)
 TESTS = ["hardelele.aiguide.client.SightTest", "hardelele.aiguide.client.CaseTest", "hardelele.aiguide.client.ReflexesTest",
          "hardelele.aiguide.client.PlacesSplitTest", "hardelele.aiguide.client.PlacesNetTest", "hardelele.aiguide.client.FeedbackTest",
          "hardelele.aiguide.client.CrewCommandTest", "hardelele.aiguide.client.UiLayoutTest", "hardelele.aiguide.client.MindTest",
-         "hardelele.aiguide.client.WavesTest", "hardelele.aiguide.client.DefenseTest", "hardelele.aiguide.client.EpochsTest"]
+         "hardelele.aiguide.client.WavesTest", "hardelele.aiguide.client.DefenseTest", "hardelele.aiguide.client.EpochsTest",
+         "hardelele.aiguide.client.PolicyTest"]
 GAME_TESTS = ["CaveGeometryTest", "CaveRetentionTest", "RoutineIntentTest", "RoutineLayoutTest", "RoutineSnapshotTest", "ShelterRouteTest", "PlacesInputTest", "BoardOrdersTest", "MindGameTest", "DefenseGameTest"]   # against the built client
 HELPERS = ["ShareProbe.java"]   # compiled with the pure tests, run by tools/share-service's tests
-PY_TESTS = ["tests/test_labels.py", "tests/test_feedback_lang.py", "tests/test_crew_lang.py", "tests/test_ui_icons.py", "tests/test_commander_ui_wiring.py", "tests/test_waves_wiring.py", "tests/test_epochs_tools.py",   # the ratings' offline tool, the words, the commander's icons
+PY_TESTS = ["tests/test_rl_policy.py", "tests/test_labels.py", "tests/test_feedback_lang.py", "tests/test_crew_lang.py", "tests/test_ui_icons.py", "tests/test_commander_ui_wiring.py", "tests/test_waves_wiring.py", "tests/test_epochs_tools.py",   # the ratings' offline tool, the words, the commander's icons
             "share-service/tests/test_sigv4.py", "share-service/tests/test_service.py"]   # the share service (and the mod's sending through it)
 GSON = os.path.join(ROOT, "lib", "gson-2.2.4.jar")
 GAME_OUT = os.path.join(ROOT, "build", "test-game")
@@ -61,9 +62,14 @@ def main():
     subprocess.check_call([tool("javac"), "-encoding", "UTF-8", "-nowarn", "-d", OUT, "-cp", GSON] + release + sources)
     bad = 0
     weights, check = places_files()
+    # the simulator's raw facts with spec.py's vector and mask, for PolicyTest's check of RlSpec against them
+    subprocess.call([sys.executable, os.path.join(ROOT, "tools", "tests", "test_rl_policy.py"), "--cases-only"])
     for t in TESTS:
         bad |= subprocess.call([tool("java"), "-Dfile.encoding=UTF-8", "-Daiguide.test.dir=" + os.path.join(ROOT, "build", "test-tmp"),
-                                "-Daiguide.places.weights=" + weights, "-Daiguide.places.test=" + check, "-cp", os.pathsep.join([OUT, GSON]), t])
+                                "-Daiguide.places.weights=" + weights, "-Daiguide.places.test=" + check,
+                                "-Daiguide.policy.weights=" + os.path.join(ROOT, "res", "assets", "aiguide", "rl", "policy.bin"),
+                                "-Daiguide.policy.test=" + os.path.join(ROOT, "rl", "policy-test.bin"),
+                                "-Daiguide.rl.cases=" + os.path.join(ROOT, "build", "rl", "obs-mask-cases.json"), "-cp", os.pathsep.join([OUT, GSON]), t])
     client = os.path.join(ROOT, "build", "client-classes")
     if not os.path.isdir(client):
         print("no build/client-classes: run tools/build_client.py first")

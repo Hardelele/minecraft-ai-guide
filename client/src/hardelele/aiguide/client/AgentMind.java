@@ -134,6 +134,7 @@ final class AgentMind {
         if (!a.jobs.isEmpty()) return false;   // something else first (a summon's walk, the way back for its things)
         if (thinking == null) {
             if (now < retryAt) { a.body.stop(); return true; }
+            if (PolicyMind.on()) return byPolicy(c, a, w);   // the crew's own net decides (the default): no model, no wait
             String lim = mind.limit(System.currentTimeMillis());
             if (lim != null) {
                 mind.end("GAVE_UP", lim);
@@ -178,6 +179,28 @@ final class AgentMind {
         String bad = mind.check(cl, asked);
         Events.log("mind: " + a.who() + " think -> " + (cl.tool.isEmpty() ? "?" : cl.brief()) + " (why: " + cut(cl.why, 160) + ")" + " [" + tokens[0] + "+" + tokens[1] + " tokens, " + ms + " ms]");
         if (bad != null) { record(c, a, w, cl, "BAD_CALL", bad, "", 0); return true; }
+        return act(c, a, w, cl);
+    }
+
+    /** a decision of the policy (PolicyMind) at once, on the server thread: the state kept for the minds' log as for a model's */
+    boolean byPolicy(Crew c, Agent a, WorldServer w) {
+        String lim = mind.limit(System.currentTimeMillis());
+        if (lim != null) {
+            mind.end("GAVE_UP", lim);
+            close(c, a);
+            return false;
+        }
+        asked = state(c, a, w);
+        events.clear();
+        long t0 = System.nanoTime();
+        Mind.Call cl = PolicyMind.decide(this, c, a, w);
+        ms = (System.nanoTime() - t0) / 1000000;
+        if (cl == null) {
+            mind.end("GAVE_UP", PolicyMind.error);
+            close(c, a);
+            return false;
+        }
+        mind.requests++;
         return act(c, a, w, cl);
     }
 

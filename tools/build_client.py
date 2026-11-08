@@ -17,6 +17,7 @@ SRC = os.path.join(ROOT, "client", "src")
 RES = os.path.join(ROOT, "client", "res")
 OUT = os.path.join(ROOT, "build", "client-classes")
 PLACES = os.path.join(ROOT, "res", "assets", "aiguide", "places", "places.bin")
+POLICY = os.path.join(ROOT, "res", "assets", "aiguide", "rl", "policy.bin")
 
 
 def main():
@@ -53,6 +54,11 @@ def main():
             z.write(PLACES, "assets/aiguide/places/places.bin", compress_type=zipfile.ZIP_DEFLATED)
         else:
             print("no", PLACES, "- the jar has no places weights (Places stays off unless -Daiguide.places.weights is given)")
+        # the crew policy's weights (tools/rl/export_policy.py): the minds' default brain
+        if os.path.isfile(POLICY):
+            z.write(POLICY, "assets/aiguide/rl/policy.bin", compress_type=zipfile.ZIP_DEFLATED)
+        else:
+            print("no", POLICY, "- the jar has no policy weights (the minds need -Daiguide.policy.weights or -Daiguide.mind=llm)")
     print("built:", target)
 
 
