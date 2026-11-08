@@ -36,7 +36,7 @@ import org.lwjgl.opengl.GL11;
  * rating menu (FeedbackUi). Also the input cube read from the world when the source has none (places/CONTRACT.md's
  * 16 channels, by Material and the block's kind: near enough, the contract allows noise).
  */
-final class PlaceLayer {
+public final class PlaceLayer {
     static boolean on;
     static PlaceView hovered, chosen;
 

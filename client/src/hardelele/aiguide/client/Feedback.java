@@ -36,7 +36,7 @@ import net.minecraft.world.WorldServer;
  * folder), what world they are about, the input cube of a rated place, and what a share archive is made of (the
  * world's regions near the crew, its journals, the versions) with the names the game knows for the cleaning.
  */
-final class Feedback {
+public final class Feedback {
     private Feedback() { }
 
     static final Minecraft mc = Minecraft.getMinecraft();
