@@ -353,6 +353,30 @@ def i_waves(p):
     p.r(5, 11, 10, 12, RED_D)
 
 
+def i_good(p):
+    """an episode rated good (the epochs: over the agent, in the ratings): a green disc, a white tick"""
+    p.el(1, 1, 14, 14, GREEN)
+    p.el(1, 1, 13, 13, (130, 222, 104))
+    p.ln([(4, 8), (7, 11), (12, 4)], WHITE)
+
+
+def i_bad(p):
+    """an episode rated bad: a red disc, a white cross"""
+    p.el(1, 1, 14, 14, RED_D)
+    p.el(1, 1, 13, 13, RED)
+    p.ln([(5, 5), (10, 10)], WHITE)
+    p.ln([(5, 10), (10, 5)], WHITE)
+
+
+def i_epoch(p):
+    """the epochs of learning: bars growing to the right, the last one green"""
+    p.r(1, 13, 14, 14, STONE_L)
+    p.r(2, 9, 4, 12, BLUE_D)
+    p.r(6, 6, 8, 12, BLUE)
+    p.r(10, 2, 12, 12, GREEN)
+    p.r(10, 2, 12, 3, (150, 240, 120))
+
+
 ICONS = [("move", i_move), ("chop", i_chop), ("mine", i_mine), ("attack", i_attack), ("guard", i_guard), ("deposit", i_deposit),
          ("craft", i_craft), ("smelt", i_smelt), ("place", i_place), ("stop", i_stop), ("plan", i_plan), ("hold", i_hold),
          ("add_agent", i_add_agent), ("dismiss", i_dismiss), ("self_ai", i_self_ai), ("goal", i_goal), ("think", i_think),
@@ -360,7 +384,7 @@ ICONS = [("move", i_move), ("chop", i_chop), ("mine", i_mine), ("attack", i_atta
          ("scenarios", i_scenarios), ("chat", i_chat), ("settings", i_settings), ("more", i_more), ("gather", i_gather),
          ("inventory", i_inventory), ("warning", i_warning), ("offline", i_offline), ("log", i_log), ("help", i_help),
          ("close", i_close), ("health", i_health), ("lmb", lambda p: mouse(p, True)), ("rmb", lambda p: mouse(p, False)),
-         ("waves", i_waves)]
+         ("waves", i_waves), ("good", i_good), ("bad", i_bad), ("epoch", i_epoch)]
 
 
 def outline(icon, width):

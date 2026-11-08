@@ -255,6 +255,7 @@ final class AgentMind {
             if (fightBefore != null && t != null) f.add("step", t.since(fightBefore).json());
             line.add("combat", f);
         }
+        Epochs.step(a, w, cl.tool, result, s.detail, asked == null ? -1 : asked.health, fightBefore != null && t != null ? t.since(fightBefore) : null);   // an episode of the epoch, when one is on
         fightBefore = null;
         write(w, line);
         tokens = new int[3];

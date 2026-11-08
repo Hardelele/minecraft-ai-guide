@@ -73,7 +73,7 @@ public class Waves {
     static double[] fronts = { 0 };
     static Random rnd = new Random();
     static int run, spawnIndex, spawnedTotal, removedAtEnd, noSpot, requeued;
-    static long ticks, endedTick;
+    static long ticks, endedTick, seedNow;
     static String source = "";
     static boolean autoDone;
 
@@ -191,7 +191,10 @@ public class Waves {
     }
 
     /** a run at a level (easy, normal, hard, chaos), from its source (command, button, flag, bench); what was done */
-    static String start(String level, String from) {
+    static String start(String level, String from) { return start(level, from, null); }
+
+    /** the same with the run's seed given (an epoch's: the same waves for the same seed), null: -Daiguide.waves.seed, else the world's ^ the run's id */
+    static String start(String level, String from, Long seedOf) {
         WorldServer w = world();
         if (w == null) return "no world";
         if (cycle.active()) { Crew.note("waves.already"); return "already on"; }
@@ -199,8 +202,9 @@ public class Waves {
         reset();
         center = where(w);
         run = (int) (System.currentTimeMillis() / 1000L);
-        long seed = Long.getLong("aiguide.waves.seed", w.getSeed() ^ run);
+        long seed = seedOf != null ? seedOf : Long.getLong("aiguide.waves.seed", w.getSeed() ^ run);
         rnd = new Random(seed);
+        seedNow = seed;
         source = from;
         cycle.start(level, best(w), System.currentTimeMillis());
         Events.log("waves: start " + level + " (" + from + ") at " + center[0] + " " + center[1] + " " + center[2] + ", ring " + cfg.rMin + "-" + cfg.rMax
@@ -276,6 +280,7 @@ public class Waves {
         endedTick = ticks;
         String world = w == null ? "" : w.getSaveHandler().getWorldDirectoryName();
         JsonObject o = WaveReport.run(cycle, world, source, w != null && w.difficultySetting == EnumDifficulty.PEACEFUL, spawnedTotal, removedAtEnd, errors);
+        o.addProperty("waves_seed", String.valueOf(seedNow));   // (a string: a long's digits stay whole in any JSON reader)
         lastReport = o;
         String line = WaveReport.line(o);
         if (w != null)

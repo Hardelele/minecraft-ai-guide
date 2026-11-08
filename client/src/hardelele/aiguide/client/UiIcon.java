@@ -10,7 +10,7 @@ enum UiIcon {
     ADD_AGENT("="), DISMISS("Delete"), SELF_AI("O"), GOAL(""), THINK(""),
     PLACES("L"), RATE("J"), SHARE(""), FOG("Y"), CAVES("C"), LAYER("U"),
     SCENARIOS(""), CHAT("T"), SETTINGS(""), MORE(""), GATHER(""), INVENTORY("I"), WARNING(""), OFFLINE(""), LOG(""), HELP("F1"),
-    CLOSE("Esc"), HEALTH(""), LMB(""), RMB(""), WAVES("");
+    CLOSE("Esc"), HEALTH(""), LMB(""), RMB(""), WAVES(""), GOOD(""), BAD(""), EPOCH("");
 
     static final int ATLAS = 256, SMALL = 16, LARGE = 32, LARGE_Y = 64;
 

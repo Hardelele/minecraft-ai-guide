@@ -24,8 +24,10 @@ final class Defense {
 
     /** a guard level of its own for a post's fight: over the mob (75) and creeper (80) reflexes, under a fall (90) and survival */
     static final int POST_GUARD = 82;
-    /** health under which a defender falls back (as Guard.LOW), and the health a wounded ally is below */
-    static final float LOW = 8, WOUNDED = 12;
+    /** health under which a defender falls back (as Guard.LOW), and the health a wounded ally is below (the epochs may tune them: EpochKnobs) */
+    static volatile float LOW = 8, WOUNDED = 12;
+    /** how far from its post hold_line goes when the model gives no radius (EpochKnobs may tune it) */
+    static volatile int LEASH = 4;
     static final double REACH = 3.0, BOW_RANGE = 16, BOW_MIN = 3.5;
     static final int MAX_HEIGHT = 4, MAX_RADIUS = 24;
 
@@ -463,11 +465,14 @@ final class Defense {
     /** one agent's fight in numbers: what the training reads (crew-minds.jsonl, crew-cases.jsonl) and the ratings show */
     static final class Tally {
         int kills, deaths, retreats, wallBuilt, wallRepaired, shots, hits;
+        // the deaths by their cause (of deaths: starved, accidents; the rest are the fight's), the torches put, the food eaten
+        int starved, accidents, torches, eaten;
         double dealt, taken;
 
         Tally copy() {
             Tally t = new Tally();
             t.kills = kills; t.deaths = deaths; t.retreats = retreats; t.wallBuilt = wallBuilt; t.wallRepaired = wallRepaired; t.shots = shots; t.hits = hits;
+            t.starved = starved; t.accidents = accidents; t.torches = torches; t.eaten = eaten;
             t.dealt = dealt; t.taken = taken;
             return t;
         }
@@ -478,10 +483,35 @@ final class Defense {
             if (was == null) return t;
             t.kills -= was.kills; t.deaths -= was.deaths; t.retreats -= was.retreats; t.wallBuilt -= was.wallBuilt; t.wallRepaired -= was.wallRepaired;
             t.shots -= was.shots; t.hits -= was.hits; t.dealt -= was.dealt; t.taken -= was.taken;
+            t.starved -= was.starved; t.accidents -= was.accidents; t.torches -= was.torches; t.eaten -= was.eaten;
             return t;
         }
 
-        boolean empty() { return kills == 0 && deaths == 0 && retreats == 0 && wallBuilt == 0 && wallRepaired == 0 && shots == 0 && hits == 0 && dealt == 0 && taken == 0; }
+        /** the deaths in a fight (not by hunger, not by an accident) */
+        int fightDeaths() { return Math.max(0, deaths - starved - accidents); }
+
+        void add(Tally o) {
+            if (o == null) return;
+            kills += o.kills; deaths += o.deaths; retreats += o.retreats; wallBuilt += o.wallBuilt; wallRepaired += o.wallRepaired; shots += o.shots; hits += o.hits;
+            starved += o.starved; accidents += o.accidents; torches += o.torches; eaten += o.eaten; dealt += o.dealt; taken += o.taken;
+        }
+
+        static Tally fromJson(JsonObject o) {
+            Tally t = new Tally();
+            if (o == null) return t;
+            t.kills = (int) CaseVec.num(o, "kills", 0); t.deaths = (int) CaseVec.num(o, "deaths", 0); t.retreats = (int) CaseVec.num(o, "retreats", 0);
+            t.wallBuilt = (int) CaseVec.num(o, "wallBuilt", 0); t.wallRepaired = (int) CaseVec.num(o, "wallRepaired", 0);
+            t.shots = (int) CaseVec.num(o, "shots", 0); t.hits = (int) CaseVec.num(o, "hits", 0);
+            t.starved = (int) CaseVec.num(o, "starved", 0); t.accidents = (int) CaseVec.num(o, "accidents", 0);
+            t.torches = (int) CaseVec.num(o, "torches", 0); t.eaten = (int) CaseVec.num(o, "eaten", 0);
+            t.dealt = CaseVec.num(o, "dealt", 0); t.taken = CaseVec.num(o, "taken", 0);
+            return t;
+        }
+
+        boolean empty() {
+            return kills == 0 && deaths == 0 && retreats == 0 && wallBuilt == 0 && wallRepaired == 0 && shots == 0 && hits == 0 && dealt == 0 && taken == 0
+                    && torches == 0 && eaten == 0;
+        }
 
         JsonObject json() {
             JsonObject o = new JsonObject();
@@ -494,6 +524,11 @@ final class Defense {
             o.addProperty("retreats", retreats);
             o.addProperty("hits", hits);
             o.addProperty("shots", shots);
+            // the siege's numbers (hunger, accidents) and the work round the base: written only when there are any
+            if (starved > 0) o.addProperty("starved", starved);
+            if (accidents > 0) o.addProperty("accidents", accidents);
+            if (torches > 0) o.addProperty("torches", torches);
+            if (eaten > 0) o.addProperty("eaten", eaten);
             return o;
         }
 
@@ -519,6 +554,32 @@ final class Defense {
     }
 
     static synchronized void clear() { tallies.clear(); }
+
+    /** every agent's tally (copies) */
+    static synchronized Map<String, Tally> all() {
+        Map<String, Tally> m = new LinkedHashMap<String, Tally>();
+        for (Map.Entry<String, Tally> e : tallies.entrySet()) m.put(e.getKey(), e.getValue().copy());
+        return m;
+    }
+
+    /** a death's cause from the game's damage type: "starve" (hunger), "accident" (a fall, water, lava, fire, a wall, a cactus, the void), else "fight" */
+    static String cause(String damageType) {
+        String t = damageType == null ? "" : damageType;
+        if (t.equals("starve")) return "starve";
+        if (t.equals("fall") || t.equals("drown") || t.equals("lava") || t.equals("inFire") || t.equals("onFire") || t.equals("inWall") || t.equals("cactus")
+                || t.equals("outOfWorld") || t.equals("fallingBlock") || t.equals("anvil")) return "accident";
+        return "fight";
+    }
+
+    /** an agent died of this damage type: its tally's deaths, and the cause's own count */
+    static synchronized String died(String agent, String damageType) {
+        Tally t = of(agent);
+        t.deaths++;
+        String c = cause(damageType);
+        if (c.equals("starve")) t.starved++;
+        else if (c.equals("accident")) t.accidents++;
+        return c;
+    }
 
     // ---- arguments in words ------------------------------------------------------------------------------------
 

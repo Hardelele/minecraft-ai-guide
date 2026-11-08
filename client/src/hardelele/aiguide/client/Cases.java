@@ -43,8 +43,11 @@ public final class Cases {
     }
 
     /** this world's memory (read back from its journal the first time; another world, another memory) */
+    /** the epochs' learning run keeps its memory of cases out of the world (the world is put back as it was before each epoch): Epochs sets it */
+    static volatile File dirOverride;
+
     static synchronized CaseBook book() {
-        File dir = worldDir();
+        File dir = dirOverride != null ? dirOverride : worldDir();
         if (book != null && (dir == null ? bookDir == null : dir.equals(bookDir))) return book;
         if (book != null) book.close();
         bookDir = dir;
@@ -263,6 +266,7 @@ public final class Cases {
         } catch (Exception e) {
             Events.log("cases: not kept: " + e);
         }
+        Epochs.reflexCase(a, c);   // an episode of the epoch, when one is on
         Events.log("reflex: " + c.agent + " " + c.reflex + " " + c.reaction + " -> " + c.result + " in " + c.ticks + " ticks" + (c.escalated != null ? ", up to the " + c.escalated : ""));
     }
 

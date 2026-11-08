@@ -39,9 +39,25 @@ final class CaseBook {
         double[] vec;
         final List<String> actions = new ArrayList<String>();
         JsonObject after;
+        /** the epoch's grade of it (-1 bad .. +1 good; NaN: none), and whether a person gave it (it then outweighs and overrides the automatic one) */
+        double grade = Double.NaN;
+        boolean human;
 
         /** it helped: the reaction ended OK and nothing had to go up */
         boolean ok() { return "OK".equals(result) && (escalated == null || escalated.isEmpty()); }
+
+        /** how much it helped, 0..1: its outcome; a person's grade instead of it; an automatic grade half and half with it */
+        double helped() {
+            double base = ok() ? 1 : 0;
+            if (Double.isNaN(grade) || grade == 0) return base;
+            double g = grade > 0 ? 1 : 0;
+            return human ? g : (base + g) / 2;
+        }
+
+        /** how much it counts among the neighbours: a person's grade three times an automatic one's */
+        double weight() { return human && !Double.isNaN(grade) ? GRADE_HUMAN : 1; }
+
+        String key() { return t + ":" + agent + ":" + reflex; }
 
         double[] vec() { if (vec == null) vec = CaseVec.vector(sit); return vec; }
 
@@ -101,7 +117,9 @@ final class CaseBook {
         public String toString() { return reaction == null ? "don't know" : reaction + String.format(java.util.Locale.ROOT, " (%.2f of %d, helped %.0f%%)", confidence, support, rate * 100); }
     }
 
-    static final String NAME = "crew-cases.jsonl";
+    static final String NAME = "crew-cases.jsonl", GRADES = "crew-grades.jsonl";
+    /** a case a person graded counts so many times one graded by the rules (Labels: the person's word is worth more) */
+    static final double GRADE_HUMAN = 3;
 
     final File file;          // null: in memory only
     long maxBytes = 4L << 20; // a file this big goes round
@@ -183,9 +201,9 @@ final class CaseBook {
             if (options != null && options.length > 0 && !contains(options, r)) continue;
             double[] t = by.get(r);
             if (t == null) by.put(r, t = new double[3]);
-            double wt = (n.sim - near) / (1 - near);   // 1 the same situation, 0 at the edge of 'near'
+            double wt = (n.sim - near) / (1 - near) * n.c.weight();   // 1 the same situation, 0 at the edge of 'near' (a person's grade: three times)
             t[0] += wt;
-            if (n.c.ok()) t[1] += wt;
+            t[1] += wt * n.c.helped();   // its outcome, or the epoch's grade of it (Epochs)
             t[2]++;
         }
         String best = null;
@@ -203,6 +221,74 @@ final class CaseBook {
     static boolean contains(String[] a, String s) {
         for (String x : a) if (x.equals(s)) return true;
         return false;
+    }
+
+    // ---- the epochs' grades -----------------------------------------------------------------------------
+
+    /**
+     * An epoch's grade of a case (-1..+1) by its key (tick, agent, reflex), from the rules or from a person: a person's
+     * overrides the rules', the rules' never overrides a person's. Kept in memory and, with a journal, on a line of
+     * crew-grades.jsonl beside it (read back with the journal). Returns how many cases it graded (0: not in memory).
+     */
+    int grade(long t, String agent, String reflex, double g, boolean human, String why, int epoch) {
+        int n = apply(t, agent, reflex, g, human);
+        if (file != null && n > 0) {
+            JsonObject o = new JsonObject();
+            o.addProperty("t", t);
+            o.addProperty("agent", agent);
+            o.addProperty("reflex", reflex);
+            o.addProperty("grade", g);
+            o.addProperty("human", human);
+            if (why != null) o.addProperty("why", why);
+            o.addProperty("epoch", epoch);
+            try {
+                Labels.append(grades(), o);
+            } catch (Exception e) {
+                Events.log("cases: the grade is not written: " + e);
+            }
+        }
+        return n;
+    }
+
+    private synchronized int apply(long t, String agent, String reflex, double g, boolean human) {
+        int n = 0;
+        for (Case c : cases) {
+            if (c.t != t || !c.agent.equals(agent) || !c.reflex.equals(reflex)) continue;
+            if (c.human && !human && !Double.isNaN(c.grade)) { n++; continue; }   // a person's grade stays
+            c.grade = Math.max(-1, Math.min(1, g));
+            c.human = human;
+            n++;
+        }
+        return n;
+    }
+
+    File grades() { return new File(file.getAbsoluteFile().getParentFile(), GRADES); }
+
+    /** the grades file read back onto the cases in memory (a bad line skipped); the grades applied */
+    int loadGrades() {
+        if (file == null || !grades().isFile()) return 0;
+        int n = 0;
+        try {
+            BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(grades()), "UTF-8"));
+            try {
+                JsonParser p = new JsonParser();
+                for (String line; (line = r.readLine()) != null; ) {
+                    if (line.trim().isEmpty()) continue;
+                    try {
+                        JsonObject o = p.parse(line).getAsJsonObject();
+                        n += apply((long) CaseVec.num(o, "t", 0), CaseVec.str(o, "agent"), CaseVec.str(o, "reflex"), CaseVec.num(o, "grade", 0),
+                                o.has("human") && o.get("human").getAsBoolean()) > 0 ? 1 : 0;
+                    } catch (Exception e) {
+                        badLines++;
+                    }
+                }
+            } finally {
+                r.close();
+            }
+        } catch (Exception e) {
+            Events.log("cases: grades not read: " + e);
+        }
+        return n;
     }
 
     // ---- the journal ----------------------------------------------------------------------------------
@@ -320,6 +406,7 @@ final class CaseBook {
             cases.addAll(mine);
             if (cases.size() > cap) cases.subList(0, cases.size() - cap).clear();
         }
+        loadGrades();   // the epochs' grades of them (crew-grades.jsonl), if any
         loaded = true;
         return got.size();
     }

@@ -1652,10 +1652,13 @@ public class Commander {
             GL11.glTranslatef(ox, 0, 0);
             topBar(fresh);
             WavesHud.strip(kit, lay.get("waves"), Waves.view);
+            UiLayout.Box wb = lay.get("waves");   // an epoch on: its strip just under the waves' one
+            if (wb != null && EpochsHud.shown(EpochRun.view)) EpochsHud.strip(kit, new UiLayout.Box("epochs", wb.x, wb.y1() + 2, wb.w, 16), EpochRun.view);
             messages(fresh);
             if (lay.get("card") != null) card(fresh);
             bottomBar(fresh);
             WavesHud.overlays(kit, bw, height);
+            EpochsHud.card(kit, bw, height, EpochRun.view);
             if (openMenu != null) {
                 UiLayout.Box m = lay.get(openMenu.equals("toggles") ? "toggle.more" : openMenu + ".more");
                 if (m == null && openMenu.equals("card")) m = lay.get("card.order.more");

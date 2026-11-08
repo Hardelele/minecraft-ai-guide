@@ -58,7 +58,7 @@ final class DefenseSkills {
             case "make_weapon": return weapon(c, a, w, call.arg("type"), call.num("count", 0));
             case "equip": return equip(a, call.arg("what"));
             case "take_post": return takePost(c, a, w, call.arg("where"));
-            case "hold_line": return hold(c, a, w, MindSkills.clamp(call.num("radius", 4), 1, 8), MindSkills.clamp(call.num("seconds", 120), 5, 600));
+            case "hold_line": return hold(c, a, w, MindSkills.clamp(call.num("radius", Defense.LEASH), 1, 8), MindSkills.clamp(call.num("seconds", 120), 5, 600));
             case "guard_ally": return guardAlly(c, a, w, call.arg("ally"), MindSkills.clamp(call.num("seconds", 120), 5, 600));
             case "retreat": return retreat(c, a, w, call.arg("where"));
             case "eat": case "heal": return eat(a, MindSkills.clamp(call.num("count", 64), 1, 64));
@@ -202,6 +202,7 @@ final class DefenseSkills {
                     put++;
                     if (kind.equals("build")) Defense.of(a.who()).wallBuilt++;
                     else if (kind.equals("repair")) Defense.of(a.who()).wallRepaired++;
+                    else if (kind.equals("light")) Defense.of(a.who()).torches++;
                 } else if (r == Result.NO_ITEMS) { outOf = true; break; }
                 else if (r != Result.GONE) {
                     failed++;
@@ -428,6 +429,7 @@ final class DefenseSkills {
                 if (it == Items.mushroom_stew) Skills.put(ag, new ItemStack(Items.bowl), Ledger.Way.CRAFTED);
                 ag.heal(heal);
                 eaten++;
+                Defense.of(ag.who()).eaten++;
                 w.playSoundEffect(ag.posX, ag.posY + 1, ag.posZ, "random.burp", 0.5F, 1.0F);
                 Ledger.act(ag, "eat " + MindSkills.id(it, 0));
                 return Result.RUNNING;

@@ -113,6 +113,10 @@ public class Bench {
             state = 3;
             if (waves()) {
                 if (Waves.cycle.active()) Waves.stop("bench_failed");
+                if (epochs() && Epochs.on) {   // the epoch closed as far as it goes (its files: what there is of it)
+                    Epochs.close(w);
+                    try { if (Epochs.closing != null) Epochs.closing.get(60, java.util.concurrent.TimeUnit.SECONDS); } catch (Exception x) { Events.log("bench: the epoch not closed: " + x); }
+                }
                 wavesReport(w);
             } else report(w, false);
             s.initiateShutdown();
@@ -124,15 +128,26 @@ public class Bench {
     final List<String> failures = java.util.Collections.synchronizedList(new java.util.ArrayList<String>());   // the events' lines that say something failed
     int wavesAt = -1;
 
-    boolean waves() { return mode.equals("waves") || mode.startsWith("waves:"); }
+    boolean waves() { return mode.equals("waves") || mode.startsWith("waves:") || epochs(); }
+
+    /** -Daiguide.bench=epochs[:LEVEL]: one epoch of learning (Epochs): the waves run as below, the epoch's track, channels and close around it */
+    boolean epochs() { return mode.equals("epochs") || mode.startsWith("epochs:"); }
 
     String wavesLevel() {
-        String lv = WavePlan.level(mode.startsWith("waves:") ? mode.substring(6) : null);
+        String lv = WavePlan.level(mode.startsWith("waves:") ? mode.substring(6) : mode.startsWith("epochs:") ? mode.substring(7) : epochs() ? System.getProperty("aiguide.epochs.level") : null);
         return lv == null ? "normal" : lv;
     }
 
-    /** the run's time (game minutes, from its start): -Daiguide.bench.minutes, 20 by default for the waves */
-    int wavesLimit() { return Integer.getInteger("aiguide.bench.minutes", 20) * 60 * 20; }
+    /** the run's time (game minutes, from its start): -Daiguide.bench.minutes, 20 by default for the waves; an epoch's -Daiguide.epochs.minutes */
+    int wavesLimit() {
+        int m = Integer.getInteger("aiguide.bench.minutes", 20);
+        return (epochs() ? Integer.getInteger("aiguide.epochs.minutes", m) : m) * 60 * 20;
+    }
+
+    /** who fights: posts (the commander's guard order), none (the crew's own guard), mind (the minds' goal of defence; an epoch's default) */
+    String guard() { return System.getProperty("aiguide.bench.waves.guard", epochs() ? "mind" : "posts"); }
+
+    int closedAt = -1;
 
     /**
      * The crew is called at the base (the crew's world's, else the world's spawn), armed (-Daiguide.bench.waves.kit,
@@ -151,8 +166,18 @@ public class Bench {
             Crew c = Crew.instance;
             boolean summoned = Crew.finished.contains("summon") || c != null && c.agents.size() >= crewSize() && c.current == null && c.phases.isEmpty();
             if (!summoned && ticks - askedAt < 20 * 60) return;
+            Long seed = null;
+            if (epochs()) {   // the epoch's track, number, seed, channels (before the minds get their goal: the lessons are in their prompt)
+                seed = Epochs.begin(w, wavesLevel());
+                if (seed == null) {   // the run is through: nothing to do (tools/epochs.py stops on it)
+                    state = 3;
+                    wavesReport(w);
+                    s.initiateShutdown();
+                    return;
+                }
+            }
             arm(w);
-            String guard = System.getProperty("aiguide.bench.waves.guard", "posts");
+            String guard = guard();
             if (guard.equals("mind")) {   // each agent's own mind defends the base (a goal of defence: its skills, its posts, its fights; the model of the server mod's config)
                 Events.log("bench: " + AgentMind.setNow(c, name, "all", System.getProperty("aiguide.bench.waves.goal", "защищай базу от волн"), null, false));
             } else if (!"none".equals(guard)) {
@@ -161,7 +186,8 @@ public class Bench {
                 });
                 posts();
             }
-            Events.log("bench: waves " + wavesLevel() + ": " + Waves.start(wavesLevel(), "bench") + ", " + (c == null ? 0 : c.agents.size()) + " agents");
+            Events.log("bench: waves " + wavesLevel() + ": " + Waves.start(wavesLevel(), epochs() ? "epochs" : "bench", seed) + ", " + (c == null ? 0 : c.agents.size()) + " agents");
+            Epochs.started(w);
             wavesAt = ticks;
             state = 21;
         } else if (state == 21) {
@@ -177,9 +203,21 @@ public class Bench {
             boolean over = Waves.cycle.phase == WaveCycle.Phase.OVER, late = ticks - wavesAt > wavesLimit();
             if (!over && !late) return;
             if (!over) Waves.stop("bench_time");
+            if (epochs()) {   // the epoch closed on its own thread (the lessons' call): waited for, at most 5 minutes
+                Epochs.close(w);
+                closedAt = ticks;
+                state = 22;
+                return;
+            }
             state = 3;
             wavesReport(w);
             s.initiateShutdown();
+        } else if (state == 22) {
+            if (!Epochs.done() && ticks - closedAt < 20 * 300) return;
+            if (!Epochs.done()) Events.log("bench: the epoch's close took more than 5 minutes: the report goes without it");
+            state = 3;
+            wavesReport(w);
+            if (!Boolean.getBoolean("aiguide.epochs.stay")) s.initiateShutdown();   // stay: a singleplayer game keeps its world (the card of what was learned on the screen)
         }
     }
 
@@ -256,7 +294,16 @@ public class Bench {
         b.addProperty("seconds", ticks / 20);
         b.addProperty("minutes_limit", wavesLimit() / 1200);
         b.addProperty("crew", crewSize());
-        b.addProperty("guard", System.getProperty("aiguide.bench.waves.guard", "posts"));
+        b.addProperty("guard", guard());
+        if (epochs() && Epochs.run != null) {   // which epoch this was, and where the run's report is
+            JsonObject ep = new JsonObject();
+            ep.addProperty("run", Epochs.run.cfg.run);
+            ep.addProperty("track", Epochs.track);
+            ep.addProperty("epoch", Epochs.epoch);
+            ep.addProperty("finished", Epochs.run.finished());
+            ep.addProperty("report", new File(Epochs.run.dir, "report.json").getPath());
+            b.add("epochs", ep);
+        }
         b.addProperty("kit", System.getProperty("aiguide.bench.waves.kit", "stone_sword"));
         b.addProperty("world_difficulty", String.valueOf(w.difficultySetting));
         JsonArray f = new JsonArray();

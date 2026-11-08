@@ -214,7 +214,8 @@ public class Agent extends EntityCreature implements Doer {
                 ItemStack worn = getEquipmentInSlot(i);
                 if (worn != null) { bag.add(worn); setCurrentItemOrArmor(i, null); }
             }
-            Defense.of(who()).deaths++;
+            String cause = Defense.died(who(), s.getDamageType());   // its tally's deaths, by cause (a fight, hunger, an accident)
+            Epochs.died(this, s.getDamageType(), cause);
         }
         super.onDeath(s);
         if (worldObj.isRemote) return;

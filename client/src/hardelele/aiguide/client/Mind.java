@@ -223,6 +223,19 @@ final class Mind {
             + "- Items and blocks by game id without 'minecraft:' (log, planks, stick, crafting_table, wooden_pickaxe, cobblestone, stone_pickaxe, "
             + "coal, iron_ore, furnace, chest, torch); ':N' after an id is its variant (planks:2 is birch planks).";
 
+    /**
+     * The lessons of the epochs before (Lessons.prompt: the epoch and what each came from), for a goal of defence: set
+     * once when an epoch begins and the same all through it (the API's cache keeps taking the system prompt); "" none.
+     */
+    static volatile String lessons = "";
+
+    /** the system prompt: the rules; for a goal of defence the defence's and the epochs' lessons too */
+    static String system(boolean defense) {
+        if (!defense) return SYSTEM;
+        String l = lessons;
+        return SYSTEM + Defense.RULES + (l == null ? "" : l);
+    }
+
     // ---- one mind: a goal's decisions --------------------------------------------------------------------------
 
     final String agent;
@@ -274,7 +287,7 @@ final class Mind {
         st.repeated = repeated();
         JsonObject body = new JsonObject();
         JsonArray m = new JsonArray();
-        m.add(message("system", goal.defense ? SYSTEM + Defense.RULES : SYSTEM));
+        m.add(message("system", system(goal.defense)));
         m.add(message("user", st.render()));
         body.add("messages", m);
         body.add("tools", tools(goal.defense));

@@ -14,5 +14,6 @@ class ClientSetup {
         CaveView.start();
         Feedback.start();
         WavesHud.start();
+        EpochsHud.start();
     }
 }
