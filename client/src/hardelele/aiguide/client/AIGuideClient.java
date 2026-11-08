@@ -24,6 +24,7 @@ public class AIGuideClient {
     public void init(FMLInitializationEvent e) {
         EntityRegistry.registerModEntity(Agent.class, "agent", 0, this, 96, 1, true);
         Exploration.start();
+        Places.start();   // an observer: what places the crew has seen (off with -Daiguide.places=false)
         if (e.getSide() != Side.CLIENT) return;   // nothing more to do on a server (the bench starts when the server has)
         ClientSetup.run();   // its own class: a dedicated server never loads the client's classes
     }

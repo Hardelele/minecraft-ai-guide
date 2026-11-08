@@ -178,6 +178,19 @@ public final class Exploration {
         for (Map.Entry<Pos, String> e : memory(w).seen.entrySet()) if (e.getValue().equals(name)) out.add(e.getKey().array());
         return out;
     }
+    /** For the places' input: the remembered blocks and walkable cells inside a box (side cells from x0, y0, z0),
+     * and the observation points (feet) at most reach from it. Read only. */
+    static synchronized void recall(WorldServer w, int x0, int y0, int z0, int side, int reach,
+            List<int[]> seenAt, List<String> seenName, List<int[]> ground, List<int[]> trail) {
+        Memory m = memory(w);
+        for (Map.Entry<Pos, String> e : m.seen.entrySet()) {
+            Pos p = e.getKey();
+            if (p.x >= x0 && p.x < x0 + side && p.y >= y0 && p.y < y0 + side && p.z >= z0 && p.z < z0 + side) { seenAt.add(p.array()); seenName.add(e.getValue()); }
+        }
+        for (Pos p : m.ground) if (p.x >= x0 && p.x < x0 + side && p.y >= y0 && p.y < y0 + side && p.z >= z0 && p.z < z0 + side) ground.add(p.array());
+        for (Pos p : m.trail)
+            if (p.x >= x0 - reach && p.x < x0 + side + reach && p.y >= y0 - reach && p.y < y0 + side + reach && p.z >= z0 - reach && p.z < z0 + side + reach) trail.add(p.array());
+    }
     /** Candidate sources from remembered types, not guaranteed quantities or a query of remote chunks.
      * Metadata-sensitive crops, chance drops and unfamiliar mod blocks need an explicit observation model. */
     static synchronized List<int[]> knownResources(WorldServer w, Item item) {
