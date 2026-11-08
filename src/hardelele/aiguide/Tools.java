@@ -51,6 +51,15 @@ class Tools {
     }
 
     /** the crew (client mod, by reflection) tells the guide what it could not mend; the guide may answer with crew_plan */
+    /**
+     * The crew's fixed phases (crew_plan, the client's Compiler): for the promo scenarios and the bench, else only with
+     * -Daiguide.crew.phases=true; by default the agents get goals (crew_goal) and decide their steps themselves.
+     */
+    static boolean phases() {
+        String v = System.getProperty("aiguide.video");
+        return Boolean.getBoolean("aiguide.crew.phases") || v != null && !v.isEmpty() || System.getProperty("aiguide.bench") != null;
+    }
+
     static String crewEvent(String player, String text) {
         if (instance == null || instance.mod.assistant == null) return "no guide";
         return instance.mod.assistant.ask(player, "[crew event, not from the player] " + text) ? "asked" : "busy";
@@ -106,6 +115,17 @@ class Tools {
                     "place", "one block a line: x y z item (item: an id from find_items, or a name); empty if none",
                     "dig", "one block a line: x y z; empty if none"));
             if (crewAvailable())
+                a.add(tool("crew_goal", "Your crew: helper agents with players' bodies (numbers 2-5; the player himself is number 1 and gets no goals). "
+                        + "Give agents a GOAL in words: each agent's own mind then decides its steps (look around, chop, mine, craft at a table, "
+                        + "smelt, place, carry, hand over) by the game's recipes and what the crew has seen, shares the work with the others and "
+                        + "makes only what the goal needs. Use it when the player wants the crew to get or do something: 'make me a stone pickaxe', "
+                        + "'chop the trees by the house', 'build a small shelter'. They tell the player when done or why not. goal 'stop' clears "
+                        + "the goals. For an action at a place the player points at use crew_order instead.", P, PD,
+                        "agents", "all, or agent numbers: 2,3",
+                        "goal", "the goal in the player's words (or clearer), e.g. 'have a stone pickaxe', 'chop the trees near the house', or stop",
+                        "want", "what must be in the agents' bags when it is done, ITEM COUNT by the game's id (e.g. stone_pickaxe 1); empty when the goal is not an item",
+                        "summon", "how many agents to call first when the crew has none (1-4); 0 otherwise"));
+            if (crewAvailable() && phases())
                 a.add(tool("crew_plan", "Your crew: helper agents with players' bodies who do the early game for the player, on their own (no yes "
                         + "needed). Give only GOALS, one a line, from this list: summon N (1-4 agents: the player himself is the crew's number 1); keep orders (only when the player says the agents on his orders should stay on them: else a plan he asks for takes them back into it); shelter auto|hut|house|fenced (build a base); "
                         + "tools wood|stone|iron (pickaxes for the crew); torches N; make ITEM N, ITEM N (any item by its game name, e.g. "
@@ -195,8 +215,17 @@ class Tools {
             else if (name.equals("what_uses")) r = recipes(str(args, "item"), false);
             else if (name.equals("player_status")) r = playerStatus(player);
             else if (name.equals("find_blocks")) r = findBlocks(player, str(args, "query"), num(args, "radius", 24));
+            else if (name.equals("crew_goal")) {
+                if (!crewAvailable()) r = "No crew here.";
+                else {
+                    java.lang.reflect.Method m = Class.forName("hardelele.aiguide.client.AgentMind").getDeclaredMethod("fromGuide", String.class, String.class, String.class, String.class, int.class);
+                    m.setAccessible(true);
+                    r = (String) m.invoke(null, player, str(args, "agents"), str(args, "goal"), str(args, "want"), num(args, "summon", 0));
+                }
+            }
             else if (name.equals("crew_plan")) {
                 if (!crewAvailable()) r = "No crew here.";
+                else if (!phases()) r = "crew_plan is off here (the crew's fixed phases are for the promo scenarios): give the agents a goal with crew_goal.";
                 else {
                     Class<?> origin = Class.forName("hardelele.aiguide.client.Origin");
                     Object llm = origin.getField("LLM_PLAN").get(null);

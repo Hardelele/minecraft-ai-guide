@@ -1044,7 +1044,7 @@ public class Commander {
             StringBuilder who = new StringBuilder();
             for (int s : selected) who.append(who.length() > 0 ? "," : "").append(s);
             final String ask = (who.length() > 0 ? "[из режима командира; выбраны агенты " + who + (selected.contains(1) && selfUnit() ? " (1 — это сам игрок, его персонаж ведёт автопилот: только идти, рубить, копать, сложить в сундук, бить, ставить)" : "")
-                    + " — приказы только им: crew_order с agents=" + who + " или цели crew_plan] "
+                    + " — приказы только им: crew_order с agents=" + who + " (действие в месте) или цель crew_goal с agents=" + who + " (чего добиться: агент сам решает шаги)] "
                     : "[из режима командира; вся команда] ")
                     + "[ответ игроку — коротко и его словами: без названий инструментов, параметров и координат; остановить — кнопка «Стоп» на панели или клавиша H; вернуть под план — «По плану» или R] "
                     + text.trim();
@@ -1086,6 +1086,8 @@ public class Commander {
         }
 
         String doing(Agent a) {
+            String m = MindUi.doing(a.skin());   // its own mind: what that has it do
+            if (m != null) return m;
             TaskBoard.Card k = Crew.instance == null ? null : Crew.instance.board.leased.get(a);
             return k != null ? doingRu(k.kind) : a.commanded ? "ждёт приказа" : "по плану";
         }

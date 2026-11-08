@@ -127,3 +127,26 @@ aiguide.crew.pill.self=Give myself to the AI
 aiguide.crew.pill.dismiss=Let go
 aiguide.crew.key.conflict=AI Guide's key %s ("%s") is taken: %s - "%s" holds it too. %s is free, for example (Options - Controls).
 aiguide.crew.overlay=[Crew] your character is agent 1 and does a task. WASD takes the controls
+
+# the agents' minds (AgentMind, MindUi): goals in words, the agent decides its steps
+aiguide.crew.mind.thinking=thinking…
+aiguide.crew.mind.do.orders=waits for its orders to end
+aiguide.crew.mind.do.look_around=looks around
+aiguide.crew.mind.do.go_to=walks
+aiguide.crew.mind.do.chop_tree=chops a tree
+aiguide.crew.mind.do.mine=digs
+aiguide.crew.mind.do.craft=crafts
+aiguide.crew.mind.do.smelt=smelts
+aiguide.crew.mind.do.place=places a block
+aiguide.crew.mind.do.take=takes from a chest
+aiguide.crew.mind.do.put=puts into a chest
+aiguide.crew.mind.do.give=hands over
+aiguide.crew.mind.do.wait=waits
+aiguide.crew.mind.set=Goal for %s: %s
+aiguide.crew.mind.none=No agents for the goal: add them (/crew add N)
+aiguide.crew.mind.self=Agent 1 is you: goals are for agents 2-5
+aiguide.crew.mind.usage=/goal [numbers] text - a goal for the agents (no numbers: all), they decide what to do; /goal stop - clear it
+aiguide.crew.mind.stopped=Goals cleared: %s
+aiguide.crew.mind.says=%s: %s
+aiguide.crew.mind.done=%s: done - %s
+aiguide.crew.mind.gaveup=%s: could not - %s

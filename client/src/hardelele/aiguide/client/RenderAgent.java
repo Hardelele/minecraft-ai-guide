@@ -18,6 +18,14 @@ public class RenderAgent extends RenderBiped {
         super(new ModelBiped(0.0F), 0.5F);
     }
 
+    /** under its name: what its mind has it do ("думает…" while the model is asked) */
+    @Override
+    protected void passSpecialRender(net.minecraft.entity.EntityLivingBase e, double x, double y, double z) {
+        super.passSpecialRender(e, x, y, z);
+        String l = e instanceof Agent ? MindUi.label(((Agent) e).skin()) : null;
+        if (l != null) renderLivingLabel(e, l, x, y - 0.27, z, 32);
+    }
+
     @Override
     protected ResourceLocation getEntityTexture(EntityLiving e) {
         int n = e instanceof Agent ? ((Agent) e).skin() : 1;
