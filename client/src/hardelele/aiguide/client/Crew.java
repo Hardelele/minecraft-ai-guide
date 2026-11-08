@@ -325,7 +325,8 @@ public class Crew {
                 a.origins.poll();
                 Ledger.result(r);
                 if (current != null) current.tally(r);
-                if (r.failed()) Events.log("crew: " + a.getCustomNameTag() + " " + t.getClass().getSimpleName() + " -> " + r);
+                if (r.failed()) Events.log("crew: " + a.getCustomNameTag() + " " + TaskBoard.name(t) + " -> " + r + (a.why != null ? " (" + a.why + ")" : ""));
+                if (r.done()) a.why = null;
             }
         }
         for (Doer d : extra) if (d instanceof PlayerAgent) ((PlayerAgent) d).work(this, w, p);   // the player's character: its card through the autopilot

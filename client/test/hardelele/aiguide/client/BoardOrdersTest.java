@@ -142,10 +142,35 @@ public final class BoardOrdersTest {
         System.out.println("BoardOrdersTest numbers PASS");
     }
 
+    /** the replanning's limits are a plan's: a new list of goals starts them again */
+    static void planBudget() {
+        Compiler.replans = 4;
+        Compiler.told = 2;
+        for (int i = 0; i < Retry.GIVE_UP; i++) Compiler.phaseRetry.failed("upgrade", 0);
+        check(Compiler.phaseRetry.givenUp("upgrade"), "the phase was given up");
+        Compiler.fresh();
+        check(Compiler.replans == 0 && Compiler.told == 0 && !Compiler.phaseRetry.givenUp("upgrade"), "a new plan: replans, words to the guide and the phases' tries anew");
+        System.out.println("BoardOrdersTest planBudget PASS");
+    }
+
+    /** a failed card's line names the card and the step it failed at (not an empty anonymous class) */
+    static void names() {
+        Crew c = new Crew();
+        TaskBoard.Card k = card(c, "furnace", Origin.LLM_PLAN);
+        TaskBoard.Seq s = new TaskBoard.Seq(new Crew.Look(0, 0, 0, 1), new Crew.Wait(() -> true));
+        s.i = 1;
+        String n = TaskBoard.name(new TaskBoard.CardJob(c.board, k, s));
+        check(n.equals("furnace/Wait"), "the card's line: " + n);
+        check(!TaskBoard.name(new Crew.Task() { public Result step(Agent a, net.minecraft.world.WorldServer w) { return Result.OK; } }).isEmpty(), "an anonymous task has a name too");
+        System.out.println("BoardOrdersTest names PASS");
+    }
+
     public static void main(String[] args) {
         muster();
         stall();
         numbers();
+        planBudget();
+        names();
         System.out.println("BoardOrdersTest PASS");
     }
 }

@@ -320,7 +320,8 @@ class TaskBoard {
         k.tries++;
         boolean last = retry.failed(k, now);   // backed off before anyone takes it again; given up after the policy's tries
         k.state = last || k.only != null && r == Result.NO_TOOL ? State.FAILED : State.OPEN;
-        Events.log("board: " + k + " by " + a.who() + " -> " + r + (k.state == State.OPEN ? ", back on the board" : ", given up"));
+        String why = a instanceof Agent ? ((Agent) a).why : null;
+        Events.log("board: " + k + " by " + a.who() + " -> " + r + (why != null ? " (" + why + ")" : "") + (k.state == State.OPEN ? ", back on the board" : ", given up"));
     }
 
     void release(Doer a, Card k) {
@@ -546,6 +547,30 @@ class TaskBoard {
             return new TaskBoard.Seq(new Crew.Mine(st), new Crew.Collect(st.get(0)[0] + 0.5, st.get(0)[1], st.get(0)[2] + 0.5, 5), c.new Stash(null, 0));
         }
         return null;
+    }
+
+    /** a card's work as an agent's job: the card finished with what the work ends with; taken back, it ends GONE */
+    static final class CardJob implements Crew.Task {
+        final TaskBoard b;
+        final Card k;
+        final Crew.Task t;
+        CardJob(TaskBoard b, Card k, Crew.Task t) { this.b = b; this.k = k; this.t = t; }
+        public Result step(Agent ag, WorldServer ww) {
+            if (k.state != State.LEASED || k.holder != ag) return Result.GONE;   // taken back (lease out, phase over)
+            Result r = t.step(ag, ww);
+            if (r.done()) b.finish(k, ag, r);
+            return r;
+        }
+    }
+
+    /** a task's name for the crew's lines: a card's kind and the step it is at ("furnace/PlaceFrom") */
+    static String name(Crew.Task t) {
+        if (t == null) return "";
+        if (t instanceof CardJob) return ((CardJob) t).k.kind + "/" + name(((CardJob) t).t);
+        if (t instanceof Seq) { Seq s = (Seq) t; return s.steps.length == 0 ? "Seq" : name(s.steps[Math.min(s.i, s.steps.length - 1)]); }
+        String n = t.getClass().getSimpleName();
+        if (n.isEmpty()) { n = t.getClass().getName(); n = n.substring(n.lastIndexOf('.') + 1); }   // an anonymous task: its outer class's name
+        return n;
     }
 
     // ---- a few tasks one after another ----------------------------------------------------------------

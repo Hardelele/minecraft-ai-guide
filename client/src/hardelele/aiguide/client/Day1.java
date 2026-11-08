@@ -223,8 +223,8 @@ class Day1 {
                 if (logs(a.bag) < 3) return Result.NO_ITEMS;
                 say(a, "Ставлю лагерь: верстак и сундук");
                 steps.add(new Skills.Craft(PLANKS, -1, 12));
-                if (!table) { steps.add(new Skills.Craft(TABLE, -1, 1)); steps.add(new Skills.PlaceFrom(t[0], t[1], t[2], TABLE, -1)); }
-                if (!chest) { steps.add(new Skills.Craft(CHEST, -1, 1)); steps.add(new Skills.PlaceFrom(k[0], k[1], k[2], CHEST, -1)); }
+                if (!table) { steps.add(new Skills.Craft(TABLE, -1, 1)); steps.add(new Skills.PlaceFrom(t[0], t[1], t[2], TABLE, -1).station(cell -> System.arraycopy(cell, 0, t, 0, 3))); }
+                if (!chest) { steps.add(new Skills.Craft(CHEST, -1, 1)); steps.add(new Skills.PlaceFrom(k[0], k[1], k[2], CHEST, -1).station(cell -> System.arraycopy(cell, 0, k, 0, 3))); }
             }
             if (i >= steps.size()) return Result.OK;
             Result r = steps.get(i).step(a, w);
@@ -568,7 +568,7 @@ class Day1 {
                 if (sticks > 0) s.add(new Take(c, Items.stick, sticks));
                 if (!isFurnace(w, f)) {
                     s.add(new Skills.Craft(FURNACE, -1, 1));
-                    s.add(new Skills.PlaceFrom(f[0], f[1], f[2], FURNACE, -1));
+                    s.add(new Skills.PlaceFrom(f[0], f[1], f[2], FURNACE, -1).station(cell -> System.arraycopy(cell, 0, f, 0, 3)));   // (f is the crew's furnace cell: it moves with it)
                 }
                 if (torchN > 0) {
                     s.add(new Take(c, LOG, logs));

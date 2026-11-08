@@ -198,6 +198,7 @@ class Compiler {
         if (c.base == null) { c.base = new int[] { (int) Math.floor(p.posX), (int) Math.floor(p.boundingBox.minY), (int) Math.floor(p.posZ) }; c.baseYaw = p.rotationYaw; }
         c.planSite(w);
         boolean again = last != null;   // new goals replace the plan: what is queued goes, what is done stays done
+        fresh();
         if (again) c.phases.clear();
         last = g;
         plans++;
@@ -453,6 +454,13 @@ class Compiler {
     }
 
     static int told;
+
+    /** a new list of goals: its own replans and words to the guide (the limits are a plan's, not the game's) */
+    static void fresh() {
+        replans = 0;
+        told = 0;
+        phaseRetry.clear();
+    }
 
     /** a word to the guide (the server mod), which may answer with new goals */
     static void tellGuide(Crew c, String text) {

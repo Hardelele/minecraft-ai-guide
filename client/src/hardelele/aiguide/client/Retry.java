@@ -48,4 +48,9 @@ class Retry {
     void ok(Object key) {
         state.remove(key);
     }
+
+    /** everything may be tried again (a new owner: a new plan) */
+    void clear() {
+        state.clear();
+    }
 }

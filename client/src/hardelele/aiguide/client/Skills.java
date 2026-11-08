@@ -209,7 +209,7 @@ class Skills {
                 continue;
             }
             if (e instanceof net.minecraft.entity.item.EntityXPOrb) continue;
-            if (e instanceof Agent && e != a) Crew.stepAside((Agent) e, x, y, z);   // another agent: out of the way
+            if (e instanceof Agent) Crew.stepAside((Agent) e, x, y, z);   // an agent, the placer itself too: out of the way
             r = Result.BUSY;   // the placer, another agent (asked to move), the player or an animal: not now
         }
         return r;
@@ -486,9 +486,87 @@ class Skills {
      * With no such place it fails with the reason (NOT_VISIBLE, OUT_OF_REACH), never puts it blind.
      */
     static class PlaceFrom implements Crew.Task {
-        final int x, y, z, meta;
+        int x, y, z;   // where it goes (a station's cell may move: station)
+        final int meta;
         final Item item;
         int aside, tries, maxPillar = 4;
+        /** a station (a furnace, a table, a chest) told where it went when its own cell would not do */
+        interface Moved { void to(int[] cell); }
+        Moved moved;
+        int moves;
+        int[] origin;
+        final java.util.Set<Long> tried = new java.util.HashSet<Long>();
+
+        /** a station's block: if it cannot go into its cell, into a cell beside it where it is seen to go (Moved says where) */
+        PlaceFrom station(Moved m) {
+            moved = m;
+            origin = new int[] { x, y, z };
+            tried.add(Crew.key(x, y, z));
+            return this;
+        }
+
+        /** a failure, with why and where, said and kept for the crew's line; a station tries a cell beside its own first */
+        Result fail(Agent a, WorldServer w, Result r, String reason) {
+            String what = Ledger.name(new ItemStack(item));
+            Events.log("crew: " + a.getCustomNameTag() + " cannot put " + what + " at " + x + " " + y + " " + z + ": " + reason + " (" + r + ")");
+            a.why(r + ", " + reason + ", " + x + " " + y + " " + z);
+            if (moved == null || moves >= 3) return r;
+            int[] c = besideCell(a, w);
+            if (c == null) { Events.log("crew: no other cell for " + what + " near " + origin[0] + " " + origin[1] + " " + origin[2]); return r; }
+            moves++;
+            x = c[0]; y = c[1]; z = c[2];
+            moved.to(c);
+            view = null; went = null; go = null; bad.clear(); tries = 0; aside = 0;
+            a.why = null;
+            Events.log("crew: " + a.getCustomNameTag() + " puts " + what + " at " + x + " " + y + " " + z + " instead (beside its planned cell)");
+            return Result.RUNNING;
+        }
+
+        /** a free cell on firm ground beside the station's planned one, not the crew's other stations', that the eyes are seen to reach (Sight) */
+        int[] besideCell(Agent a, WorldServer w) {
+            List<int[]> cells = new ArrayList<int[]>();
+            for (int dx = -2; dx <= 2; dx++)
+                for (int dz = -2; dz <= 2; dz++)
+                    for (int dy = -1; dy <= 1; dy++) {
+                        int cx = origin[0] + dx, cy = origin[1] + dy, cz = origin[2] + dz;
+                        if (tried.contains(Crew.key(cx, cy, cz)) || !Crew.soft(w, cx, cy, cz) || !Crew.solid(w, cx, cy - 1, cz)) continue;
+                        if (w.getBlock(cx, cy, cz).getMaterial().isLiquid() || station(cx, cy, cz)) continue;
+                        if (!w.getEntitiesWithinAABBExcludingEntity(null, net.minecraft.util.AxisAlignedBB.getBoundingBox(cx, cy, cz, cx + 1, cy + 1, cz + 1)).isEmpty()) continue;
+                        cells.add(new int[] { cx, cy, cz });
+                    }
+            final int[] o = origin;
+            java.util.Collections.sort(cells, (p, q) -> (Math.abs(p[0] - o[0]) + Math.abs(p[2] - o[2]) + Math.abs(p[1] - o[1]) * 2) - (Math.abs(q[0] - o[0]) + Math.abs(q[2] - o[2]) + Math.abs(q[1] - o[1]) * 2));
+            int sx = x, sy = y, sz = z, checks = 0;
+            for (int[] c : cells) {
+                if (checks++ >= 10) break;   // (each a sight search)
+                tried.add(Crew.key(c[0], c[1], c[2]));
+                x = c[0]; y = c[1]; z = c[2];
+                view = null;
+                if (plan(a, w) != null) { x = sx; y = sy; z = sz; view = null; return c; }
+            }
+            x = sx; y = sy; z = sz;
+            view = null;
+            return null;
+        }
+
+        /** who stands in a cell (for the line that says why a block was not put) */
+        static String occupants(WorldServer w, int x, int y, int z) {
+            StringBuilder b = new StringBuilder();
+            for (Object o : w.getEntitiesWithinAABBExcludingEntity(null, net.minecraft.util.AxisAlignedBB.getBoundingBox(x, y, z, x + 1, y + 2, z + 1))) {
+                net.minecraft.entity.Entity e = (net.minecraft.entity.Entity) o;
+                if (e.isDead || e instanceof net.minecraft.entity.item.EntityItem || e instanceof net.minecraft.entity.item.EntityXPOrb) continue;
+                b.append(b.length() > 0 ? ", " : "").append(e.getCommandSenderName());
+            }
+            return b.length() == 0 ? "someone (gone now)" : b.toString();
+        }
+
+        /** one of the crew's stations stands (or is to stand) there */
+        static boolean station(int x, int y, int z) {
+            Crew c = Crew.instance;
+            for (int[] s : new int[][] { c == null ? null : c.chest, c == null ? null : c.table, Day1.furnace })
+                if (s != null && s[0] == x && s[1] == y && s[2] == z) return true;
+            return false;
+        }
         boolean here;              // from where it stands only (no walking, no pillar)
         Sight.Walk penalty;        // what standing somewhere costs besides the walk (a builder outside its walls)
         java.util.Set<Long> avoid; // cells not to stand in nor build a pillar in (the plan's own)
@@ -536,26 +614,25 @@ class Skills {
                 if (r == Result.RUNNING) return r;
                 Crew.Task was = go;
                 go = null;
-                if (was instanceof Scaffold) return r;   // put up there (or not), the pillar taken down
-                if (r.failed() && ++tries > 3) return r;
+                if (was instanceof Scaffold) {   // put up there (or not), the pillar taken down
+                    if (r.failed() && r != Result.NO_ITEMS) return fail(a, w, r, "not put from the pillar");
+                    return r;
+                }
+                if (r.failed() && ++tries > 3) return fail(a, w, r, "no way to the place it would see it from");
                 went = view;
             }
             Result r = a.body.place(w, x, y, z, item, meta);
-            if (r == Result.RUNNING || r == Result.OK || r == Result.GONE || r == Result.NO_ITEMS) return r;
-            if (r == Result.BUSY) return ++aside > 20 * 15 ? Result.BLOCKED : Result.RUNNING;   // someone is moving out of the way
-            if (r == Result.BLOCKED) {
-                Events.log("crew: " + a.getCustomNameTag() + " cannot put " + Ledger.name(new ItemStack(item)) + " at " + x + " " + y + " " + z + " (" + Ledger.name(new ItemStack(w.getBlock(x, y, z))) + " there)");
-                return r;
-            }
+            if (r == Result.RUNNING || r == Result.OK || r == Result.GONE || r == Result.NO_ITEMS) { if (r != Result.RUNNING) aside = 0; return r; }
+            if (r == Result.BUSY) return ++aside > 20 * 15 ? fail(a, w, Result.BLOCKED, "the cell is taken by " + occupants(w, x, y, z)) : Result.RUNNING;   // someone is moving out of the way
+            aside = 0;
+            if (r == Result.BLOCKED) return fail(a, w, r, "nothing to put it against");
             why = r;   // not seen from here: go where it is
             if (here) return r;
             if (went != null) bad.add(Crew.key(went.stand[0], went.stand[1], went.stand[2]));   // stood there and did not see it after all
             went = null;
             view = null;
-            if (++tries > 3 || plan(a, w) == null) {
-                Events.log("crew: " + a.getCustomNameTag() + " sees no face to put " + Ledger.name(new ItemStack(item)) + " at " + x + " " + y + " " + z + " against from anywhere it gets to (" + why + ")");
-                return why;
-            }
+            if (++tries > 3 || plan(a, w) == null)
+                return fail(a, w, why, why == Result.OUT_OF_REACH ? "no place it gets to has it in reach" : "no place it gets to sees a face to put it against");
             Sight.View v = view;
             if (v.pillar == 0) go = new Crew.GoTo(v.stand[0] + 0.5, v.stand[1], v.stand[2] + 0.5, 0.4);
             else {

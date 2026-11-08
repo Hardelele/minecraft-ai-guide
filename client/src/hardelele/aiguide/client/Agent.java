@@ -175,17 +175,14 @@ public class Agent extends EntityCreature implements Doer {
     public boolean paused() { return slot.busy(); }
 
     /** the card's work as its job (its origin the card's), the card finished with what the job ends with */
-    public void begin(final TaskBoard b, final TaskBoard.Card k) {
-        final Crew.Task t = k.make.make();
-        Crew.job(this, new Crew.Task() {
-            public Result step(Agent ag, net.minecraft.world.WorldServer ww) {
-                if (k.state != TaskBoard.State.LEASED || k.holder != ag) return Result.GONE;   // taken back (lease out, phase over)
-                Result r = t.step(ag, ww);
-                if (r.done()) b.finish(k, ag, r);
-                return r;
-            }
-        }, k.origin);
+    public void begin(TaskBoard b, TaskBoard.Card k) {
+        Crew.job(this, new TaskBoard.CardJob(b, k, k.make.make()), k.origin);
     }
+
+    /** why its last task failed, with where (said by the task that failed: a place not seen, a cell taken), read once */
+    String why;
+
+    void why(String reason) { why = reason; }
 
     public void cancel(String why) {
         Crew.clearJobs(this);
