@@ -46,6 +46,7 @@ public final class Places {
     final ConcurrentLinkedQueue<String> notes = new ConcurrentLinkedQueue<String>();   // the worker's words, for the events (logged on the server thread)
     final Map<Long, List<PlacesSplit.Place>> byCube = new LinkedHashMap<Long, List<PlacesSplit.Place>>();
     final Map<Long, Long> lookedAt = new HashMap<Long, Long>();
+    final Map<Long, byte[]> inputs = new HashMap<Long, byte[]>();   // each cube's input as the net saw it (for the ratings)
     volatile List<PlacesSplit.Place> all = Collections.emptyList();
     volatile boolean broken;
     Job gathering;
@@ -72,6 +73,19 @@ public final class Places {
         if (!ON || instance != null) return;
         instance = new Places();
         FMLCommonHandler.instance().bus().register(instance);
+        PlaceSource.current = new PlacesSource();   // the rating layer shows these places
+    }
+
+    /** the weights in use, a hash of their bytes ("none" until the worker read them) */
+    static volatile String weights = "none";
+
+    /** the net's input of the cube whose corner is x0 y0 z0 (world cells), the last time it was looked at; null if none */
+    static byte[] input(int x0, int y0, int z0) {
+        Places p = instance;
+        if (p == null) return null;
+        synchronized (p) {
+            return p.inputs.get(key(cube(x0), cube(y0), cube(z0)));
+        }
     }
 
     /** put the cube cx, cy, cz (cube coordinates) in the queue; false if off, without weights or the queue is full */
@@ -111,6 +125,7 @@ public final class Places {
         jobs.clear();
         byCube.clear();
         lookedAt.clear();
+        inputs.clear();
         all = Collections.emptyList();
     }
 
@@ -166,12 +181,33 @@ public final class Places {
             return;
         }
         byCube.put(key(j.cube[0], j.cube[1], j.cube[2]), j.places);
+        inputs.put(key(j.cube[0], j.cube[1], j.cube[2]), j.input.cls.clone());
         List<PlacesSplit.Place> list = new ArrayList<PlacesSplit.Place>();
         for (List<PlacesSplit.Place> l : byCube.values()) list.addAll(l);
         all = Collections.unmodifiableList(list);
         String sum = PlacesSplit.summary(j.places);
         Events.log("places: " + at + " -> " + j.places.size() + " мест" + (sum.isEmpty() ? "" : ": " + sum)
                 + " (seen " + Math.round(100.0 * j.seen / (S * S * S)) + "%, " + j.input.eyes.size() + " eyes, input " + j.ticks + " ticks, net " + j.ms + " ms)");
+    }
+
+    /** the first 12 hex of the weights' SHA-1 (the file, else the jar's resource) */
+    static String hash(String file) {
+        try {
+            java.io.InputStream in = file != null ? new java.io.FileInputStream(file) : PlacesNet.class.getResourceAsStream(PlacesNet.RESOURCE);
+            if (in == null) return "none";
+            try {
+                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-1");
+                byte[] b = new byte[1 << 16];
+                for (int n; (n = in.read(b)) > 0; ) md.update(b, 0, n);
+                StringBuilder s = new StringBuilder();
+                for (byte x : md.digest()) s.append(String.format("%02x", x));
+                return s.substring(0, 12);
+            } finally {
+                in.close();
+            }
+        } catch (Exception e) {
+            return "none";
+        }
     }
 
     /** the worker thread: the net's weights once, then each cube as it comes */
@@ -183,6 +219,7 @@ public final class Places {
                 try {
                     String f = System.getProperty("aiguide.places.weights");
                     net = f != null ? PlacesNet.load(new File(f)) : PlacesNet.resource();
+                    if (net != null) weights = hash(f);
                 } catch (Exception ex) {
                     net = null;
                     notes.add("places: weights not read: " + ex);
