@@ -502,7 +502,14 @@ final class DefenseSkills {
 
         Result run(Agent a, WorldServer w) {
             long now = w.getTotalWorldTime();
-            if (start == null) start = Defense.of(a.who()).copy();
+            if (start == null) {
+                start = Defense.of(a.who()).copy();
+                if (a.getHealth() < Defense.LOW) {   // too hurt to begin: said at once (it used to walk back inside and fail LOW_HEALTH every time)
+                    reason = "LOW_HEALTH";
+                    detail = note + "health " + Math.round(a.getHealth()) + " is under " + Math.round(Defense.LOW) + ": not fit to fight; eat or retreat first (it heals 1 every 4 s)";
+                    return Result.BLOCKED;
+                }
+            }
             if (interrupt != null) { a.body.stop(); reason = "INTERRUPTED"; detail = note + interrupt + " after " + t / 20 + " s; " + tally(a); return Result.BLOCKED; }
             double[] post = centre(a, w);
             if (post == null) { reason = "GONE"; detail = note + where() + " is gone; " + tally(a); return Result.GONE; }

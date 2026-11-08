@@ -216,6 +216,10 @@ public final class Exploration {
         m.ground.remove(p); m.ground.remove(new Pos(p.x, p.y - 1, p.z));
     }
     static synchronized void invalidate(WorldServer w, int x, int y, int z) { forget(memory(w), new Pos(x, y, z)); }
+    /** how much is remembered: { blocks seen, walkable cells, footprints } (a check of the memory, not of the world) */
+    static synchronized int[] size(WorldServer w) { Memory m = memory(w); return new int[] { m.seen.size(), m.ground.size(), m.trail.size() }; }
+    /** Nothing seen yet (a learning environment's new episode: the arena put back, the crew new). */
+    static synchronized void clear(WorldServer w) { worlds.put(w, new Memory()); }
     static synchronized List<int[]> breadcrumbs(WorldServer w) {
         List<int[]> out = new ArrayList<int[]>(); for (Pos p : memory(w).trail) out.add(p.array()); return out;
     }

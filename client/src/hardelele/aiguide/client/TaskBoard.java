@@ -319,7 +319,8 @@ class TaskBoard {
         if (r == Result.OK) { k.state = State.DONE; k.doneBy = a; return; }
         k.tries++;
         boolean last = retry.failed(k, now);   // backed off before anyone takes it again; given up after the policy's tries
-        k.state = last || k.only != null && r == Result.NO_TOOL ? State.FAILED : State.OPEN;
+        // a mind's step is its own (AgentMind decides what comes next): never back on the board for another try
+        k.state = last || k.only != null && (r == Result.NO_TOOL || k.kind.startsWith("mind ")) ? State.FAILED : State.OPEN;
         String why = a instanceof Agent ? ((Agent) a).why : null;
         Events.log("board: " + k + " by " + a.who() + " -> " + r + (why != null ? " (" + why + ")" : "") + (k.state == State.OPEN ? ", back on the board" : ", given up"));
     }

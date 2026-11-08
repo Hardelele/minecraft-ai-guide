@@ -32,6 +32,8 @@ import net.minecraftforge.common.util.FakePlayerFactory;
 public class Bench {
     static final String FALLBACK = "summon 4\nshelter auto\ntools stone\ntorches 16\ngift stone_pickaxe, torch 8\ngather";
     static Bench instance;
+    /** a line that says something failed (not a count of failed cards: "board: 0 cards, done 0, failed 0") */
+    static final java.util.regex.Pattern FAILED = java.util.regex.Pattern.compile("failed(?! \\d)|Exception");
     final String mode = System.getProperty("aiguide.bench", "");
     final File out = new File(System.getProperty("aiguide.bench.out", "bench-report.json"));
     final int limit = Integer.getInteger("aiguide.bench.minutes", 40) * 60 * 20;
@@ -52,7 +54,7 @@ public class Bench {
             public void log(String line) {
                 PrintWriter p = instance.events;
                 if (p != null) p.println("[" + (instance.ticks / 20) + " s] " + line);
-                if ((line.contains("failed") || line.contains("Exception")) && instance.failures.size() < 100) instance.failures.add("[" + (instance.ticks / 20) + " s] " + line);
+                if (FAILED.matcher(line).find() && instance.failures.size() < 100) instance.failures.add("[" + (instance.ticks / 20) + " s] " + line);
             }
         };
         Events.log("bench: " + instance.mode);
