@@ -305,9 +305,16 @@ final class PrimSkills {
         for (int[] q : RlNear.digCells(d, x, y, z, fc[0], fc[1])) if (RlNear.solid(grid(a, w).at(q[0], q[1], q[2]))) cells.add(q);
         MindSkills.Skill s = new MindSkills.Skill() {
             int i, t, got;
+            Result last;
             Crew.Collect pick;
             Result run(Agent ag, WorldServer ww) {
-                if (pick != null) { Result r = pick.step(ag, ww); if (r == Result.RUNNING) return r; detail = "dug " + got + " at " + d; return got > 0 ? Result.OK : Result.BLOCKED; }
+                if (pick != null) {
+                    Result r = pick.step(ag, ww);
+                    if (r == Result.RUNNING) return r;
+                    detail = "dug " + got + " at " + d + (last == null ? "" : " (" + last + ")");
+                    if (got == 0 && last != null) reason = last.name();   // why nothing was dug: not seen, out of reach...
+                    return got > 0 ? Result.OK : Result.BLOCKED;
+                }
                 if (++t > 20 * 30) { reason = "TIMEOUT"; return Result.TIMEOUT; }
                 if (i >= cells.size()) { pick = new Crew.Collect(x + 0.5, y, z + 0.5, 3); return Result.RUNNING; }
                 int[] q = cells.get(i);
@@ -316,6 +323,7 @@ final class PrimSkills {
                 if (r == Result.RUNNING) return r;
                 if (r == Result.OK) got++;
                 else if (r == Result.NO_TOOL) { reason = "NO_TOOL"; detail = "no tool of the bag takes the block at " + d; return r; }
+                else last = r;
                 i++;
                 return Result.RUNNING;
             }
