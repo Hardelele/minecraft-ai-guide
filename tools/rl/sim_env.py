@@ -100,6 +100,7 @@ TARGETS = ("front", "below", "front_down", "hole", "moat", "mob")
 CURIOUS = ("mob_hurt", "mob_killed", "animal_killed", "agent_saved")   # RlCause.curious
 FOODS = tuple(FOOD_PTS)
 ANIMALS = CAL["animals"]
+DISTS = [f for f in spec.FEATURES if f[0].endswith("_dist")]
 
 # the simulator's own scenarios with a delayed reward and nothing paid in between (not the contract's: for the credit
 # checks); `weights` replaces the reward's, the scales are off
@@ -272,18 +273,21 @@ class SimEnv:
         self.factors = dict(sc_scales) if isinstance(sc_scales, dict) else {k: 1.0 for k in sc_scales}
         self.hunger = bool(self.sc.get("hunger")) and V2
         self.t = 0.0
-        self.trees = r.randint(0, 6)          # seen and free
-        self.trees_hidden = r.randint(8, 30)  # there, to be seen
-        self.stone_seen = r.randint(0, 20)
-        self.coal = r.choice([0, 0, 1, 2])
+        # the arena as contract 3's live runs see it: a forest (trees and leaves, grass), little stone in sight; the
+        # crew's memory empty at the start (v1's files: as before)
+        self.trees = 0 if V2 else r.randint(0, 6)   # seen and free
+        self.trees_hidden = r.randint(14, 34) if V2 else r.randint(8, 30)   # there, to be seen
+        self.stone_seen = r.randint(0, 2) if V2 else r.randint(0, 20)
+        self.coal = 0 if V2 else r.choice([0, 0, 1, 2])
         self.coal_hidden = r.randint(2, 8)
         self.iron = 0
         self.iron_hidden = r.randint(*self.sc.get("iron", CAL["surface_iron"]))
         self.gravel = r.randint(0, 3)
-        self.animals = r.randint(0, 2)
+        self.animals = 0 if V2 else r.randint(0, 2)
         self.animals_hidden = r.randint(2, 8) if scenario in ("food", "pasture") else r.randint(0, 4)
-        self.grass = r.randint(2, 10)
-        self.leaves = r.randint(2, 12)
+        self.grass = 0 if V2 else r.randint(2, 10)
+        self.leaves = 0 if V2 else r.randint(2, 12)
+        self.sapling_room = r.choice([0, 0, 0, 1, 2, 4, 8])   # the live runs: mostly none   # where the base's ground takes a sapling
         self.cane = r.randint(0, 3)
         self.cane_hidden = r.randint(0, 6)
         self.mine_levels = 0
@@ -382,8 +386,8 @@ class SimEnv:
     def raw(self, a: Agent) -> dict:
         x: dict[str, float] = {}
         x["scen_" + self.scenario.replace(":", "_")] = 1
-        for s in spec.SCALES:
-            x["scale_" + s] = 1 if self.factor(s) > 0 or any(k.startswith(s + ".") and v > 0 for k, v in self.factors.items()) else 0
+        for s in spec.SCALES:   # the environment's: the scale's own factor (a part's factor alone does not turn it on)
+            x["scale_" + s] = 1 if self.factor(s) > 0 else 0
         x["agent_%d" % min(a.i, spec.MAX_AGENTS - 1)] = 1
         x["n_agents"] = len(self.agents)
         x["health"], x["max_health"], x["low_health"] = a.health, 20, spec.LOW
@@ -420,7 +424,10 @@ class SimEnv:
         x["lure_targets"] = (self.animals + sum(self.pen_wild.values())) if x["lure_food"] > 0 and not deep else 0
         x["fuel"] = a.n("coal") + a.n("planks") + a.n("log")
         x["wall_blocks"] = max(a.n("cobblestone"), a.n("planks"), a.n("dirt"))
-        d = lambda n, far: (far if n <= 0 else max(2.0, a.dist * 0.5 + 6 + 20 / (1 + n)))  # noqa: E731
+        if V2:   # the live runs: the nearest of many seen trees some 2-12 blocks off
+            d = lambda n, far: (far if n <= 0 else max(1.0, a.dist * 0.3 + 2 + 12 / (1 + n) + self.rng.uniform(-1, 3)))  # noqa: E731
+        else:
+            d = lambda n, far: (far if n <= 0 else max(2.0, a.dist * 0.5 + 6 + 20 / (1 + n)))  # noqa: E731
         x["underground"] = int(deep)
         x["depth_level"] = a.depth
         x["at_horizon"] = int(deep)
@@ -460,7 +467,7 @@ class SimEnv:
         x["farm_empty"] = self.plots - self.planted
         x["till_spots"] = 16 - self.plots
         x["saplings_planted"], x["trees_grown"] = len(self.saplings), self.grown
-        x["sapling_spots"] = max(0, 4 - len(self.saplings) - self.grown)
+        x["sapling_spots"] = max(0, self.sapling_room - len(self.saplings) - self.grown)
         adults = sum(self.pen_adults.values())
         x["pen_built"], x["pen_animals"] = int(self.pen), adults + len(self.pen_young)
         x["pen_adults"], x["pen_babies"] = adults, len(self.pen_young)
@@ -501,8 +508,8 @@ class SimEnv:
         x["slot_block"] = max(a.n("cobblestone"), a.n("planks"), a.n("dirt"))
         e_vis = (self.enemies if self.phase == "wave" else 0) + self.inside
         for tg in TARGETS:   # the primitives' target slots
-            if tg in ("front", "below", "front_down"):
-                there, dist = 1, 1.0
+            if tg in ("front", "below", "front_down"):   # the live runs: below 0.3, front 1.1, a step down 1.5 blocks
+                there, dist = 1, {"front": 1.1, "below": 0.3, "front_down": 1.5}[tg] + self.rng.uniform(-0.4, 0.4)
             elif tg == "hole":
                 there, dist = int(self.ring and self.wall < RING and not deep), abs(a.dist - 8) + 1
             elif tg == "moat":
@@ -510,9 +517,10 @@ class SimEnv:
             else:
                 there, dist = int(e_vis > 0 and not deep), 8 + 10 * (self.wall / RING)
             x["tgt_" + tg] = there
-            x["tgt_%s_dist" % tg] = dist if there else 24
+            x["tgt_%s_dist" % tg] = dist if there else 16
             liquid = self.moat_liquid[0] if tg == "moat" and self.moat_liquid else None
-            x["tgt_%s_free" % tg] = int(there and liquid is None)
+            free = {"front": 0.65, "front_down": 0.2}.get(tg, 1.0)   # the live runs: often a block or a tree there
+            x["tgt_%s_free" % tg] = int(there and liquid is None and self.rng.random() < free)
             x["tgt_%s_water" % tg] = int(liquid == "water")
             x["tgt_%s_lava" % tg] = int(liquid == "lava")
         if not deep and a.dist < 12 and self.pond:
@@ -545,6 +553,9 @@ class SimEnv:
             x["small_" + item] = int(ok and small)
         for m in ARMOR_MAT:
             x["armor_craftable_" + m] = int(a.armor_piece(m) is not None)
+        for n, _, sc in DISTS:   # the contract: the distance to what is not there is its scale
+            if n not in x:
+                x[n] = sc
         return x
 
     def next_ach(self, a: Agent) -> str | None:
@@ -941,11 +952,14 @@ class SimEnv:
                 for k in self.hidden[a.depth]:
                     self.see_ore(a.depth, k, 0.2)
             else:
-                self.see("trees", "trees_hidden", 0.7, r.randint(1, 4))
+                self.see("trees", "trees_hidden", 0.9, r.randint(4, 12) if V2 else r.randint(1, 4))
                 self.see("animals", "animals_hidden", 0.4, r.randint(1, 2))
                 self.see("coal", "coal_hidden", 0.2)
                 self.see("cane", "cane_hidden", 0.3)
-                self.stone_seen += r.randint(0, 6)
+                self.stone_seen += r.randint(0, 2) if V2 else r.randint(0, 6)
+                if V2:
+                    self.grass = min(40, self.grass + r.randint(5, 15))
+                    self.leaves = min(80, self.leaves + 4 * self.trees)
         elif name == "go_to:frontier":
             self.leave(a)
             a.dist += r.uniform(8, 16)

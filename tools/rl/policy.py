@@ -21,12 +21,13 @@ MASKED = -1e8
 class RunningNorm(nn.Module):
     """Running mean/var of the observations (Welford by batches); frozen in eval and in the export."""
 
-    def __init__(self, d: int, clip: float = 10.0):
+    def __init__(self, d: int, clip: float = 10.0, floor: float = 0.05):
         super().__init__()
         self.register_buffer("mean", torch.zeros(d, dtype=torch.float64))
         self.register_buffer("var", torch.ones(d, dtype=torch.float64))
         self.register_buffer("count", torch.tensor(1e-4, dtype=torch.float64))
         self.clip = clip
+        self.floor = floor
 
     @torch.no_grad()
     def update(self, x: torch.Tensor):
@@ -39,7 +40,9 @@ class RunningNorm(nn.Module):
         self.count = tot
 
     def std(self) -> torch.Tensor:
-        return torch.sqrt(self.var + 1e-8)
+        # floored: a feature the simulator never varies must not blow up when the game varies it (0.05 of a feature's
+        # 0..1 scale moves it at most 20 standard units before the clip at 10)
+        return torch.clamp(torch.sqrt(self.var + 1e-8), min=self.floor)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return torch.clamp((x - self.mean.float()) / self.std().float(), -self.clip, self.clip)
