@@ -187,6 +187,7 @@ final class PolicyMind {
         if (s == null) return;
         String out = RlSpec.outcome(s.result);
         RlEnv.Mine x = mm.mine;
+        if (x.last >= 0) x.fails.step(x.last, "OK".equals(s.result), s.result);   // (3.1) the memory of failures in the observation, as the environment keeps it
         if (!out.equals("ok") && out.equals(x.outcome)) x.repeated++;
         else x.repeated = out.equals("ok") ? 0 : 1;
         x.outcome = out;
