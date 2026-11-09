@@ -19,7 +19,8 @@ import net.minecraft.world.WorldServer;
  * -Daiguide.policy.weights=<file> (else the jar's /assets/aiguide/rl/policy.bin), -Daiguide.policy.sample=true (draw
  * by the net's probabilities instead of the best: more varied, as in training), -Daiguide.policy.temperature=T (a draw
  * from softmax(logits / T): 0 the best action, 1 as sample=true, 0.3-0.5 mostly the best with a little chance, so a
- * failure is not repeated forever as argmax repeats it).
+ * failure is not repeated forever as argmax repeats it; 0.3 when none is set). A repeated failure does not end the
+ * goal on the net (Mind.Limits.policy): the net chooses again, and the guard's watch does not take its agent.
  */
 final class PolicyMind {
     private PolicyMind() { }
@@ -50,7 +51,9 @@ final class PolicyMind {
         return Boolean.parseBoolean(System.getProperty("aiguide.policy.sample", "false"));
     }
 
-    /** the choice's temperature: -Daiguide.policy.temperature, else 1 with sample=true, else 0 (the best action) */
+    static final float DEFAULT_TEMPERATURE = 0.3f;
+
+    /** the choice's temperature: -Daiguide.policy.temperature, else 1 with sample=true, else 0.3 (mostly the best; a failure is not repeated forever) */
     static float temperature() {
         try {
             String t = System.getProperty("aiguide.policy.temperature", "");
@@ -58,7 +61,7 @@ final class PolicyMind {
         } catch (NumberFormatException e) {
             // a bad value: as if none
         }
-        return sample() ? 1f : 0f;
+        return sample() ? 1f : DEFAULT_TEMPERATURE;
     }
 
     /** the net, loaded once (null and error set when there is none or it does not fit RlSpec) */

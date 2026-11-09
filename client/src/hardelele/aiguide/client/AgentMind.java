@@ -50,6 +50,7 @@ final class AgentMind {
     String body;
     MindState asked;
     long askedMs, retryAt, reflexAt = -1;
+    int pausedAt = -1;   // the step count a repeated failure paused the net at (once a step)
     int[] tokens = new int[3];
     long ms;
     Mind.Call call;
@@ -89,6 +90,41 @@ final class AgentMind {
     static boolean defends(Agent a) {
         AgentMind m = minds.get(a.skin());
         return m != null && m.goal.defense && !m.mind.over();
+    }
+
+    /** its mind is open and on the crew's net (PolicyMind, out of the learning environment): the guard's watch leaves it be (its own reflexes defend it) */
+    static boolean byNet(Agent a) {
+        AgentMind m = minds.get(a.skin());
+        return m != null && m.mind.lim.byNet && !m.mind.over();
+    }
+
+    /** who drove the agents' bodies (MindShare): counted while a mind on the net is open, a line a minute to the events */
+    static final MindShare share = new MindShare();
+    static long shareLogged = -1;
+
+    /** the agent's tick by who drives it (reflexed: a reflex had the body); the line once a minute */
+    static void share(Crew c, Agent a, WorldServer w, boolean reflexed) {
+        boolean any = false;
+        for (AgentMind m : minds.values()) if (m.mind.lim.byNet && !m.mind.over()) { any = true; break; }
+        long now = w.getTotalWorldTime();
+        if (!any) {
+            if (!share.agents.isEmpty()) { String l = share.line(); if (l != null) Events.log(l); share.clear(); }
+            shareLogged = -1;
+            return;
+        }
+        if (shareLogged < 0) shareLogged = now;
+        int kind;
+        TaskBoard.Card k = c.board.leased.get(a);
+        if (reflexed) kind = a.slot.of != null && (a.slot.of.name().equals("mob") || a.slot.of.name().equals("creeper")) ? MindShare.FIGHT : MindShare.REFLEX;
+        else if (k != null && "guard".equals(k.kind)) kind = MindShare.GUARD;
+        else if (byNet(a)) kind = MindShare.NET;
+        else kind = MindShare.OTHER;
+        share.tick(a.who(), kind);
+        if (now - shareLogged >= MindShare.WINDOW) {
+            shareLogged = now;
+            String l = share.line();
+            if (l != null) Events.log(l);
+        }
     }
 
     static boolean anyDefense() {
@@ -197,6 +233,15 @@ final class AgentMind {
             close(c, a);
             return false;
         }
+        int same = mind.repeated();
+        if (mind.lim.byNet && same > Mind.Limits.SAME && pausedAt != mind.steps.size()) {   // the same step failed again: the net chooses again, after a second (no give-up)
+            pausedAt = mind.steps.size();
+            retryAt = w.getTotalWorldTime() + 20;
+            if (same == Mind.Limits.SAME + 1 || same % 10 == 0)
+                Events.log("mind: " + a.who() + " the same step failed " + same + " times: " + mind.steps.peekLast().line() + "; the net chooses again (no give-up on the net)");
+            a.body.stop();
+            return true;
+        }
         asked = state(c, a, w);
         events.clear();
         long t0 = System.nanoTime();
@@ -208,6 +253,7 @@ final class AgentMind {
             return false;
         }
         mind.requests++;
+        share.decided(a.who());
         return act(c, a, w, cl);
     }
 
@@ -574,6 +620,7 @@ final class AgentMind {
         for (Agent a : who) g.members.add(a.who());
         Mind.Limits lim = limits();
         if (g.defense) lim.defense();
+        if (PolicyMind.on() && !RlEnv.on()) lim.policy();   // the crew's net decides: no give-up on the same failure, only the goal's time and steps
         long now = System.currentTimeMillis();
         for (Agent a : who) {
             AgentMind old = minds.get(a.skin());
@@ -585,7 +632,8 @@ final class AgentMind {
             minds.put(a.skin(), m);
             m.show("thinking");
         }
-        Events.log("mind: goal for " + names + ": \"" + text + "\"" + (g.item != null ? " (want " + g.want() + ")" : "") + " [limits " + lim.steps + " steps, " + lim.seconds / 60 + " min, " + lim.tokens + " tokens]");
+        Events.log("mind: goal for " + names + ": \"" + text + "\"" + (g.item != null ? " (want " + g.want() + ")" : "") + " [limits " + lim.steps + " steps, " + lim.seconds / 60 + " min, " + lim.tokens + " tokens"
+                + (lim.byNet ? "; the net: no give-up on a repeated failure, temperature " + PolicyMind.temperature() : "") + "]");
         if (window) Crew.note("mind.set", names.toString(), text);
         return "Goal set for " + names + ": \"" + text + "\"" + (g.item != null ? ", done when " + (g.shared() ? "the crew has " : "it has ") + g.want() : "")
                 + ". Each agent decides its own steps by the game's recipes and what it has seen, and shares the work with the others; it tells the player "

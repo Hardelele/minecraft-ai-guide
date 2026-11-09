@@ -28,9 +28,23 @@ final class Mind {
     static final class Limits {
         int steps = 60, seconds = 30 * 60, tokens = 200000;
         int badCalls = 4;      // calls in a row that were not a valid tool call
-        int sameFailure = 3;   // the same step failing with the same reason this many times in a row: the next one ends the goal
+        static final int SAME = 3;
+        int sameFailure = SAME;   // the same step failing with the same reason this many times in a row: the next one ends the goal
         int recent = 10;       // last steps shown to the model
         int says = 8;
+        boolean byNet;         // the crew's net decides (PolicyMind), not a model
+
+        /**
+         * The crew's net decides: a decision costs nothing and the same failure is in its observation (its outcome and
+         * how many times), so a repeated failure does not end the goal: the net chooses again (its temperature, the
+         * memory of failures in contract 3.1). The goal ends by its time, or by its steps: a step a second of its time.
+         */
+        Limits policy() {
+            byNet = true;
+            sameFailure = Integer.MAX_VALUE;
+            steps = Math.max(steps, seconds);
+            return this;
+        }
 
         /** a goal of defence has no end of its own (the waves do not end): more steps and time than a goal of things, the tokens as set */
         Limits defense() {

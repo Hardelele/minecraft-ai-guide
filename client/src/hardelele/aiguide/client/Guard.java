@@ -72,6 +72,7 @@ class Guard {
         for (Agent a : c.agents) {
             if (a.isDead || a.getHealth() < LOW + 4 || a.commanded) continue;   // the player's units take the player's orders only
             if (AgentMind.defends(a)) continue;   // its own mind defends the base (its posts, its fights): the watch does not take it off them
+            if (AgentMind.byNet(a)) continue;   // its mind on the net decides (its reflexes hit back or fall back); a guard's card would hold it the whole fight
             TaskBoard.Card k = c.board.leased.get(a);
             if (k != null && k.kind.equals("guard")) return null;   // someone guards already
             double s = a.weapon() * 3 + (k == null ? 4 : -k.prio) - (near == null || near.isEmpty() ? 0 : a.getDistanceToEntity(near.get(0)) * 0.1);
@@ -98,6 +99,7 @@ class Guard {
         k.phase = null;   // the crew's own safety, not a phase's work
         Crew.originNow = was;
         c.board.assign(k, g, w, "goes to guard");
+        AgentMind.share.guarded(g.who());
         Events.log("crew: " + g.getCustomNameTag() + " guards the crew: " + m.getCommandSenderName() + " at " + (int) m.posX + " " + (int) m.posY + " " + (int) m.posZ
                 + " (" + t.size() + " near), weapon " + (g.bestWeapon() == null ? "hands" : Ledger.name(g.bestWeapon())) + ", health " + Math.round(g.getHealth()));
     }

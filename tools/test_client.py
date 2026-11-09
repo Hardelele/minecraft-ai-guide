@@ -16,7 +16,7 @@ OUT = os.path.join(ROOT, "build", "test-classes")
 PURE = ["Sight.java", "CaseVec.java", "CaseBook.java", "Events.java", "Result.java", "Retry.java", "Situation.java", "Reflex.java", "Reflexes.java", "Undo.java", "Moves.java",
         "PlacesNet.java", "PlacesKernels.java", "PlacesClasses.java", "PlacesSplit.java",
         "PlaceView.java", "PlaceSource.java", "Labels.java", "Episodes.java", "Scrub.java", "ShareBuild.java", "ShareUpload.java", "CrewCommand.java",
-        "UiIcon.java", "UiLayout.java", "UiToasts.java", "Mind.java", "MindState.java", "Defense.java",
+        "UiIcon.java", "UiLayout.java", "UiToasts.java", "Mind.java", "MindState.java", "MindShare.java", "Defense.java",
         "WavePlan.java", "WaveRing.java", "WaveCycle.java", "WaveReport.java", "WaveCommand.java",
         "EpochScore.java", "Lessons.java", "EpochKnobs.java", "EpochRun.java", "RlSpec.java", "RlSpec1.java", "RlSpec3.java", "RlAchievements.java", "RlScore.java", "RlCause.java", "RlNear.java", "Reach.java", "Xp.java", "Hunger.java", "RlReward.java", "PolicyNet.java"]   # the classes with no game in them (Gson aside)
 TESTS = ["hardelele.aiguide.client.SightTest", "hardelele.aiguide.client.CaseTest", "hardelele.aiguide.client.ReflexesTest",
