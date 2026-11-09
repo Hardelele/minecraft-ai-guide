@@ -2,6 +2,7 @@
 task, the simulator's recipes and rewards, the weights' export read back, a short training end to end. Writes
 build/rl/obs-mask-cases.json: raw facts with the vector and mask Python gives, for PolicyTest (Java's RlSpec)."""
 import json
+import os
 import random
 import subprocess
 import sys
@@ -12,6 +13,8 @@ import numpy as np
 import torch
 
 ROOT = Path(__file__).resolve().parents[2]
+# the simulator and the weights here are contract 1's (rl/v1); contract 2's are rl/v2-train's to bring
+os.environ.setdefault("AIGUIDE_RL_SPEC", str(ROOT / "rl" / "v1"))
 sys.path.insert(0, str(ROOT / "tools" / "rl"))
 import spec  # noqa: E402
 from policy import Policy  # noqa: E402
@@ -29,11 +32,11 @@ def check(ok, what):
 
 
 def spaces():
-    obs = json.loads((ROOT / "rl" / "obs.json").read_text(encoding="utf-8"))
-    act = json.loads((ROOT / "rl" / "actions.json").read_text(encoding="utf-8"))
+    obs = json.loads((spec.RL / "obs.json").read_text(encoding="utf-8"))
+    act = json.loads((spec.RL / "actions.json").read_text(encoding="utf-8"))
     check(spec.D == obs["dim"] == len(obs["features"]), f"obs: {spec.D} features as rl/obs.json says")
     check(spec.A == act["n"] == len(act["actions"]) and spec.ACTIONS[0] == "noop", f"actions: {spec.A}, noop first")
-    check(set(spec.SCEN) == set(json.loads((ROOT / "rl" / "reward.json").read_text(encoding="utf-8"))["scenarios"]),
+    check(set(spec.SCEN) == set(json.loads((spec.RL / "reward.json").read_text(encoding="utf-8"))["scenarios"]),
           "the simulator's scenarios are rl/env's")
     for k in ("noop", "time", "skill_fail", "skill_ok", "goal", "wave_cleared"):
         check(k in spec.WEIGHTS, "reward weight " + k)

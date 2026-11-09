@@ -24,6 +24,8 @@ final class PolicyMind {
 
     static final String RESOURCE = "/assets/aiguide/rl/policy.bin";
     static volatile PolicyNet net;
+    /** the spaces the net was learned on (contract 2, or 1 for the older weights): RlSpec.space by its version and size */
+    static volatile RlSpec.Space space;
     static volatile String error = "";
     static PolicyNet.Work work;
     static final Random rnd = new Random();
@@ -58,11 +60,14 @@ final class PolicyMind {
                 if (in == null) throw new IllegalStateException("no " + RESOURCE + " in the jar");
                 try { n = PolicyNet.load(in); } finally { in.close(); }
             }
-            if (n.d != RlSpec.FEATURES.size() || n.a != RlSpec.ACTIONS.size())
-                throw new IllegalStateException("the policy's net takes " + n.d + " features and gives " + n.a + " actions; RlSpec has " + RlSpec.FEATURES.size() + " and " + RlSpec.ACTIONS.size());
+            RlSpec.Space sp = RlSpec.space(n);
+            if (sp == null)
+                throw new IllegalStateException("the policy's net (version " + n.version + ") takes " + n.d + " features and gives " + n.a + " actions; contract 2 has "
+                        + RlSpec.FEATURES.size() + " and " + RlSpec.ACTIONS.size() + ", contract 1 " + RlSpec1.FEATURES.size() + " and " + RlSpec1.ACTIONS.size());
+            space = sp;
             net = n;
             work = n.work();
-            Events.log("mind: the policy's net is loaded (" + n.d + " features, " + n.h + " hidden, " + n.a + " actions)" + (f.isEmpty() ? "" : " from " + f));
+            Events.log("mind: the policy's net is loaded (contract " + sp.contract + ": " + n.d + " features, " + n.h + " hidden, " + n.a + " actions)" + (f.isEmpty() ? "" : " from " + f));
         } catch (Exception e) {
             error = "no policy: " + e.getMessage();
             Events.log("mind: " + error);
@@ -72,7 +77,24 @@ final class PolicyMind {
 
     // ---- the goal as a scenario ----------------------------------------------------------------------------
 
-    /** the learning scenario nearest to a goal: what the net was taught for it */
+    /** the learning scenario nearest to a goal: what the net was taught for it (contract 1's net knows fewer) */
+    static String scenario(Mind.Goal g, boolean wavesOn, int contract) {
+        String s = scenario(g, wavesOn);
+        if (contract >= 2) {
+            String it = g.item == null ? "" : g.item.toLowerCase(Locale.ROOT), t = g.text.toLowerCase(Locale.ROOT);
+            if (it.equals("diamond") || t.matches("(?s).*(алмаз|diamond).*")) return "diamond";
+            if (it.endsWith("_helmet") || it.endsWith("_chestplate") || it.endsWith("_leggings") || it.endsWith("_boots") || t.matches("(?s).*(брон|armou?r).*")) return "armor";
+            if (it.equals("bow") || it.equals("arrow") || t.matches("(?s).*(лук|стрел|bow|arrow).*")) return "bow";
+            if (it.equals("bread") || it.equals("wheat") || t.matches("(?s).*(ферм|пшен|хлеб|farm|wheat|bread).*")) return "farm";
+            if (t.matches("(?s).*(загон|развед|pasture|breed).*")) return "pasture";
+            if (t.matches("(?s).*(шахт|mine trip|в шахту).*")) return "mine_trip";
+            if (t.matches("(?s).*(зачар|enchant).*")) return "enchant";
+            if (t.matches("(?s).*(достижен|achievement).*")) return "achievements";
+            if (s.equals("waves:normal") && t.matches("(?s).*(долг|осад|long).*")) return "waves:long";
+        }
+        return s;
+    }
+
     static String scenario(Mind.Goal g, boolean wavesOn) {
         if (g.defense) return wavesOn ? "waves:normal" : "fortify";
         String it = g.item == null ? "" : g.item.toLowerCase(Locale.ROOT);
@@ -101,7 +123,8 @@ final class PolicyMind {
         Memo mm = memos.get(m);
         if (mm == null) memos.put(m, mm = new Memo());
         WaveCycle.View v = Waves.state();
-        mm.scenario = scenario(m.goal, v.active());
+        RlSpec.Space sp = space;
+        mm.scenario = scenario(m.goal, v.active(), sp.contract);
         RlSpec.Scenario sc = RlSpec.scenario(mm.scenario);
         double limit = sc == null ? 600 : sc.seconds;
         mm.timeFrac = Math.min(1, (System.currentTimeMillis() - m.mind.startedMs) / 1000.0 / limit);
@@ -119,8 +142,8 @@ final class PolicyMind {
         }
         long t0 = System.nanoTime();
         Map<String, Double> raw = RlEnv.facts(c, a, w, mm.scenario, mm.mine, mm.timeFrac, mm.progress);
-        float[] obs = RlSpec.vector(raw);
-        int[] mask = RlSpec.mask(raw);
+        float[] obs = sp.vector(raw);
+        int[] mask = sp.mask(raw);
         mask[0] = 0;   // noop: in the game the world does not restart; look_around and wait:5 are always there
         float[] probs = new float[n.a];
         int k;
@@ -128,7 +151,7 @@ final class PolicyMind {
             k = work.act(obs, mask, sample() ? rnd : null, probs);
         }
         double ms = (System.nanoTime() - t0) / 1e6;
-        if (k < 0) k = RlSpec.index("wait:5");
+        if (k < 0) k = sp.index("wait:5");
         mm.mine.last = k;
         Mind.Call cl = RlSpec.call(k);
         cl.why = "policy: " + RlSpec.ACTIONS.get(k).id + String.format(Locale.ROOT, " (p %.2f, %s)", probs[k], mm.scenario);

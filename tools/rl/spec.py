@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 
+import mask_rules
+
 ROOT = Path(__file__).resolve().parents[2]
-RL = ROOT / "rl"
+RL = Path(os.environ.get("AIGUIDE_RL_SPEC") or ROOT / "rl")   # rl/v1 for contract 1's files
 
 _actions = json.loads((RL / "actions.json").read_text(encoding="utf-8"))
 _obs = json.loads((RL / "obs.json").read_text(encoding="utf-8"))
@@ -87,7 +90,9 @@ def g(r: dict, k: str) -> float:
 
 
 def allowed(i: int, r: dict) -> bool:
-    """RlSpec.allowed, line by line"""
+    """RlSpec.allowed, line by line (contract 2's files carry each action's rule: read as Java reads it)"""
+    if "mask" in ACTION_SPECS[i]:
+        return i == 0 or mask_rules.holds(ACTION_SPECS[i]["mask"], r)
     aid = ACTIONS[i]
     table = g(r, "table_known") > 0.5 and g(r, "table_dist") <= 24 or g(r, "bag_crafting_table") > 0
     furnace = g(r, "furnace_known") > 0.5 and g(r, "furnace_dist") <= 24 or g(r, "bag_furnace") > 0

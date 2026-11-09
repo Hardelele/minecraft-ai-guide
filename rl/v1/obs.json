@@ -1,0 +1,693 @@
+{
+  "version": 1,
+  "hash": "4ba70eaea357",
+  "dim": 137,
+  "note": "Generated from RlSpec.java. The server sends the scaled vector in this order. div: clip(x/scale, -1, 2); log: log1p(max(x,0))/log1p(scale); bool: 1 if x > 0.5 else 0. A distance to nothing seen is scale (1 scaled).",
+  "features": [
+    {
+      "name": "scen_wood",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_pickaxe",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_sword",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_iron",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_food",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_fortify",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_waves_easy",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_waves_normal",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_siege",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "agent_0",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "agent_1",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "agent_2",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "agent_3",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "n_agents",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "health",
+      "kind": "div",
+      "scale": 20.0
+    },
+    {
+      "name": "armor",
+      "kind": "div",
+      "scale": 20.0
+    },
+    {
+      "name": "held_tier",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "weapon_tier",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "pick_tier",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "at_home",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "day_sin",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "day_cos",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "night",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "dusk_in",
+      "kind": "div",
+      "scale": 600.0
+    },
+    {
+      "name": "bag_log",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_planks",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_stick",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_crafting_table",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_cobblestone",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_coal",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_iron_ore",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_iron_ingot",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_furnace",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_chest",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_torch",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_wooden_pickaxe",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_stone_pickaxe",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_iron_pickaxe",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_wooden_sword",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_stone_sword",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_iron_sword",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_food_raw",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_food_cooked",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_dirt",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_total",
+      "kind": "log",
+      "scale": 256.0
+    },
+    {
+      "name": "trees_seen",
+      "kind": "div",
+      "scale": 10.0
+    },
+    {
+      "name": "tree_dist",
+      "kind": "div",
+      "scale": 48.0
+    },
+    {
+      "name": "stone_seen",
+      "kind": "div",
+      "scale": 32.0
+    },
+    {
+      "name": "stone_dist",
+      "kind": "div",
+      "scale": 32.0
+    },
+    {
+      "name": "coal_seen",
+      "kind": "div",
+      "scale": 8.0
+    },
+    {
+      "name": "coal_dist",
+      "kind": "div",
+      "scale": 48.0
+    },
+    {
+      "name": "iron_seen",
+      "kind": "div",
+      "scale": 8.0
+    },
+    {
+      "name": "iron_dist",
+      "kind": "div",
+      "scale": 48.0
+    },
+    {
+      "name": "animals_seen",
+      "kind": "div",
+      "scale": 5.0
+    },
+    {
+      "name": "animal_dist",
+      "kind": "div",
+      "scale": 24.0
+    },
+    {
+      "name": "table_known",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "table_dist",
+      "kind": "div",
+      "scale": 24.0
+    },
+    {
+      "name": "furnace_known",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "furnace_dist",
+      "kind": "div",
+      "scale": 24.0
+    },
+    {
+      "name": "chest_known",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "chest_dist",
+      "kind": "div",
+      "scale": 48.0
+    },
+    {
+      "name": "base_known",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "base_dist",
+      "kind": "div",
+      "scale": 32.0
+    },
+    {
+      "name": "chest_food",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "waves_active",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "wave_on",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "phase_prep",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "phase_break",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "wave_num",
+      "kind": "div",
+      "scale": 10.0
+    },
+    {
+      "name": "next_wave_in",
+      "kind": "div",
+      "scale": 120.0
+    },
+    {
+      "name": "enemies",
+      "kind": "div",
+      "scale": 20.0
+    },
+    {
+      "name": "enemy_dist",
+      "kind": "div",
+      "scale": 32.0
+    },
+    {
+      "name": "enemy_dx",
+      "kind": "div",
+      "scale": 32.0
+    },
+    {
+      "name": "enemy_dz",
+      "kind": "div",
+      "scale": 32.0
+    },
+    {
+      "name": "enemies_near",
+      "kind": "div",
+      "scale": 10.0
+    },
+    {
+      "name": "ring_planned",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "wall_frac",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "holes",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "moat_frac",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "torches_placed",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "posts_free",
+      "kind": "div",
+      "scale": 8.0
+    },
+    {
+      "name": "has_post",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "inside_wall",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "allies_alive",
+      "kind": "div",
+      "scale": 3.0
+    },
+    {
+      "name": "allies_health_mean",
+      "kind": "div",
+      "scale": 20.0
+    },
+    {
+      "name": "allies_health_min",
+      "kind": "div",
+      "scale": 20.0
+    },
+    {
+      "name": "allies_low",
+      "kind": "div",
+      "scale": 3.0
+    },
+    {
+      "name": "ally_dist",
+      "kind": "div",
+      "scale": 32.0
+    },
+    {
+      "name": "last_none",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_ok",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_fail_path",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_fail_items",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_fail_target",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_fail_danger",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_fail_other",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "repeated",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "last_seconds",
+      "kind": "div",
+      "scale": 60.0
+    },
+    {
+      "name": "last_action_noop",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_look_around",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_go_to:frontier",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_chop_tree:near",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_mine:stone",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_mine:coal_ore",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_mine:iron_ore",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:planks",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:stick",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:crafting_table",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:wooden_pickaxe",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:stone_pickaxe",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:iron_pickaxe",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:wooden_sword",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:stone_sword",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:iron_sword",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:furnace",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:torch",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:chest",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_smelt:iron_ingot",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_smelt:food",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:crafting_table",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:furnace",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:chest",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_build_wall:ring",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_repair_wall:nearest",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_dig_moat:ring",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_light_area:base",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_equip:best",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_take_post:auto",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_hold_line:post",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_retreat:home",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_eat:best",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_hunt:near",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_put:chest_all",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_take:chest_food",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_go_to:base",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_wait:5",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "time_frac",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "goal_progress",
+      "kind": "div",
+      "scale": 1.0
+    }
+  ]
+}
