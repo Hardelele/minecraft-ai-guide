@@ -92,3 +92,51 @@ def tensors(p: Policy) -> list[tuple[str, torch.Tensor]]:
     l1, l2, l3 = p.actor[0], p.actor[2], p.actor[4]
     return [("obs_mean", p.norm.mean.float()), ("obs_std", p.norm.std().float()),
             ("l1.w", l1.weight), ("l1.b", l1.bias), ("l2.w", l2.weight), ("l2.b", l2.bias), ("pi.w", l3.weight), ("pi.b", l3.bias)]
+
+
+class RecPolicy(nn.Module):
+    """The policy with a memory: obs -> tanh layer -> GRU cell (its state carried from one decision of the agent to
+    its next, zero at an episode's start) -> tanh layer on [layer, state] -> logits; the critic reads the same.
+    For the check whether memory helps (tools/rl/train.py --recurrent H); in Java a GRU cell is three more
+    products of a matrix and a vector."""
+
+    def __init__(self, d: int, a: int, hidden: int = 256, mem: int = 64):
+        super().__init__()
+        self.d, self.a, self.hidden, self.mem = d, a, hidden, mem
+        self.norm = RunningNorm(d)
+        g = math.sqrt(2)
+        self.enc = nn.Sequential(layer(d, hidden, g), nn.Tanh())
+        self.cell = nn.GRUCell(hidden, mem)
+        self.pi = nn.Sequential(layer(hidden + mem, hidden, g), nn.Tanh(), layer(hidden, a, 0.01))
+        self.v = nn.Sequential(layer(hidden + mem, hidden, g), nn.Tanh(), layer(hidden, 1, 1.0))
+
+    def init_state(self, n: int, device=None) -> torch.Tensor:
+        return torch.zeros(n, self.mem, device=device)
+
+    def step(self, obs, h):
+        e = self.enc(self.norm(obs))
+        h2 = self.cell(e, h)
+        z = torch.cat([e, h2], -1)
+        return self.pi(z), self.v(z).squeeze(-1), h2
+
+    def act(self, obs, mask, h, greedy: bool = False):
+        lg, v, h2 = self.step(obs, h)
+        lg = Policy.masked(lg, mask)
+        d = torch.distributions.Categorical(logits=lg)
+        a = lg.argmax(-1) if greedy else d.sample()
+        return a, d.log_prob(a), v, d.entropy(), h2
+
+    def evaluate_seq(self, obs, mask, act, h0, reset):
+        """obs [B, T, d], mask [B, T, A], act [B, T], h0 [B, mem] (the state before the chunk), reset [B, T] (1: the
+        step starts an episode, its state is zero) -> log-prob, entropy, value, each [B, T]"""
+        B, T = act.shape
+        h = h0
+        lps, ents, vs = [], [], []
+        for t in range(T):
+            h = h * (1 - reset[:, t:t + 1])
+            lg, v, h = self.step(obs[:, t], h)
+            d = torch.distributions.Categorical(logits=Policy.masked(lg, mask[:, t]))
+            lps.append(d.log_prob(act[:, t]))
+            ents.append(d.entropy())
+            vs.append(v)
+        return torch.stack(lps, 1), torch.stack(ents, 1), torch.stack(vs, 1)

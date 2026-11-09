@@ -15,6 +15,8 @@ import math
 import os
 from pathlib import Path
 
+import mask_rules
+
 ROOT = Path(__file__).resolve().parents[2]
 RL = Path(os.environ.get("AIGUIDE_RL_SPEC") or ROOT / "rl")
 
@@ -34,10 +36,9 @@ NAMES = [f[0] for f in FEATURES]
 D = len(FEATURES)
 WEIGHTS: dict[str, float] = {k: float(v) for k, v in _reward["weights"].items()}
 AVAILABLE = list(_reward.get("scenarios", []))
-SCENARIOS = ["wood", "pickaxe", "sword", "iron", "food", "fortify", "waves:easy", "waves:normal", "siege"]
-BAG = [n[4:] for n in NAMES if n.startswith("bag_") and n not in ("bag_total",)]
+BAG = [n[4:] for n in NAMES if n.startswith("bag_") and n not in ("bag_total", "bag_stackables")]
 OUTCOMES = [n[5:] for n in NAMES if n.startswith("last_") and not n.startswith("last_action_") and n != "last_seconds"]
-MAX_AGENTS = sum(1 for n in NAMES if n.startswith("agent_"))
+MAX_AGENTS = sum(1 for n in NAMES if n.startswith("agent_") and n[6:].isdigit())
 LOW = 8.0
 
 # RlSpec.CRAFTS's items with what one craft takes (the game's recipes), what it gives, whether it fits 2x2
@@ -91,7 +92,9 @@ def g(r: dict, k: str) -> float:
 
 
 def allowed(i: int, r: dict) -> bool:
-    """RlSpec.allowed, line by line"""
+    """RlSpec.allowed, line by line (contract 2's files carry each action's rule: read as Java reads it)"""
+    if "mask" in ACTION_SPECS[i]:
+        return i == 0 or mask_rules.holds(ACTION_SPECS[i]["mask"], r)
     aid = ACTIONS[i]
     table = g(r, "table_known") > 0.5 and g(r, "table_dist") <= 24 or g(r, "bag_crafting_table") > 0
     furnace = g(r, "furnace_known") > 0.5 and g(r, "furnace_dist") <= 24 or g(r, "bag_furnace") > 0
@@ -209,5 +212,36 @@ SCEN = {
     "waves:normal": dict(goal="none", item="", per=1, seconds=900, kit={"stone_sword": 1, "cobblestone": 64, "food_cooked": 6, "torch": 8},
                          chest=16, health=20, time=14000, waves="normal"),
 }
+# contract 2: the scenarios are rl/reward.json's ("scenario": goal, kit, limits, hunger, waves; "scenarioScales": the
+# scales on, with their factors), read into the same shape; v1's table above stands for v1's files
+_FOODS = {"cooked_beef": "food_cooked", "cooked_porkchop": "food_cooked", "cooked_chicken": "food_cooked", "beef": "food_raw",
+          "porkchop": "food_raw", "chicken": "food_raw"}
+
+
+def _items(s: str) -> dict[str, int]:
+    """'iron_ingot 8, leather 5' -> {iron_ingot: 8, leather: 5} (raw and cooked meat by the bag's food kinds)"""
+    out: dict[str, int] = {}
+    for part in (s or "").split(","):
+        if part.strip():
+            k, _, n = part.strip().rpartition(" ")
+            k = _FOODS.get(k, k)
+            out[k] = out.get(k, 0) + int(n)
+    return out
+
+
+if isinstance(_reward.get("scenario"), dict):
+    SCEN = {}
+    for _k, _v in _reward["scenario"].items():
+        _ch = _items(_v.get("chest", ""))
+        SCEN[_k] = dict(goal=_v.get("goal", "none"), item=_v.get("goal_item", ""), per=_v.get("per_agent", 1),
+                        crew_goal=bool(_v.get("crew_goal")), seconds=_v.get("seconds", 600), kit=_items(_v.get("kit", "")),
+                        health=_v.get("health", 20), time=_v.get("time", 1000), waves=_v.get("waves"), hunger=bool(_v.get("hunger")),
+                        xp=int(_v.get("xp_levels", 0)), defense=bool(_v.get("defense")),
+                        scales=dict(_reward.get("scenarioScales", {}).get(_k, {})))
+        if _ch:
+            SCEN[_k]["chest"] = sum(_ch.values())
+SCALES = tuple(_reward.get("scales", ()))
+# the scenarios of these spaces: rl/reward.json's list
+SCENARIOS = [s for s in AVAILABLE if s in SCEN] or list(SCEN)
 # a waves run has no goal of its own: for the curriculum's threshold (policy side) it counts as passed with this many cleared
-WAVES_PASS = {"waves:easy": 5, "waves:normal": 5}
+WAVES_PASS = {"waves:easy": 5, "waves:normal": 5, "waves:long": 8}

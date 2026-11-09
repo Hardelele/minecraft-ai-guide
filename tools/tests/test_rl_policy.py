@@ -2,6 +2,7 @@
 task, the simulator's recipes and rewards, the weights' export read back, a short training end to end. Writes
 build/rl/obs-mask-cases.json: raw facts with the vector and mask Python gives, for PolicyTest (Java's RlSpec)."""
 import json
+import math
 import random
 import subprocess
 import sys
@@ -33,7 +34,7 @@ def spaces():
     act = json.loads((ROOT / "rl" / "actions.json").read_text(encoding="utf-8"))
     check(spec.D == obs["dim"] == len(obs["features"]), f"obs: {spec.D} features as rl/obs.json says")
     check(spec.A == act["n"] == len(act["actions"]) and spec.ACTIONS[0] == "noop", f"actions: {spec.A}, noop first")
-    check(set(spec.SCEN) == set(json.loads((ROOT / "rl" / "reward.json").read_text(encoding="utf-8"))["scenarios"]),
+    check(set(spec.SCENARIOS) == set(json.loads((ROOT / "rl" / "reward.json").read_text(encoding="utf-8"))["scenarios"]),
           "the simulator's scenarios are rl/env's")
     for k in ("noop", "time", "skill_fail", "skill_ok", "goal", "wave_cleared"):
         check(k in spec.WEIGHTS, "reward weight " + k)
@@ -118,7 +119,7 @@ def ppo_toy():
 
 
 def simulator():
-    env = SimEnv(3)
+    env = SimEnv(3, noise=False)   # the mechanics, the calibration's failures off
     o = env.reset("pickaxe", 1, crew=1)
     a = env.agents[0]
     r = env.raw(a)
@@ -154,6 +155,91 @@ def simulator():
     check(env.agents[0].outcome == "fail_other", "MASKED counts as a failure of the other kind")
     env.reset("waves:easy", 7, crew=3)
     check(env.phase == "prep" and env.chest_food == 16 and all(x.n("stone_sword") == 1 for x in env.agents), "a waves run starts with its kit and chest")
+
+
+def simulator_v2():
+    """contract 2's reward by scales (docs/rl/CONTRACT-v2.md's checks): waiting earns nothing, a moat in pickaxe is not
+    paid, a farm whose food is not eaten is not paid, a mob inside the wall costs, a clean wave pays, achievements need
+    their parent; only with the v2 spaces (rl/*.json version 2, or AIGUIDE_RL_SPEC=<their directory>)"""
+    if spec.VERSION < 2:
+        print("     (v1 spaces: the v2 simulator's checks skipped)")
+        return
+    I = spec.IDX
+    env = SimEnv(5, noise=False)
+    env.reset("wood", 1, crew=1)
+    o = env.step({0: I["wait:5"]})
+    check(o["components"][0].get("skill_ok", 0) == 0 and o["reward"][0] <= 0, f"wait: no skill_ok ({o['reward'][0]:.4f})")
+    env.reset("pickaxe", 1, crew=1)
+    env.ring = True
+    o = env.step({0: I["dig_moat:ring"]})
+    c = o["components"][0]
+    check(env.moat > 0 and not any(k in c for k in ("built", "safety")), f"pickaxe: a moat is dug and not paid ({sorted(c)})")
+    env.reset("farm", 1, crew=1)
+    a = env.agents[0]
+    for k in ("till:farm", "plant:wheat"):
+        o = env.step({0: I[k]})
+    env.advance(env.t + 500)
+    o = env.step({0: I["harvest:farm"]})
+    for _ in range(4):
+        o = env.step({0: I["wait:5"]})
+    check(a.n("wheat") > 0 and env.comp.get("sustain", 0) <= 0, f"farm: a harvest not eaten is not paid ({a.n('wheat')} wheat)")
+    if a.n("wheat") < 3:
+        env.ren_wheat += [(-1, 0)] * (3 - a.n("wheat"))
+        a.add("wheat", 3 - a.n("wheat"))
+    a.add("crafting_table", 1)
+    o = env.step({0: I["craft:bread"]})
+    a.food, a.sat = 10.0, 0.0
+    o = env.step({0: I["eat:best"]})
+    env.advance(env.t + 2)
+    check(env.comp.get("sustain", 0) > 0, f"farm: bread of its wheat eaten is paid ({env.comp.get('sustain', 0):.3f})")
+    env.reset("waves:easy", 2, crew=2)
+    env.ring, env.wall = True, 20
+    env.phase, env.enemies, env.phase_until, env.wave_num = "wave", 12.0, env.t + 240, 1
+    env.advance(env.t + 60)
+    check(env.breaches > 0 and env.comp.get("perimeter", 0) < 0, f"a wall with holes: mobs get inside and cost ({env.breaches})")
+    env.reset("waves:easy", 3, crew=2)
+    env.ring, env.wall, env.moat = True, 64, 80
+    env.phase, env.enemies, env.phase_until, env.wave_num = "wave", 0.4, env.t + 240, 1
+    env.advance(env.t + 2)
+    check(env.cleared == 1 and env.breaches == 0 and env.clean == 1 and env.comp.get("perimeter", 0) > 0, "a wave with no mob inside pays clean_wave")
+    env.reset("achievements", 1, crew=1)
+    a = env.agents[0]
+    a.bag = {"cobblestone": 3, "stick": 2, "crafting_table": 1}
+    env.step({0: I["craft:stone_pickaxe"]})
+    check("buildBetterPickaxe" not in a.ach, "a stone pickaxe with no wooden one before: no achievement (the parent first)")
+    a.ach |= {"mineWood", "buildWorkBench", "buildPickaxe"}
+    a.bag = {"cobblestone": 3, "stick": 2}
+    o = env.step({0: I["craft:stone_pickaxe"]})
+    check("buildBetterPickaxe" in a.ach and o["components"][0].get("achievement", 0) > 0, "with its parent: buildBetterPickaxe, paid")
+
+
+def delayed_credit():
+    """a kill names the craft of the sword that made it; the credit moves a share of it back to that decision"""
+    import credit
+    I = spec.IDX
+    env = SimEnv(4, noise=False)
+    o = env.reset("delay:sword", 1, crew=1)
+    a = env.agents[0]
+    a.bag = {"planks": 2, "stick": 1, "crafting_table": 1}
+    did = o["decision_ids"][0]
+    env.step({0: I["craft:wooden_sword"]})
+    env.step({0: I["equip:best"]})
+    env.phase, env.enemies, env.phase_until, env.wave_num = "wave", 6.0, env.t + 240, 1
+    a.worn = {"helmet": "diamond_helmet", "chestplate": "diamond_chestplate", "leggings": "diamond_leggings", "boots": "diamond_boots"}
+    evs = []
+    for _ in range(60):
+        o = env.step({0: I["wait:5"]})
+        evs += o["events"][0]
+        if o["done"]:
+            break
+    kills = [e for e in evs if e["key"] == "kill"]
+    check(kills and all(did in e["causes"] for e in kills), f"a kill names the sword's craft as its cause ({len(kills)} kills)")
+    # two transitions: the craft (reward 0) and a later step with a kill of 1 point caused by it, 600 s on
+    t_craft = [None, None, 0, 0, 0, 0.0, False, 0, 0.0, 0, 7, [], 0, None]
+    t_kill = [None, None, 0, 0, 0, 1.0, False, 0, 600.0, 0, 8, [{"key": "kill", "points": 1.0, "t": 600.0, "causes": [7]}], 1, None]
+    st = credit.redistribute({("e", 0): [t_craft, t_kill]}, beta=0.5, tau=3600)
+    check(st["linked"] == 1 and abs(t_craft[5] - 0.5 * math.exp(-600 / 3600)) < 1e-9 and abs(t_craft[5] + t_kill[5] - 1.0) < 1e-9,
+          f"credit: the craft gets beta*exp(-lag/tau) of the kill, the sum stays ({t_craft[5]:.3f} + {t_kill[5]:.3f})")
 
 
 def export():
@@ -193,6 +279,8 @@ if __name__ == "__main__":
     masking()
     ppo_toy()
     simulator()
+    simulator_v2()
+    delayed_credit()
     export()
     end_to_end()
     sys.exit(1 if bad else 0)

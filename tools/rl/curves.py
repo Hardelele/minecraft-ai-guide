@@ -5,7 +5,9 @@
 
 Panels (one axis each, x = the epoch, one PPO iteration): the reward an agent gets an episode; the share of noop
 (of the decisions, and of the episodes that ended by it); success by scenario (smoothed); the game seconds to the
-goal by scenario (from episodes.csv); the curriculum's stage. Colors: one per scenario in a fixed order (the dataviz palette's categorical slots).
+goal by scenario (from episodes.csv); the curriculum's stage; v2, when the run has them: the perimeter's breaches
+and mob-seconds by waves scenario, sustain (the renewable food eaten of the food eaten), the crew's achievements an
+episode, the discoveries (novel_effect: new effects an epoch, all so far), the reward by scale. Colors: one per scenario in a fixed order (the dataviz palette's categorical slots).
 """
 from __future__ import annotations
 
@@ -29,7 +31,12 @@ LIGHT = dict(surface="#fcfcfb", ink="#0b0b0b", ink2="#52514e", grid="#e4e3df",
 DARK = dict(surface="#1a1a19", ink="#f0efec", ink2="#c3c2b7", grid="#383835",
             series=["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"])
 NAMES_RU = {"wood": "дерево", "pickaxe": "кирка", "sword": "меч", "iron": "железо", "food": "еда", "fortify": "укрепление",
-            "waves:easy": "волны (легко)", "waves:normal": "волны (норма)"}
+            "waves:easy": "волны (легко)", "waves:normal": "волны (норма)", "waves:long": "волны (долго)", "armor": "броня",
+            "bow": "лук", "mine_trip": "поход в шахту", "diamond": "алмазы", "farm": "ферма", "pasture": "загон",
+            "enchant": "зачарование", "achievements": "достижения", "delay:sword": "отложено: меч",
+            "delay:pickaxe": "отложено: кирка", "delay:torches": "отложено: факелы"}
+SCALES_RU = {"safety": "безопасность", "perimeter": "периметр", "equipment": "экипировка", "mine": "шахта", "enchant": "зачарование",
+             "sustain": "восполняемость", "stock": "запасы", "achievement": "достижения", "stall": "застой", "time": "время"}
 
 
 def num(x):
@@ -151,6 +158,35 @@ def main():
             panel("success", "Успех по сценариям", "% эпизодов с целью", succ, (0, 102)),
             panel("time", "Время до цели (удачные эпизоды)", "игровых секунд", tts, (0, None)),
             panel("stage", "Учебная программа", "", stage)]
+    cols = rows[0].keys()
+
+    def series(ax, keys, labels, scale=1.0):
+        for i, (k, lab) in enumerate(zip(keys, labels)):
+            x, y = smooth(ep, [num(r.get(k)) for r in rows], a.smooth)
+            if x:
+                ax.plot(x, [v * scale for v in y], color=t["series"][i % len(t["series"])], linewidth=2, label=lab)
+        if any(num(r.get(k)) is not None for k in keys for r in rows):
+            ax.legend(frameon=False, fontsize=8, ncol=2, labelcolor=t["ink"])
+
+    waves = [k[9:] for k in cols if k.startswith("breaches_") and any(num(r[k]) is not None for r in rows)]
+    if waves:   # the perimeter: "do not let the zombies into the base"
+        made.append(panel("breaches", "Прорывы периметра: мобов внутри стены за эпизод", "мобов",
+                          lambda ax: series(ax, ["breaches_" + w for w in waves], [NAMES_RU.get(w, w) for w in waves]), (0, None)))
+        made.append(panel("mob-seconds", "Мобо-секунды внутри стены за эпизод", "моб·с",
+                          lambda ax: series(ax, ["mob_s_" + w for w in waves], [NAMES_RU.get(w, w) for w in waves]), (0, None)))
+    if "sustain" in cols and any(num(r["sustain"]) is not None for r in rows):
+        made.append(panel("sustain", "Восполняемость: доля съеденной еды с фермы и загона", "%",
+                          lambda ax: series(ax, ["sustain"], ["ферма, загон, долгие волны"], 100), (0, 102)))
+    if "achievements" in cols:
+        made.append(panel("achievements", "Достижения Minecraft: у экипажа за эпизод", "достижений",
+                          lambda ax: series(ax, ["achievements", "achievements_scen"], ["все сценарии", "сценарий «достижения»"]), (0, None)))
+    if "novel" in cols and any(num(r["novel"]) for r in rows):
+        made.append(panel("discoveries", "Открытия: новые следствия действий", "открытий",
+                          lambda ax: series(ax, ["novel", "novel_total"], ["за эпоху", "всего"]), (0, None)))
+    sc_cols = [k for k in cols if k.startswith("comp_") and k[5:] in SCALES_RU]
+    if sc_cols:
+        made.append(panel("scales", "Награда по шкалам (агент, эпизод)", "награда",
+                          lambda ax: series(ax, sc_cols, [SCALES_RU[k[5:]] for k in sc_cols])))
 
     # all panels on one sheet
     fig, axs = plt.subplots(len(panels), 1, figsize=(8, 3.0 * len(panels)), dpi=120)

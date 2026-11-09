@@ -1,32 +1,138 @@
-"""A fast, rough simulator of the crew's world in the shape of the real environment (rl/env, docs/rl/CONTRACT.md):
-the same actions, raw facts by the game's names (so the same obs vector and mask through tools/rl/spec.py), the
-reward's weights of rl/reward.json, the scenarios' kits, goals and limits, steps at the agents' decision points.
-For debugging PPO and a first set of weights on the GPU in minutes; it is not the game.
+"""A fast, rough simulator of the crew's world in the shape of the real environment (rl/env; docs/rl/CONTRACT.md, v2:
+docs/rl/CONTRACT-v2.md): the same actions, raw facts by the game's names (so the same obs vector and mask through
+tools/rl/spec.py: contract 2's masks are rl/actions.json's own rules), the reward's weights of rl/reward.json with the
+scenario's factors, the scenarios' kits, goals and limits, steps at the agents' decision points. For PPO on the GPU in
+minutes; it is not the game.
 
-The world, roughly: a crew's memory of what it has seen (trees, stone, coal, iron, animals; look_around and
-go_to:frontier see more, mining shows ores), the game's recipes (2x2 in the hands, 3x3 at a table), a furnace and
-fuel, a chest, a base with a ring wall (cells, posts), a moat, torches; the waves of WavePlan's budget (prep 30 s,
-break 20 s, a wave at most 240 s; lost when a wave took the whole crew) with a crude fight: kills by weapon tier at a
-post, hits by where one stands and how much wall stands, holes by creepers from wave 6. A skill takes game seconds;
-its effects come at its end (an agent that dies loses them and its bag, and comes back at the base).
+Contract 2 (rl/*.json version 2) adds: hunger, armour of every tier, the bow and shooting from a post, the mine by
+horizons (y~40: coal, iron; y~12: diamonds, gold, redstone, obsidian), branch tunnels and the way back by one's own
+stairs, a gate in the wall, the farm (till, plant, harvest), saplings, bread, a pen (lure, breed, slaughter), the
+enchanting table with shelves and enchanting for levels, Minecraft 1.7.10's achievements by agent with the parent rule
+(tools/rl/achievements.py, rl/achievements.json), and the reward by scales as RlScore measures them: a scale's part is
+paid by the change of a measured value (the wall standing, the armour worn, the deepest horizon, the stock up to its
+caps, the renewable food that is eaten), only where the scenario turns the scale on; perimeter: mob-seconds inside the
+ring, breaches, a clean wave; `skill_ok` only for an OK with a measured effect (never `wait`, `look_around`); `stall`
+after STALL_S s with no measured progress. With v1's files (rl/v1 or the old rl/) the v1 rewards stand.
 
-Protocol (rl/env's, in Python): reset(scenario, seed, crew) -> {agents, obs, mask, raw, reward, done, info};
-step({agent: action}) -> the same; `agents` are those at a decision now and their reward is what they got since
-their last decision; at done every agent closes its step; info: scenario, done_reason, components, cleared, ticks.
+Delayed credit: every decision has an id (`decision_ids` in a step's answer, one per agent at a decision: the id its
+next action will carry); a reward event names the decisions that caused it (`events`: key, points, the game time,
+`causes` [ids]): a kill names the craft of the weapon that made it and the post taken, an ore the craft of the
+pickaxe, bread eaten the planting of its wheat, a clean wave the wall's building. tools/rl/credit.py moves a share of
+an event's points to its causes before PPO's update. `novel_effect`: the first time (in this simulator's life) an
+action brings a kind of thing it never brought, a small bonus that fades with how often it was seen (--curiosity).
+Sim-only scenarios with a delayed reward and nothing in between (SIM_SCEN: delay:sword, delay:pickaxe, delay:torches)
+check that the credit reaches back.
+
+Calibrated from the real environment's v1 logs (rl/sim-calibration.json, tools/rl/calibrate.py): a skill's game
+seconds, its fresh failure rate and the stickiness of a failure (a tree out of reach stays out of reach until the
+agent moves), chops that bring no log, hunts of sheep that bring no meat, tables put where 3x3 crafts cannot reach
+them, wall cells out of reach, smelting one piece a call.
+
+Protocol (rl/env's, in Python): reset(scenario, seed, crew) -> {agents, obs, mask, raw, reward, done, info, t,
+decision_ids, events}; step({agent: action}) -> the same; `agents` are those at a decision now and their reward is
+what they got since their last decision; at done every agent closes its step; info: scenario, done_reason,
+components, cleared, ticks, achievements (the crew's; by id at the end), breaches, mob_seconds, clean_waves,
+sustain (renewable food eaten, food eaten), novel (new effects this episode), chains (at the end: cause -> effects).
 """
 from __future__ import annotations
 
+import json
 import math
 import random
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import achievements as ACH  # noqa: E402
 import spec  # noqa: E402
 from spec import ACTIONS, IDX, RECIPES, SCEN, WEIGHTS  # noqa: E402
 
 RING, MOAT, POSTS = 64, 80, 4      # a ring of radius 8, height 2 (cells), its moat, its posts
-TOOLS = ("_pickaxe", "_sword")
+CAL = json.loads((spec.ROOT / "rl" / "sim-calibration.json").read_text(encoding="utf-8"))
+SK = CAL["skills"]
+V2 = spec.VERSION >= 2
+_C = json.loads((spec.RL / "reward.json").read_text(encoding="utf-8")).get("constants", {})
+STALL_S = float(_C.get("stall_s", 60))
+WINDOW_S = float(_C.get("window_s", 120))
+STOCK = {k: tuple(v) for k, v in _C.get("stock_cap_value", {}).items()}   # item -> (cap, value); food in points
+NO_RESULT = ("look_around", "wait:5")       # never a skill_ok: nothing checkable comes of them
+MOVES = ("go_to:frontier", "go_to:base", "retreat:home", "descend:mine", "ascend:surface", "tunnel:branch")
+LEVEL_ORES = {1: {"coal": (4, 12), "iron": (3, 8), "gravel": (1, 4)},
+              2: {"iron": (1, 4), "gold": (1, 4), "redstone": (2, 6), "diamond": (0, 3), "obsidian": (0, 2), "gravel": (0, 2)}}
+FOOD_PTS = {"food_raw": 3, "food_cooked": 7, "bread": 5}   # hunger points a piece restores (raw/cooked: a mix of meats)
+SAT = {"food_raw": 1.5, "food_cooked": 10.0, "bread": 6.0}
+ARMOR_MAT = {"leather": "leather", "golden": "gold_ingot", "iron": "iron_ingot", "diamond": "diamond"}
+_PIECES = {"helmet": 5, "chestplate": 8, "leggings": 7, "boots": 4}
+_POINTS = {"leather": (1, 3, 2, 1), "golden": (2, 5, 3, 1), "iron": (2, 6, 5, 2), "diamond": (3, 8, 6, 3)}
+ARMOR: dict[str, int] = {}
+for _m, _pts in _POINTS.items():
+    for (_piece, _n), _pt in zip(_PIECES.items(), _pts):
+        ARMOR[_m + "_" + _piece] = _pt
+# the game's recipes the simulator crafts (v1's RECIPES and contract 2's new items): what one craft takes, gives, 2x2
+SIM_RECIPES: dict[str, tuple[dict[str, int], int, bool]] = dict(RECIPES)
+SIM_RECIPES.update({
+    "diamond_pickaxe": ({"diamond": 3, "stick": 2}, 1, False),
+    "diamond_sword": ({"diamond": 2, "stick": 1}, 1, False),
+    "bow": ({"stick": 3, "string": 3}, 1, False),
+    "arrow": ({"flint": 1, "stick": 1, "feather": 1}, 4, False),
+    "wooden_hoe": ({"planks": 2, "stick": 2}, 1, False),
+    "stone_hoe": ({"cobblestone": 2, "stick": 2}, 1, False),
+    "bread": ({"wheat": 3}, 1, False),
+    "wooden_door": ({"planks": 6}, 1, False),
+    "fence": ({"stick": 6}, 2, False),
+    "fence_gate": ({"stick": 4, "planks": 2}, 1, False),
+    "paper": ({"sugar_cane": 3}, 3, False),
+    "book": ({"paper": 3, "leather": 1}, 1, True),
+    "bookshelf": ({"planks": 6, "book": 3}, 1, False),
+    "enchanting_table": ({"book": 1, "diamond": 2, "obsidian": 4}, 1, False),
+})
+for _m, _mat in ARMOR_MAT.items():
+    for _piece, _n in _PIECES.items():
+        SIM_RECIPES[_m + "_" + _piece] = ({_mat: _n}, 1, False)
+TOOLS = ("_pickaxe", "_sword", "_hoe", "bow") + tuple(ARMOR)
+FOODS = tuple(FOOD_PTS)
+ANIMALS = CAL["animals"]
+
+# the simulator's own scenarios with a delayed reward and nothing paid in between (not the contract's: for the credit
+# checks); `weights` replaces the reward's, the scales are off
+_ZERO = {"noop": -1.0, "time": 0.0, "death": -1.0}
+SIM_SCEN = {
+    # a sword crafted in the long quiet before the waves pays only by the kills it makes later
+    "delay:sword": dict(goal="none", item="", per=1, seconds=600, kit={"planks": 6, "stick": 4, "crafting_table": 1, "cobblestone": 64},
+                        health=20, time=14000, waves="easy", prep=150, weights={**_ZERO, "kill": 1.0}, pass_kills=6),
+    # a stone pickaxe made early pays only by the iron ore it digs much later (hidden: to be found by going out)
+    "delay:pickaxe": dict(goal="items", item="iron_ore", per=3, seconds=900, kit={"log": 3}, health=20, time=1000, waves=None,
+                          weights={**_ZERO, "iron_found": 1.0, "goal": 2.0}, iron=(3, 5)),
+    # torches put out before the waves: fewer mobs come (no cause in any event: only a learned credit can find it)
+    "delay:torches": dict(goal="none", item="", per=1, seconds=500, kit={"torch": 16, "stone_sword": 1, "cobblestone": 64},
+                          health=20, time=14000, waves="easy", prep=90, weights={**_ZERO, "spawned": -0.3, "kill": 0.1},
+                          pass_spawned=10),
+}
+for _s in SIM_SCEN.values():
+    _s.setdefault("hunger", False)
+    _s.setdefault("xp", 0)
+    _s.setdefault("scales", {})
+    _s.setdefault("crew_goal", False)
+ALL_SCEN = {**SCEN, **SIM_SCEN}
+
+
+def sk(name: str) -> dict:
+    """the calibration's entry of a skill (rl/sim-calibration.json)"""
+    if name.startswith("mine:"):
+        return SK["mine_stone"] if name in ("mine:stone", "mine:gravel") else SK["mine_ore"]
+    if name.startswith("craft:"):
+        return SK["craft_small"] if SIM_RECIPES.get(name[6:], ({}, 1, True))[2] else SK["craft_table"]
+    if name.startswith("craft_armor:"):
+        return SK["craft_table"]
+    if name.startswith("smelt:"):
+        return SK["smelt"]
+    if name.startswith("place:"):
+        return SK["place"]
+    if name in ("put:chest_all", "take:chest_food"):
+        return SK["chest"]
+    if name in ("go_to:frontier", "go_to:base"):
+        return SK["go_to"]
+    return SK.get(name.split(":")[0], SK["default"])
 
 
 class Agent:
@@ -34,9 +140,15 @@ class Agent:
         self.i = i
         self.bag: dict[str, int] = {}
         self.health = 20.0
+        self.food = 20.0         # hunger, 0..20
+        self.sat = 5.0           # saturation, eaten first
+        self.xp = 0              # levels
+        self.xp_pts = 0.0
         self.held = 0
-        self.armor = 0
-        self.dist = 0.0          # from the base
+        self.worn: dict[str, str] = {}   # slot -> piece
+        self.dist = 0.0          # from the base (on the surface)
+        self.depth = 0           # 0 the surface, 1 y~40, 2 y~12
+        self.tunnels = {1: 0, 2: 0}
         self.post = False
         self.free_at = 0.0
         self.alive = True
@@ -44,11 +156,24 @@ class Agent:
         self.holding = False
         self.acc = 0.0
         self.comp: dict[str, float] = {}
+        self.events: list[dict] = []
+        self.did = -1            # the decision now running (its id)
+        self.next_did = -1       # the id the next decision will carry
+        self.made: dict[str, tuple[int, float]] = {}   # a thing -> (the decision that made it, when)
         self.last = -1
         self.outcome = "none"
         self.repeated = 0
         self.last_s = 0.0
         self.best = {"pick": 0, "weapon": 0, "armor": 0}
+        self.stuck: dict[str, bool] = {}  # a skill whose target is out of reach until the agent moves
+        self.ach: set[str] = set()
+        self.trip_ores = 0
+        self.trip_out = False
+        self.trips = 0
+        self.enchanted = 0
+        self.phi = 0.0
+        self.track: dict[str, float] = {}
+        self.progress_t = 0.0
 
     def n(self, k):
         return self.bag.get(k, 0)
@@ -65,23 +190,69 @@ class Agent:
                 t = max(t, spec.tier(k))
         return t
 
+    def best_item(self, kind) -> str | None:
+        best, t = None, 0
+        for k in self.bag:
+            if k.endswith("_" + kind) and spec.tier(k) > t:
+                best, t = k, spec.tier(k)
+        return best
+
+    def armor(self) -> int:
+        return sum(ARMOR.get(p, 0) for p in self.worn.values())
+
+    def can_wear(self) -> bool:
+        for k in self.bag:
+            if k in ARMOR and ARMOR[k] > ARMOR.get(self.worn.get(k.rsplit("_", 1)[1], ""), 0):
+                return True
+        return False
+
+    def armor_piece(self, mat: str) -> str | None:
+        """the piece of this material craft_armor makes: the one adding the most points over what it has, affordable"""
+        best, gain = None, 0
+        for piece, n in _PIECES.items():
+            k = mat + "_" + piece
+            have = max(ARMOR.get(self.worn.get(piece, ""), 0), max((ARMOR[b] for b in self.bag if b in ARMOR and b.endswith(piece)), default=0))
+            g = ARMOR[k] - have
+            if g > gain and self.n(ARMOR_MAT[mat]) >= n:
+                best, gain = k, g
+        return best
+
+    def foods(self) -> int:
+        return sum(self.n(f) for f in FOODS)
+
 
 class SimEnv:
-    def __init__(self, seed: int = 0, shaping: float = 0.0, weights: dict | None = None):
+    _did = 0   # decision ids: unique in a process
+
+    def __init__(self, seed: int = 0, shaping: float = 0.0, weights: dict | None = None, noise: bool = True,
+                 curiosity: float = 0.0):
+        """noise=False: the calibration's failures off (no fresh or sticky failures, no tables out of reach, no empty
+        chops): the mechanics alone, for the tests; curiosity: novel_effect's first bonus (0: off; it fades as
+        1/sqrt(times seen))"""
+        self.noise = noise
         self.rng = random.Random(seed)
         self.shaping = shaping
-        self.w = dict(WEIGHTS if weights is None else weights)
+        self.base_w = dict(WEIGHTS if weights is None else weights)
+        self.curiosity = curiosity
+        self.effects: dict[str, int] = {}   # novel_effect's journal: action -> kind of result, how often seen
         self.scenario = "wood"
 
     # ---- the episode ------------------------------------------------------------------------------------
     def reset(self, scenario: str = "wood", seed: int | None = None, crew: int = 1):
         if seed is not None:
             self.rng.seed(seed)
-        if scenario not in SCEN:
+        if scenario not in ALL_SCEN:
             raise ValueError("no scenario " + scenario)
         r = self.rng
         self.scenario = scenario
-        self.sc = SCEN[scenario]
+        self.sc = ALL_SCEN[scenario]
+        self.sim_only = scenario in SIM_SCEN
+        self.w = dict(self.sc["weights"]) if self.sim_only else self.base_w
+        if self.curiosity:
+            self.w["novel_effect"] = self.curiosity
+        sc_scales = self.sc.get("scales", {})
+        self.factors = dict(sc_scales) if isinstance(sc_scales, dict) else {k: 1.0 for k in sc_scales}
+        self.hunger = bool(self.sc.get("hunger")) and V2
         self.t = 0.0
         self.trees = r.randint(0, 6)          # seen and free
         self.trees_hidden = r.randint(8, 30)  # there, to be seen
@@ -89,42 +260,89 @@ class SimEnv:
         self.coal = r.choice([0, 0, 1, 2])
         self.coal_hidden = r.randint(2, 8)
         self.iron = 0
-        self.iron_hidden = r.randint(1, 5)
+        self.iron_hidden = r.randint(*self.sc.get("iron", CAL["surface_iron"]))
+        self.gravel = r.randint(0, 3)
         self.animals = r.randint(0, 2)
-        self.animals_hidden = r.randint(2, 8) if scenario == "food" else r.randint(0, 4)
+        self.animals_hidden = r.randint(2, 8) if scenario in ("food", "pasture") else r.randint(0, 4)
+        self.grass = r.randint(2, 10)
+        self.leaves = r.randint(2, 12)
+        self.cane = r.randint(0, 3)
+        self.cane_hidden = r.randint(0, 6)
+        self.mine_levels = 0
+        self.mine_d = r.uniform(4, 10)
+        self.seen = {1: {}, 2: {}}
+        self.hidden = {lv: {k: r.randint(*v) for k, v in ores.items()} for lv, ores in LEVEL_ORES.items()}
         self.table = self.furnace = False
+        self.table_bad = False
         self.table_d = self.furnace_d = 64.0
         self.chest = False
         self.chest_food = 0
         self.ring = False
         self.wall = 0
+        self.bad = 0                          # wall cells out of reach (of the ring's)
         self.moat = 0
         self.torches = 0
         self.posts_taken = 0
-        self.waves = self.sc["waves"]
+        self.door = False
+        self.gate_open = False
+        self.builders: list[tuple[int, float, int]] = []   # (decision, time, agent) that built the wall, the moat, the gate
+        self.plots = self.planted = 0
+        self.crops: list[tuple[float, int, int]] = []     # planted plots: (ripe time, the planting decision, its agent)
+        self.ripe: list[tuple[int, int]] = []
+        self.saplings: list[float] = []
+        self.grown = 0                        # trees grown from planted saplings, standing
+        self.pen = False
+        self.pen_adults: dict[str, int] = {}
+        self.pen_young: list[tuple[float, str]] = []
+        self.pen_rest: dict[str, float] = {}
+        self.bred = 0
+        self.ench_table = False
+        self.shelves = 0
+        self.waves = self.sc.get("waves")
         self.phase = "prep" if self.waves else "off"
-        self.phase_until = 30.0 if self.waves else 1e18
+        self.phase_until = float(self.sc.get("prep", 30.0)) if self.waves else 1e18
         self.wave_num = 0
         self.enemies = 0.0
+        self.spawned = 0
+        self.kills = 0
+        self.inside = 0.0                     # mobs inside the wall now
+        self.breaches = 0                     # mobs that got inside, this episode
+        self.wave_breaches = 0
+        self.mob_s = 0.0
+        self.wave_mob_s = 0.0
+        self.clean = 0
         self.wave_losses = 0
         self.cleared = 0
         self.items_seen: set[str] = set()
         self.comp: dict[str, float] = {}
+        self.novel = 0
+        self.chains: dict[tuple, list] = {}   # (agent, cause decision, what it was) -> [time, effect counts]
         self.done = False
         self.reason = ""
+        # the renewable's ledger (RlScore.Sustain): food points and logs from the farm, the pen, planted trees
+        self.ren_food: list[tuple[float, int, int]] = []   # renewable food points in bags: (points, cause decision, agent)
+        self.ren_wheat: list[tuple[int, int]] = []
+        self.last_ren_causes: list = []   # the plantings behind the renewable food eaten last
+        self.sus = {"food_renew": 0.0, "food_eaten": 0.0, "wood_renew": 0.0, "wood_used": 0.0}
+        self.sus_paid = [0.0, 0.0]
+        self.sus_win: list[tuple[float, str, float]] = []
         self.agents = [Agent(i) for i in range(max(1, min(spec.MAX_AGENTS, crew)))]
         for a in self.agents:
             for k, v in self.sc["kit"].items():
                 a.add(k, v)
             a.health = float(self.sc["health"])
+            a.xp = int(self.sc.get("xp", 0))
             a.dist = r.uniform(0, 3)
+            a.ach.add("openInventory")        # the root: at its first decision (no reward: it is the start)
             for kind in a.best:
-                a.best[kind] = a.tier(kind) if kind != "armor" else 0
+                a.best[kind] = a.tier({"pick": "pickaxe", "weapon": "sword"}[kind]) if kind != "armor" else 0
         if "chest" in self.sc:
             self.chest = True
             self.chest_food = self.sc["chest"]
         for a in self.agents:
             self.items_seen.update(a.bag)
+        self.crew_track: dict[str, float] = {}
+        self.measure(first=True)
         for a in self.agents:
             a.phi = self.potential()
         return self.decide(list(self.agents), first=True)
@@ -133,39 +351,89 @@ class SimEnv:
     def raw(self, a: Agent) -> dict:
         x: dict[str, float] = {}
         x["scen_" + self.scenario.replace(":", "_")] = 1
+        for s in spec.SCALES:
+            x["scale_" + s] = 1 if self.factor(s) > 0 or any(k.startswith(s + ".") and v > 0 for k, v in self.factors.items()) else 0
         x["agent_%d" % min(a.i, spec.MAX_AGENTS - 1)] = 1
         x["n_agents"] = len(self.agents)
         x["health"], x["max_health"], x["low_health"] = a.health, 20, spec.LOW
-        x["armor"] = a.armor
+        x["armor"] = a.armor()
         x["held_tier"] = a.held
         x["pick_tier"] = a.tier("pickaxe")
-        x["weapon_tier"] = a.tier("sword")
-        x["at_home"] = 1 if a.dist < 4 else 0
+        x["weapon_tier"] = x["sword_tier"] = a.tier("sword")
+        x["hoe_tier"] = a.tier("hoe")
+        x["hoes"] = a.n("wooden_hoe") + a.n("stone_hoe")
+        deep = a.depth > 0
+        x["at_home"] = 1 if a.dist < 4 and not deep else 0
+        x["hunger_on"] = int(self.hunger)
+        x["food_level"] = a.food if self.hunger else 20
+        x["saturation"] = a.sat if self.hunger else 5
+        x["xp_level"], x["xp_progress"] = a.xp, a.xp_pts / 17.0
         tod = self.sc["time"]   # the arena's time stands
         x["day_sin"], x["day_cos"] = math.sin(2 * math.pi * tod / 24000), math.cos(2 * math.pi * tod / 24000)
         x["night"] = 1 if 13000 <= tod < 23000 else 0
         x["dusk_in"] = (12500 - tod) / 20.0 if tod < 12500 else 0
-        tot = stack = 0
+        tot = stack = arm = 0
         for k, v in a.bag.items():
-            x["bag_" + k] = v
+            if k in ARMOR:
+                arm += v
+            else:
+                x["bag_" + k] = v
             tot += v
             if not k.endswith(TOOLS):
                 stack += v
+        x["bag_armor"] = arm
         x["bag_total"], x["bag_stackables"] = tot, stack
+        x["food_items"] = a.foods()
+        x["lure_food"] = a.n("wheat") + a.n("wheat_seeds")
         x["fuel"] = a.n("coal") + a.n("planks") + a.n("log")
         x["wall_blocks"] = max(a.n("cobblestone"), a.n("planks"), a.n("dirt"))
         d = lambda n, far: (far if n <= 0 else max(2.0, a.dist * 0.5 + 6 + 20 / (1 + n)))  # noqa: E731
-        x["trees_seen"], x["tree_dist"], x["trees_free"] = self.trees, d(self.trees, 48), self.trees
-        x["stone_seen"], x["stone_dist"] = self.stone_seen, d(self.stone_seen, 32)
-        x["coal_seen"], x["coal_dist"], x["coal_minable"] = self.coal, d(self.coal, 48), self.coal
-        x["iron_seen"], x["iron_dist"], x["iron_minable"] = self.iron, d(self.iron, 48), self.iron
-        x["animals_seen"], x["animal_dist"] = self.animals, d(self.animals, 24)
-        x["frontier"] = 1 if self.trees_hidden + self.animals_hidden + self.coal_hidden > 0 else 0
-        x["table_known"], x["table_dist"] = int(self.table), (abs(a.dist - self.table_d) + 1 if self.table else 24)
-        x["furnace_known"], x["furnace_dist"] = int(self.furnace), (abs(a.dist - self.furnace_d) + 1 if self.furnace else 24)
-        x["chest_known"], x["chest_dist"] = int(self.chest), (a.dist + 1 if self.chest else 48)
+        x["underground"] = int(deep)
+        x["depth_level"] = a.depth
+        x["at_horizon"] = int(deep)
+        x["y_rel"] = {0: 0, 1: -24, 2: -52}[a.depth]
+        x["mine_known"] = int(self.mine_levels > 0)
+        x["mine_level"] = self.mine_levels
+        x["mine_dist"] = (abs(a.dist - self.mine_d) + 1) if self.mine_levels and not deep else (2 if deep else 64)
+        x["tunnels"] = a.tunnels.get(a.depth, 0)
+        x["trip_ores"] = a.trip_ores
+        if not deep:
+            x["trees_seen"], x["tree_dist"], x["trees_free"] = self.trees, d(self.trees, 48), self.trees
+            x["stone_seen"], x["stone_dist"] = self.stone_seen, d(self.stone_seen, 32)
+            x["coal_seen"], x["coal_dist"], x["coal_minable"] = self.coal, d(self.coal, 48), self.coal
+            x["iron_seen"], x["iron_dist"], x["iron_minable"] = self.iron, d(self.iron, 48), self.iron
+            x["gravel_seen"] = x["gravel_minable"] = self.gravel
+            x["animals_seen"], x["animal_dist"] = self.animals, d(self.animals, 24)
+            x["frontier"] = 1 if self.trees_hidden + self.animals_hidden + self.coal_hidden + self.iron_hidden > 0 else 0
+            x["grass_seen"], x["leaves_seen"], x["cane_seen"] = self.grass, self.leaves, self.cane
+        else:
+            s = self.seen[a.depth]
+            x["tree_dist"], x["animal_dist"] = 48, 24
+            x["stone_seen"], x["stone_dist"] = 32, 2
+            for k in ("coal", "iron", "gold", "redstone", "diamond", "obsidian", "gravel"):
+                x[k + "_seen"] = x[k + "_minable"] = s.get(k, 0)
+                x[k + "_dist"] = d(s.get(k, 0), 48)
+        x["table_known"], x["table_dist"] = int(self.table), (abs(a.dist - self.table_d) + 1 if self.table and not deep else 24)
+        x["furnace_known"], x["furnace_dist"] = int(self.furnace), (abs(a.dist - self.furnace_d) + 1 if self.furnace and not deep else 24)
+        x["chest_known"], x["chest_dist"] = int(self.chest), (a.dist + 1 if self.chest and not deep else 48)
         x["chest_food"] = self.chest_food
-        x["base_known"], x["base_dist"] = 1, a.dist
+        x["base_known"], x["base_dist"] = 1, a.dist + 30 * a.depth
+        x["ench_table_known"], x["ench_table_dist"] = int(self.ench_table), (a.dist + 2 if self.ench_table and not deep else 24)
+        x["bookshelves"], x["shelf_spots"] = self.shelves, (15 - self.shelves if self.ench_table else 0)
+        x["shelves_total"] = self.shelves + a.n("bookshelf")
+        x["enchantable"] = max(0, sum(v for k, v in a.bag.items() if k.endswith(("_sword", "_pickaxe")) or k in ARMOR or k == "bow")
+                               + len(a.worn) - a.enchanted)
+        x["farm_plots"], x["farm_planted"], x["farm_ripe"] = self.plots, self.planted, len(self.ripe)
+        x["farm_empty"] = self.plots - self.planted
+        x["till_spots"] = 16 - self.plots
+        x["saplings_planted"], x["trees_grown"] = len(self.saplings), self.grown
+        x["sapling_spots"] = max(0, 4 - len(self.saplings) - self.grown)
+        adults = sum(self.pen_adults.values())
+        x["pen_built"], x["pen_animals"] = int(self.pen), adults + len(self.pen_young)
+        x["pen_adults"], x["pen_babies"] = adults, len(self.pen_young)
+        x["pen_pairs"] = self.pairs(a)
+        x["pen_dist"] = abs(a.dist - 6) + 1 if self.pen else 32
+        x["door_placed"], x["gate_open"] = int(self.door), int(self.gate_open)
         w = self.phase in ("prep", "wave", "break")
         x["waves_active"] = int(w)
         x["wave_on"] = int(self.phase == "wave")
@@ -174,26 +442,40 @@ class SimEnv:
         x["next_wave_in"] = max(0.0, self.phase_until - self.t) if self.phase in ("prep", "break") else 0
         e = self.enemies if self.phase == "wave" else 0
         x["enemies"] = e
+        x["enemies_visible"] = (e + self.inside) if not deep else 0
         x["enemy_dist"] = (8 + 10 * (self.wall / RING) if e > 0 else 32)
         x["enemy_dx"], x["enemy_dz"] = (self.rng.uniform(-12, 12), self.rng.uniform(-12, 12)) if e > 0 else (0, 0)
-        x["enemies_near"] = min(e, e * (1 - self.wall / RING if self.ring else 1))
+        x["enemies_near"] = min(e, e * (1 - self.wall / RING if self.ring else 1)) + self.inside
         x["ring_planned"] = int(self.ring)
         if self.ring:
             x["wall_frac"], x["holes"] = self.wall / RING, RING - self.wall
-            x["inside_wall"] = 1 if a.dist < 8 else 0
+            x["inside_wall"] = 1 if a.dist < 8 and not deep else 0
             x["posts_free"] = max(0, POSTS - self.posts_taken)
         x["moat_frac"] = self.moat / MOAT
         x["torches_placed"] = self.torches
         x["has_post"] = int(a.post)
         x["post_dist"] = abs(a.dist - 7) if a.post else 0
         x["light_spots"] = max(0, 12 - self.torches) if a.n("torch") else 0
-        x["can_equip"] = 1 if a.tier("sword") > a.held else 0
+        x["can_equip"] = 1 if a.tier("sword") > a.held or a.can_wear() else 0
+        x["mobs_inside"], x["breaches"], x["mob_seconds"], x["clean_waves"] = self.inside, self.wave_breaches, self.wave_mob_s, self.clean
+        for k, v in self.recent().items():
+            x[k] = v
+        x["sources"] = self.sources()
+        x["stock_value"] = self.stock()
+        x["stall"] = min(STALL_S, self.t - a.progress_t)
+        for k in a.ach:
+            x["ach_" + k] = 1
+        x["ach_count"] = len(a.ach)
+        x["ach_available"] = len([k for k in ACH.available(a.ach) if ACH.ACH[k][2]])
+        nxt = self.next_ach(a)
+        if nxt:
+            x["ach_target_" + nxt] = 1
         others = [b for b in self.agents if b is not a and b.alive]
         x["allies_alive"] = len(others)
         x["allies_health_mean"] = sum(b.health for b in others) / len(others) if others else 20
         x["allies_health_min"] = min((b.health for b in others), default=20)
         x["allies_low"] = sum(1 for b in others if b.health <= spec.LOW)
-        x["ally_dist"] = min((abs(a.dist - b.dist) + 2 for b in others), default=32)
+        x["ally_dist"] = min((abs(a.dist - b.dist) + 2 + 30 * abs(a.depth - b.depth) for b in others), default=32)
         x["last_" + a.outcome] = 1
         x["repeated"] = a.repeated
         x["last_seconds"] = a.last_s
@@ -201,28 +483,67 @@ class SimEnv:
             x["last_action_" + ACTIONS[a.last]] = 1
         x["time_frac"] = self.t / self.sc["seconds"]
         x["goal_progress"] = self.progress()
-        for item, (need, _, small) in RECIPES.items():
+        for item, (need, _, small) in SIM_RECIPES.items():
             ok = all(a.n(k) >= v for k, v in need.items())
             x["craftable_" + item] = int(ok)
             x["small_" + item] = int(ok and small)
+        for m in ARMOR_MAT:
+            x["armor_craftable_" + m] = int(a.armor_piece(m) is not None)
         return x
+
+    def next_ach(self, a: Agent) -> str | None:
+        """the achievement track's target: the shallowest available one the environment gives"""
+        av = [k for k in ACH.available(a.ach) if ACH.ACH[k][2]]
+        return min(av, key=lambda k: (ACH.depth(k), ACH.ALL.index(k))) if av else None
+
+    def pairs(self, a: Agent | None = None) -> int:
+        """the pen's pairs that may breed now (two adults of a kind, rested), with the feed in the bag for them"""
+        n = sum(1 for k, v in self.pen_adults.items() if v >= 2 and self.pen_rest.get(k, 0) <= self.t)
+        if a is not None and a.n("wheat") + a.n("wheat_seeds") < 2:
+            return 0
+        return n
 
     # ---- the goal ---------------------------------------------------------------------------------------
     def crew(self, k):
         return sum(a.n(k) for a in self.agents if a.alive)
 
     def food(self):
-        return self.crew("food_raw") + self.crew("food_cooked")
+        return self.crew("food_raw") + self.crew("food_cooked") + self.crew("bread")
+
+    def need(self) -> float:
+        return max(1, self.sc["per"] * (1 if self.sc.get("crew_goal") else len(self.agents)))
 
     def progress(self) -> float:
         s, n = self.sc, len(self.agents)
-        if s["goal"] == "items":
-            return min(1.0, self.crew(s["item"]) / (s["per"] * n))
-        if s["goal"] == "food":
-            return min(1.0, self.food() / (s["per"] * n))
-        if s["goal"] == "fortify":
+        g = s["goal"]
+        need = self.need()
+        if g == "items":
+            return min(1.0, self.crew(s["item"]) / need)
+        if g == "food":
+            return min(1.0, self.food() / need)
+        if g == "fortify":
             return 0.5 * self.wall / RING + 0.5 * min(1.0, self.moat / (0.9 * MOAT))
+        if g == "armor":   # each agent wears per_agent armour points
+            return sum(min(1.0, a.armor() / s["per"]) for a in self.agents) / n
+        if g == "bow":     # a bow each and per_agent arrows each
+            return 0.5 * min(1.0, sum(1 for a in self.agents if a.n("bow")) / n) + 0.5 * min(1.0, self.crew("arrow") / need)
+        if g == "mine_trip":   # down to a horizon, ore got, back on the surface
+            return min(1.0, sum(a.trips for a in self.agents) / need)
+        if g == "farm":    # edible harvest: bread
+            return min(1.0, self.crew("bread") / need)
+        if g == "pasture":
+            return min(1.0, self.bred / need)
+        if g == "enchant":
+            return min(1.0, sum(a.enchanted for a in self.agents) / need)
+        if g == "achievements":   # per_agent achievements of the crew besides the root
+            return min(1.0, self.crew_ach() / s["per"])
         return min(1.0, self.cleared / 10)
+
+    def crew_ach(self) -> int:
+        got = set()
+        for a in self.agents:
+            got |= a.ach
+        return len(got - {"openInventory"})
 
     def goal_met(self) -> bool:
         s = self.sc
@@ -234,37 +555,120 @@ class SimEnv:
 
     def success(self) -> bool:
         """the policy side's success: the goal, or for a waves run WAVES_PASS waves cleared"""
+        if "pass_kills" in self.sc:
+            return self.kills >= self.sc["pass_kills"] * len(self.agents)
+        if "pass_spawned" in self.sc:
+            return self.wave_num >= 2 and self.spawned <= self.sc["pass_spawned"]
         if self.sc["goal"] == "none":
             return self.cleared >= spec.WAVES_PASS.get(self.scenario, 3)
         return self.goal_met()
 
     def potential(self) -> float:
         """the optional shaping's potential: the goal's progress plus the crafting chain's steps toward it"""
-        if not self.shaping:
+        if not self.shaping or self.sim_only:
             return 0.0
         c = self.crew
-        chain = 0.0
+        chain_ = 0.0
         item = self.sc["item"]
         if item in ("stone_pickaxe", "stone_sword", "iron_pickaxe"):
-            chain = 0.2 * ((c("log") + c("planks") + c("stick")) > 0) + 0.2 * (self.table or c("crafting_table") > 0) \
+            chain_ = 0.2 * ((c("log") + c("planks") + c("stick")) > 0) + 0.2 * (self.table or c("crafting_table") > 0) \
                 + 0.2 * (c("wooden_pickaxe") + c("stone_pickaxe") + c("iron_pickaxe") > 0) + 0.2 * (c("cobblestone") >= 3)
             if item == "iron_pickaxe":
-                chain = 0.25 * (c("iron_ore") + c("iron_ingot") > 0) + 0.25 * (self.furnace or c("furnace") > 0) + 0.3 * min(1, c("iron_ingot") / 3)
-        return self.shaping * (self.progress() + chain)
+                chain_ = 0.25 * (c("iron_ore") + c("iron_ingot") > 0) + 0.25 * (self.furnace or c("furnace") > 0) + 0.3 * min(1, c("iron_ingot") / 3)
+        return self.shaping * (self.progress() + chain_)
+
+    # ---- the scales (contract 2): measured values, paid by their change (RlScore) ----------------------
+    def factor(self, key: str) -> float:
+        """RlReward.factor: a part named by the scenario its factor, else its scale's (0 when off); the others 1"""
+        comp = key.split(".")[0]
+        if comp not in spec.SCALES or self.sim_only:
+            return 1.0
+        if key in self.factors:
+            return float(self.factors[key])
+        return float(self.factors.get(comp, 0.0))
+
+    def stock(self) -> float:
+        v = 0.0
+        for k, (cap, val) in STOCK.items():
+            have = sum(FOOD_PTS[f] * self.crew(f) for f in FOODS) if k == "food" else self.crew(k)
+            v += min(have, cap) / cap * val
+        return v
+
+    def sources(self) -> float:
+        return min(self.planted, 16) / 16 + min(sum(self.pen_adults.values()), 2) / 2 + min(len(self.saplings) + self.grown, 4) / 4
+
+    def ledger(self, kind: str, amount: float):
+        if amount > 0:
+            self.sus[kind] += amount
+            self.sus_win.append((self.t, kind, amount))
+
+    def recent(self) -> dict[str, float]:
+        while self.sus_win and self.sus_win[0][0] < self.t - WINDOW_S:
+            self.sus_win.pop(0)
+        out = {"food_renew": 0.0, "food_eaten": 0.0, "wood_renew": 0.0, "wood_used": 0.0}
+        for _, k, v in self.sus_win:
+            out[k] += v
+        return out
+
+    def measure(self, first: bool = False):
+        """every measured part: its change paid (the first value is the baseline: nothing for a kit)"""
+        if not V2 or self.sim_only:
+            return
+        tr = self.crew_track
+
+        def crew_delta(key, v, causes=None):
+            was = tr.get(key)
+            tr[key] = v
+            if was is not None and not first and v != was:
+                self.give_all(key, v - was, causes=causes)
+        crew_delta("safety.wall", self.wall / RING if self.ring else 0.0)
+        crew_delta("safety.moat", self.moat / MOAT)
+        crew_delta("safety.light", min(1.0, self.torches / 12))
+        crew_delta("safety.gate", 1.0 if self.door and not self.gate_open else 0.0)
+        crew_delta("enchant.table", 1.0 if self.ench_table else 0.0)
+        crew_delta("sustain.source", self.sources())
+        crew_delta("stock.value", self.stock())
+        f, wd = min(self.sus["food_renew"], self.sus["food_eaten"]), min(self.sus["wood_renew"], self.sus["wood_used"])
+        if not first:
+            if f > self.sus_paid[0]:
+                self.give_all("sustain.food", f - self.sus_paid[0], causes=self.last_ren_causes)
+            if wd > self.sus_paid[1]:
+                self.give_all("sustain.wood", wd - self.sus_paid[1])
+        self.sus_paid = [f, wd]
+        for a in self.agents:
+            eq = (min(1.0, a.armor() / 20), min(1.0, max(a.held, a.tier("sword")) / 4), min(1.0, a.tier("pickaxe") / 4),
+                  1.0 if a.n("bow") and a.n("arrow") >= 4 else 0.0)
+            for key, v in zip(("equipment.armor", "equipment.weapon", "equipment.pickaxe", "equipment.ranged"), eq):
+                was = a.track.get(key)
+                a.track[key] = v
+                if was is not None and not first and v != was and a.alive:
+                    self.give(a, key, v - was)
+            was = a.track.get("mine.depth", 0.0)
+            if a.depth > was:
+                a.track["mine.depth"] = a.depth
+                if not first:
+                    self.give(a, "mine.depth", a.depth - was)
 
     # ---- rewards ----------------------------------------------------------------------------------------
-    def give(self, a: Agent, key: str, n: float = 1.0):
-        p = self.w.get(key, 0.0) * n
+    def give(self, a: Agent, key: str, n: float = 1.0, causes: list | None = None):
+        w = self.w.get(key)
+        if w is None:
+            return
+        p = w * n * (self.factor(key) if V2 else 1.0)
         if p == 0:
             return
         comp = key.split(".")[0]
         a.acc += p
         a.comp[comp] = a.comp.get(comp, 0.0) + p
         self.comp[comp] = self.comp.get(comp, 0.0) + p
+        if causes:
+            a.events.append({"key": key, "points": p, "t": self.t, "causes": [c for c in causes if c is not None and c >= 0]})
+        if p > 0 and (comp in spec.SCALES or comp in ("goal", "skill_ok")):
+            a.progress_t = self.t     # RlScore.progress: the stall's clock starts again
 
-    def give_all(self, key, n=1.0):
+    def give_all(self, key, n=1.0, causes=None):
         for a in self.agents:
-            self.give(a, key, n)
+            self.give(a, key, n, causes)
 
     def got(self, a: Agent, k: str, v: int, key: str | None = None):
         a.add(k, v)
@@ -274,69 +678,115 @@ class SimEnv:
             self.items_seen.add(k)
             self.give(a, "new_item")
 
+    def made(self, a: Agent, thing: str):
+        a.made[thing] = (a.did, self.t)
+
+    def cause(self, a: Agent, thing: str | None) -> int | None:
+        m = a.made.get(thing) if thing else None
+        return m[0] if m else None
+
+    def chain(self, a: Agent, thing: str | None, effect: str, k: int = 1):
+        """for the film: the effects of a thing made by a decision ("stone_sword made 4.2 min ago -> 3 kills")"""
+        m = a.made.get(thing) if thing else None
+        if not m:
+            return
+        c = self.chains.setdefault((a.i, m[0], thing), [m[1], {}, self.t])
+        c[1][effect] = c[1].get(effect, 0) + k
+        c[2] = self.t
+
+    def note_novel(self, a: Agent, name: str, before: dict):
+        """novel_effect: what the action brought (new kinds in the bag, an achievement) never seen from it before"""
+        kinds = sorted(k for k, v in a.bag.items() if v > before.get(k, 0))
+        if not kinds:
+            return
+        key = name + "->" + ",".join(kinds)
+        n = self.effects.get(key, 0)
+        self.effects[key] = n + 1
+        if n == 0:
+            self.novel += 1
+        if self.curiosity:
+            self.give(a, "novel_effect", 1.0 / math.sqrt(1 + n))
+
+    def achieve(self, a: Agent, k: str):
+        """the game's rule: an achievement needs its parent got by the same agent; once an agent"""
+        if k in a.ach or k not in ACH.ACH or not ACH.ACH[k][2]:
+            return
+        par = ACH.ACH[k][0]
+        if par is not None and par not in a.ach:
+            return
+        a.ach.add(k)
+        self.give(a, "achievement.new")
+        self.give(a, "achievement.depth", ACH.depth(k))
+
     # ---- skills -----------------------------------------------------------------------------------------
+    def dur(self, name: str, ok: bool) -> float:
+        c = sk(name)
+        if ok:
+            return max(0.5, c["dur_ok"] * self.rng.uniform(0.7, 1.3))
+        return max(0.5, c.get("dur_fail", 2) * self.rng.uniform(0.6, 1.4))
+
     def begin(self, a: Agent, act: int):
         name = ACTIONS[act]
         r = self.rng
+        a.did = a.next_did
         raw = self.raw(a)
         if not spec.allowed(act, raw):   # RlEnv: a masked action is a failed step, nothing done
             a.pending = (act, False, "MASKED", self.t)
             a.free_at = self.t
             return
+        c = sk(name)
+        kind = name.split(":")[0] if not name.startswith(("mine:", "craft:")) else name
         ok, reason = True, ""
+        if not self.noise:
+            pass
+        elif a.stuck.get(kind) and r.random() < c.get("sticky", 0.0):
+            ok, reason = False, "OUT_OF_REACH" if kind in ("build_wall", "repair_wall", "light_area") else "NO_PATH"
+        elif r.random() < c.get("fail_fresh", 0.0):
+            ok, reason = False, {"chop_tree": "NO_PATH", "hunt": "TIMEOUT"}.get(kind, "BLOCKED" if kind.startswith("mine") else "NO_PATH")
+            if r.random() < c.get("sticky", 0.0):
+                a.stuck[kind] = True
         far = a.dist
-        if name == "look_around":
-            dur = 3.0
-        elif name == "go_to:frontier":
-            dur = 12 + r.uniform(0, 10)
-        elif name == "chop_tree:near":
-            dur = r.uniform(12, 25) + raw["tree_dist"] * 0.3
-            ok = r.random() > 0.07
-            reason = "" if ok else "NO_PATH"
-        elif name.startswith("mine:"):
-            sp = {1: 1.0, 2: 1.5, 3: 2.0}.get(int(raw["pick_tier"]), 1.0)
-            dur = {"mine:stone": 22, "mine:coal_ore": 12, "mine:iron_ore": 16}[name] / sp + r.uniform(0, 5)
-            ok = r.random() > 0.07
-            reason = "" if ok else "BLOCKED"
-        elif name.startswith("craft:"):
-            dur = 2.0 if RECIPES[name[6:]][2] else 2.0 + (0 if self.table and abs(a.dist - self.table_d) < 6 else 4)
-        elif name.startswith("smelt:"):
-            dur = 4 + 10 * min(3 if name.endswith("ingot") else 4, a.n("iron_ore") if name.endswith("ingot") else a.n("food_raw"))
-        elif name.startswith("place:"):
-            dur = 1.5
-        elif name == "build_wall:ring":
-            dur = 3 + min(24, RING - self.wall, int(raw["wall_blocks"])) * 0.8 + far * 0.3
-        elif name == "repair_wall:nearest":
-            dur = 3 + min(RING - self.wall, int(raw["wall_blocks"])) * 0.8
-        elif name == "dig_moat:ring":
-            dur = 3 + min(16, MOAT - self.moat) * 1.2
-            ok = a.tier("pickaxe") >= 1 or r.random() < 0.5
-            reason = "" if ok else "NO_TOOL"
-        elif name == "light_area:base":
-            dur = 3 + min(a.n("torch"), int(raw["light_spots"])) * 1.5
-        elif name == "equip:best":
-            dur = 1.0
-        elif name == "take_post:auto":
-            dur = 3 + abs(far - 7) * 0.4
-        elif name == "hold_line:post":
-            dur = 60.0
-            a.holding = True
-        elif name in ("retreat:home", "go_to:base"):
-            dur = 2 + far * 0.4
-        elif name == "eat:best":
-            dur = 2.0
-        elif name == "hunt:near":
-            dur = r.uniform(10, 30)
-            ok = r.random() > 0.2
-            reason = "" if ok else "NO_PATH"
-        elif name in ("put:chest_all", "take:chest_food"):
-            dur = 3 + far * 0.3
-        elif name == "wait:5":
-            dur = 5.0
-        else:
-            dur = 2.0
-        if not ok:
-            dur = min(dur, r.uniform(2, 6))
+        dur = self.dur(name, ok)
+        if ok:   # the skill's own time where the calibration's mean hides a dependence
+            lv = CAL["mine"]["level_s"]
+            if name == "go_to:frontier":
+                dur = 8 + r.uniform(0, 10)
+            elif name in ("retreat:home", "go_to:base"):
+                dur = 2 + far * 0.4 + lv * 0.3 * a.depth
+            elif name == "chop_tree:near":
+                dur += raw["tree_dist"] * 0.2
+            elif name.startswith("mine:"):
+                sp = {1: 1.0, 2: 1.5, 3: 2.0, 4: 2.5}.get(int(raw["pick_tier"]), 1.0)
+                dur = dur / sp
+            elif name.startswith("craft:") and not SIM_RECIPES[name[6:]][2] or name.startswith("craft_armor:"):
+                dur = SK["craft_small"]["dur_ok"] + (0 if self.table and abs(a.dist - self.table_d) < 6 else c["dur_ok"])
+            elif name == "build_wall:ring":
+                dur = 3 + min(24, RING - self.wall, int(raw["wall_blocks"])) * 1.9 + far * 0.3
+            elif name == "repair_wall:nearest":
+                dur = 3 + min(RING - self.wall, int(raw["wall_blocks"]), 12) * 3.5
+            elif name == "hold_line:post":
+                dur = 60.0
+                a.holding = True
+            elif name == "wait:5":
+                dur = 5.0
+            elif name == "descend:mine":
+                dur = lv * (1.0 if self.mine_levels <= a.depth else 0.3) + (abs(far - self.mine_d) * 0.4 if a.depth == 0 else 0)
+            elif name == "ascend:surface":
+                dur = lv * 0.3 * a.depth
+            elif name == "tunnel:branch":
+                dur = 25 + r.uniform(0, 15)
+            elif name == "shoot:post":
+                dur = 10.0
+            elif name in ("till:farm", "plant:wheat", "harvest:farm", "plant:sapling"):
+                dur = 6 + r.uniform(0, 8)
+            elif name in ("gather:seeds", "gather:saplings", "gather:sugar_cane"):
+                dur = 10 + r.uniform(0, 12)
+            elif name == "lure:pen":
+                dur = 20 + r.uniform(0, 20)
+            elif name in ("breed:pen", "slaughter:pen", "enchant:best", "close:gate"):
+                dur = 3 + r.uniform(0, 3)
+            elif name == "build_pen:pasture":
+                dur = 30 + r.uniform(0, 15)
         a.pending = (act, ok, reason, self.t)
         a.free_at = self.t + dur
 
@@ -345,26 +795,37 @@ class SimEnv:
         a.pending = None
         a.holding = False
         name = ACTIONS[act]
+        self.changed = False
         if ok:
+            before = dict(a.bag)
             res = self.effect(a, name, self.rng)
             if res:
                 ok, reason = False, res
+            else:
+                self.note_novel(a, name, before)
+        if name in MOVES or name.startswith("place:"):
+            a.stuck.clear()
         result = "OK" if ok else reason
-        self.ended(a, act, result, self.t - began)
+        self.ended(a, act, result, self.t - began, name)
 
-    def ended(self, a: Agent, act: int, result: str, secs: float):
+    def ended(self, a: Agent, act: int, result: str, secs: float, name: str = ""):
         out = spec.outcome(result)
         if out != "ok" and a.last == act and a.outcome == out:
             a.repeated += 1
         else:
             a.repeated = 0 if out == "ok" else 1
         a.last, a.outcome, a.last_s = act, out, secs
-        self.give(a, "skill_ok" if result == "OK" else "skill_fail")
-        for kind in ("pick", "weapon", "armor"):
-            t = a.tier({"pick": "pickaxe", "weapon": "sword"}.get(kind, "armor_none")) if kind != "armor" else a.armor // 5
-            if t > a.best[kind]:
-                self.give(a, "tier_up", t - a.best[kind])
-                a.best[kind] = t
+        if result == "OK":
+            if not V2 or (name not in NO_RESULT and self.changed):
+                self.give(a, "skill_ok")
+        else:
+            self.give(a, "skill_fail")
+        if not V2:
+            for kind in ("pick", "weapon", "armor"):
+                t = a.tier({"pick": "pickaxe", "weapon": "sword"}[kind]) if kind != "armor" else a.armor() // 5
+                if t > a.best[kind]:
+                    self.give(a, "tier_up", t - a.best[kind])
+                    a.best[kind] = t
 
     def see(self, attr: str, hidden: str, p: float, k: int = 1):
         h = getattr(self, hidden)
@@ -373,65 +834,186 @@ class SimEnv:
             setattr(self, hidden, h - n)
             setattr(self, attr, getattr(self, attr) + n)
 
+    def see_ore(self, lv: int, k: str, p: float, n: int = 1):
+        h = self.hidden[lv].get(k, 0)
+        if h > 0 and self.rng.random() < p:
+            n = min(h, n)
+            self.hidden[lv][k] = h - n
+            self.seen[lv][k] = self.seen[lv].get(k, 0) + n
+
+    def xp(self, a: Agent, pts: float):
+        """experience points to levels, 1.7.10's first levels (17 points a level)"""
+        a.xp_pts += pts
+        while a.xp_pts >= 17:
+            a.xp_pts -= 17
+            a.xp += 1
+
+    def leave(self, a: Agent):
+        """going out of the ring (contract 2): through the gate opens it; with no gate the agent breaks a way through"""
+        if not (V2 and self.ring and a.dist < 8 and a.depth == 0):
+            return
+        if self.door:
+            self.gate_open = True
+        elif self.wall >= RING - self.bad - 2 and self.wall > 0:
+            self.wall -= 1
+
     def effect(self, a: Agent, name: str, r: random.Random) -> str:
         """the skill's effects at its end; "" when it went well, else the reason it failed"""
+        self.changed = True
         if name == "look_around":
-            self.see("trees", "trees_hidden", 0.7, r.randint(1, 4))
-            self.see("animals", "animals_hidden", 0.4, r.randint(1, 2))
-            self.see("coal", "coal_hidden", 0.2)
-            self.stone_seen += r.randint(0, 6)
+            self.changed = False
+            if a.depth:
+                for k in self.hidden[a.depth]:
+                    self.see_ore(a.depth, k, 0.2)
+            else:
+                self.see("trees", "trees_hidden", 0.7, r.randint(1, 4))
+                self.see("animals", "animals_hidden", 0.4, r.randint(1, 2))
+                self.see("coal", "coal_hidden", 0.2)
+                self.see("cane", "cane_hidden", 0.3)
+                self.stone_seen += r.randint(0, 6)
         elif name == "go_to:frontier":
+            self.leave(a)
             a.dist += r.uniform(8, 16)
             self.see("trees", "trees_hidden", 0.9, r.randint(2, 6))
             self.see("animals", "animals_hidden", 0.6, r.randint(1, 3))
             self.see("coal", "coal_hidden", 0.35)
-            self.see("iron", "iron_hidden", 0.15)
+            self.see("iron", "iron_hidden", 0.15 if not self.sim_only else 0.3)
+            self.see("cane", "cane_hidden", 0.4, r.randint(1, 2))
+            self.grass += r.randint(0, 4)
+            self.leaves += r.randint(0, 6)
+            self.gravel += r.choice([0, 0, 1])
             self.stone_seen += r.randint(0, 10)
         elif name == "chop_tree:near":
             if self.trees <= 0:
                 return "NO_TREE_THERE"
+            self.leave(a)
             self.trees -= 1
-            self.got(a, "log", r.randint(3, 6), "gathered.log")
+            planted = self.grown > 0 and r.random() < self.grown / max(1, self.trees + 1)
+            if planted:
+                self.grown -= 1
+            if self.noise and r.random() < SK["chop_tree"]["empty_ok"]:   # chopped, the logs not picked up (real v1: half)
+                self.changed = False
+            else:
+                n = r.randint(3, 6)
+                self.got(a, "log", n, "gathered.log")
+                self.achieve(a, "mineWood")
+                if planted:   # a tree grown from a sapling: renewable wood
+                    self.ledger("wood_renew", n)
+                if r.random() < 0.5:
+                    self.got(a, "sapling", r.randint(1, 2))
             a.dist = max(a.dist, r.uniform(6, 20))
         elif name == "mine:stone":
-            self.got(a, "cobblestone", 8, "gathered.cobblestone")
-            self.stone_seen = max(self.stone_seen, 8)
-            self.see("coal", "coal_hidden", 0.5, r.randint(1, 2))
-            self.see("iron", "iron_hidden", 0.35)
-            a.dist = max(a.dist, r.uniform(4, 16))
-        elif name == "mine:coal_ore":
-            if self.coal <= 0:
+            if self.noise and r.random() < SK["mine_stone"]["empty_ok"] and not a.depth:
+                self.changed = False
+                return ""
+            n = max(1, int(round(r.gauss(SK["mine_stone"]["yield_mean"], 1.5))))
+            self.got(a, "cobblestone", n, "gathered.cobblestone")
+            if a.depth:
+                for k in self.hidden[a.depth]:
+                    self.see_ore(a.depth, k, 0.15)
+            else:
+                self.stone_seen = max(self.stone_seen, 8)
+                self.see("coal", "coal_hidden", 0.5, r.randint(1, 2))
+                self.see("iron", "iron_hidden", 0.35)
+                a.dist = max(a.dist, r.uniform(4, 16))
+        elif name == "mine:gravel":
+            where = self.seen[a.depth] if a.depth else None
+            have = where.get("gravel", 0) if where is not None else self.gravel
+            if have <= 0:
                 return "NOT_SEEN"
-            self.coal -= 1
-            self.got(a, "coal", 3, "gathered.coal")
-            self.got(a, "cobblestone", 2, "gathered.cobblestone")
-        elif name == "mine:iron_ore":
-            if self.iron <= 0:
+            if where is not None:
+                where["gravel"] = have - 1
+            else:
+                self.gravel -= 1
+            n = r.randint(1, 4)
+            fl = sum(1 for _ in range(n) if r.random() < 0.1)   # 1.7.10: gravel drops flint a tenth of the time
+            if fl:
+                self.got(a, "flint", fl)
+            if n - fl:
+                self.got(a, "gravel", n - fl)
+        elif name.startswith("mine:"):
+            ore = name[5:].replace("_ore", "")
+            where = self.seen[a.depth] if a.depth else None
+            have = where.get(ore, 0) if where is not None else getattr(self, ore, 0) if ore in ("coal", "iron") else 0
+            if have <= 0:
                 return "NOT_SEEN"
-            self.iron -= 1
-            self.got(a, "iron_ore", 3, "gathered.iron_ore")
-        elif name.startswith("craft:"):
-            item = name[6:]
-            need, out, small = RECIPES[item]
+            if where is not None:
+                where[ore] = have - 1
+            else:
+                setattr(self, ore, have - 1)
+            item, n, xp = {"coal": ("coal", 3, 1), "iron": ("iron_ore", 3, 0), "gold": ("gold_ore", 2, 0),
+                           "redstone": ("redstone", 4, 3), "diamond": ("diamond", 1, 5), "obsidian": ("obsidian", 1, 0)}[ore]
+            pick = a.best_item("pickaxe")
+            causes = [self.cause(a, pick)]
+            self.got(a, item, n, "gathered." + item if item in ("coal", "iron_ore") else None)
+            self.give(a, "mine." + ore, n, causes=causes)
+            if ore == "iron":
+                self.give(a, "iron_found", n, causes=causes)
+            self.chain(a, pick, item, n)
+            self.xp(a, xp * n)
+            if a.depth:
+                a.trip_ores += n
+            if item == "diamond":
+                self.achieve(a, "diamonds")
+        elif name == "descend:mine":
+            self.leave(a)
+            if self.mine_levels <= a.depth:
+                self.mine_levels = a.depth + 1
+                self.got(a, "cobblestone", r.randint(8, 16))
+            a.depth += 1
+            a.trip_out = True
+            a.post = False
+            a.dist = self.mine_d
+            self.made(a, "trip")
+            for k in self.hidden[a.depth]:
+                self.see_ore(a.depth, k, 0.35)
+        elif name == "tunnel:branch":
+            a.tunnels[a.depth] = a.tunnels.get(a.depth, 0) + 1
+            self.got(a, "cobblestone", r.randint(6, 12))
+            for k in self.hidden[a.depth]:
+                self.see_ore(a.depth, k, 0.55, r.randint(1, 2))
+        elif name == "ascend:surface":
+            a.depth = 0
+            a.dist = self.mine_d
+            self.end_trip(a)
+        elif name.startswith("craft:") or name.startswith("craft_armor:"):
+            item = name[6:] if name.startswith("craft:") else a.armor_piece(name[12:])
+            if item is None:
+                return "MISSING"
+            need, out, small = SIM_RECIPES[item]
             if not all(a.n(k) >= v for k, v in need.items()):
                 return "MISSING"
-            if not small and not (self.table and abs(a.dist - self.table_d) <= 24):
-                if a.n("crafting_table") < 1:
-                    return "NO_TABLE"
-                a.add("crafting_table", -1)     # its own table from the bag, put down beside it
-                self.table, self.table_d = True, a.dist
+            if not small:
+                if not (self.table and abs(a.dist - self.table_d) <= 24 and a.depth == 0):
+                    if a.n("crafting_table") < 1:
+                        return "NO_TABLE"
+                    a.add("crafting_table", -1)     # its own table from the bag, put down beside it
+                    self.put_table(a)
+                if self.table_bad:                   # a table its crafts cannot reach (real v1: a quarter)
+                    a.stuck[name] = True
+                    return "NO_PATH"
             for k, v in need.items():
                 a.add(k, -v)
+            if item == "bread":   # the farm's wheat makes renewable bread: its planting is its cause
+                k = 0
+                while k < 3 and self.ren_wheat:
+                    did, ag = self.ren_wheat.pop(0)
+                    self.ren_food.append((FOOD_PTS["bread"] / 3, did, ag))
+                    k += 1
+            if item in ("planks", "stick") or item.startswith("wooden_") or item in ("crafting_table", "chest", "bookshelf", "fence", "fence_gate"):
+                self.ledger("wood_used", need.get("log", 0) + need.get("planks", 0) / 4)
             self.got(a, item, out)
+            self.made(a, item)
+            self.on_craft(a, item)
         elif name.startswith("smelt:"):
-            ingot = name.endswith("ingot")
-            src, dst, cap = ("iron_ore", "iron_ingot", 3) if ingot else ("food_raw", "food_cooked", 4)
+            src, dst = {"smelt:iron_ingot": ("iron_ore", "iron_ingot"), "smelt:gold_ingot": ("gold_ore", "gold_ingot"),
+                        "smelt:food": ("food_raw", "food_cooked")}[name]
             if not (self.furnace and abs(a.dist - self.furnace_d) <= 24):
                 if a.n("furnace") < 1:
                     return "NO_FURNACE"
                 a.add("furnace", -1)
                 self.furnace, self.furnace_d = True, a.dist
-            n = min(cap, a.n(src))
+            n = min(int(SK["smelt"].get("per_call", 1)), a.n(src))
             for fuel in ("coal", "planks", "log"):
                 if a.n(fuel) >= 1:
                     a.add(fuel, -1)
@@ -440,38 +1022,59 @@ class SimEnv:
                 return "NO_FUEL"
             a.add(src, -n)
             self.got(a, dst, n)
+            self.xp(a, 0.7 * n)
+            if dst == "iron_ingot":
+                self.achieve(a, "acquireIron")
         elif name.startswith("place:"):
             item = name[6:]
             if a.n(item) < 1:
                 return "NO_ITEMS"
             a.add(item, -1)
             if item == "crafting_table":
-                self.table, self.table_d = True, a.dist
+                self.put_table(a)
             elif item == "furnace":
                 self.furnace, self.furnace_d = True, a.dist
+            elif item == "enchanting_table":
+                self.ench_table = True
+            elif item == "bookshelf":
+                self.shelves += 1
+                self.give(a, "enchant.shelf")
             else:
                 self.chest = True
         elif name in ("build_wall:ring", "repair_wall:nearest"):
             if name.startswith("repair") and self.wall >= RING:
                 return "NO_HOLES"
-            self.ring = True
-            cells = min(24 if name.startswith("build") else RING, RING - self.wall)
+            if not self.ring:
+                self.ring = True
+                self.bad = int(RING * r.uniform(*SK["repair_wall"]["bad_cells"])) if self.noise else 0
+            good_left = RING - self.wall - self.bad
+            cells = min(24 if name.startswith("build") else 12, RING - self.wall)
+            if good_left <= 0:   # only cells out of reach are left: from a new spot some of them are reached
+                if self.bad <= 0 or r.random() < 0.5:
+                    a.stuck[name.split(":")[0]] = True
+                    return "OUT_OF_REACH"
+                k = min(self.bad, r.randint(1, 4))
+                self.bad -= k
+                good_left = k
+            cells = min(cells, good_left)
             mat = max(("cobblestone", "planks", "dirt"), key=a.n)
             k = min(a.n(mat), cells)
             if k <= 0:
                 return "NO_ITEMS"
             a.add(mat, -k)
             self.wall += k
+            self.builders.append((a.did, self.t, a.i))
             self.give(a, "built.wall", k)
             a.dist = r.uniform(5, 9)
         elif name == "dig_moat:ring":
-            n = min(16, MOAT - self.moat)
+            n = min(int(SK["dig_moat"].get("yield_mean", 16)), MOAT - self.moat)
             self.moat += n
+            self.builders.append((a.did, self.t, a.i))
             self.got(a, "dirt", n)
             self.give(a, "built.moat", n)
             a.dist = r.uniform(8, 11)
         elif name == "light_area:base":
-            n = min(a.n("torch"), max(0, 12 - self.torches))
+            n = min(a.n("torch"), max(0, 12 - self.torches), 4)
             if n <= 0:
                 return "NO_SPOT"
             a.add("torch", -n)
@@ -479,40 +1082,95 @@ class SimEnv:
             self.give(a, "built.torch", n)
         elif name == "equip:best":
             t = a.tier("sword")
-            if t <= a.held:
+            wore = False
+            for k in sorted(a.bag, key=lambda k: -ARMOR.get(k, 0)):
+                if k in ARMOR and a.n(k) > 0:
+                    slot = k.rsplit("_", 1)[1]
+                    if ARMOR[k] > ARMOR.get(a.worn.get(slot, ""), 0):
+                        if slot in a.worn:
+                            a.add(a.worn[slot], 1)
+                        a.worn[slot] = k
+                        a.add(k, -1)
+                        wore = True
+            if t <= a.held and not wore:
                 return "NO_WEAPON"
-            a.held = t
+            if t > a.held:
+                self.made(a, "equipped")
+            a.held = max(a.held, t)
         elif name == "take_post:auto":
             if not a.post:
                 if self.posts_taken >= POSTS:
                     return "ALL_TAKEN"
                 self.posts_taken += 1
             a.post, a.dist = True, 7.0
+            self.made(a, "post")
         elif name == "hold_line:post":
-            pass   # the fight is in world()
+            self.changed = False   # the fight is in world(): its kills are the result
+        elif name == "shoot:post":
+            e = self.enemies if self.phase == "wave" else 0
+            if e <= 0:
+                return "NOT_VISIBLE"
+            shots = min(a.n("arrow"), r.randint(2, 5))
+            a.add("arrow", -shots)
+            p = 0.18 + (0.1 if a.post else 0.0)
+            k = min(int(math.ceil(self.enemies)), sum(1 for _ in range(shots) if r.random() < p))
+            if k:
+                self.kill(a, k, weapon="bow")
+                if r.random() < 0.02 * k:   # a skeleton shot from far off: the game's 50 blocks, now and then
+                    self.achieve(a, "snipeSkeleton")
+            else:
+                self.changed = False
         elif name in ("retreat:home", "go_to:base"):
+            if a.depth:
+                self.end_trip(a)
             a.dist = r.uniform(0, 2)
+            a.depth = 0
         elif name == "eat:best":
             ate = 0
-            for food, heal in (("food_cooked", 6), ("food_raw", 3)):
-                while a.n(food) > 0 and a.health < 20:
+            causes = []
+            for food in ("food_cooked", "bread", "food_raw"):
+                while a.n(food) > 0 and (a.health < 20 or (self.hunger and a.food < 20)):
                     a.add(food, -1)
-                    a.health = min(20.0, a.health + heal)
+                    pts = FOOD_PTS[food]
+                    if self.hunger:
+                        a.food = min(20.0, a.food + pts)
+                        a.sat = min(a.food, a.sat + SAT[food])
+                    else:
+                        a.health = min(20.0, a.health + {"food_cooked": 6, "food_raw": 3, "bread": 5}[food])
+                    left = pts
+                    while left > 0 and self.ren_food:   # renewable food eaten first (its planting the cause)
+                        p, did, ag = self.ren_food[0]
+                        take = min(p, left)
+                        left -= take
+                        self.ledger("food_renew", take)
+                        causes.append(did)
+                        if p - take <= 1e-9:
+                            self.ren_food.pop(0)
+                        else:
+                            self.ren_food[0] = (p - take, did, ag)
+                    self.ledger("food_eaten", pts)
                     ate += 1
+                    if self.hunger and a.food >= 20 and a.health >= 20:
+                        break
             if ate == 0:
                 return "NO_FOOD"
+            self.last_ren_causes = causes
             self.give(a, "ate", ate)
         elif name == "hunt:near":
             if self.animals <= 0:
                 return "NO_ANIMAL"
+            self.leave(a)
             self.animals -= 1
-            self.got(a, "food_raw", r.randint(1, 3), "gathered.food")
+            kind = r.choices(list(ANIMALS), weights=list(ANIMALS.values()))[0]
+            self.drops(a, kind)
+            if kind == "sheep":   # 1.7.10's sheep give wool, no meat
+                self.changed = False
             a.dist = max(a.dist, r.uniform(6, 20))
         elif name == "put:chest_all":
             for k in list(a.bag):
-                if k.endswith(TOOLS):
+                if k.endswith(TOOLS) or k in ARMOR:
                     continue
-                if k.startswith("food"):
+                if k in FOODS:
                     self.chest_food += a.bag[k]
                 a.add(k, -a.bag[k])
             a.dist = 1.0
@@ -521,9 +1179,173 @@ class SimEnv:
             if n <= 0:
                 return "NOT_IN_CHEST"
             self.chest_food -= n
-            self.got(a, "food_cooked", n)
+            self.got(a, "bread", n)
             a.dist = 1.0
+        elif name == "build_gate:door":
+            if a.n("wooden_door") < 1:
+                return "NO_ITEMS"
+            a.add("wooden_door", -1)
+            self.door = True
+            self.gate_open = False
+            self.builders.append((a.did, self.t, a.i))
+        elif name == "close:gate":
+            if not self.gate_open:
+                return "DONE_ALREADY"
+            self.gate_open = False
+        elif name == "gather:seeds":
+            if self.grass <= 0:
+                return "NOT_SEEN"
+            self.grass -= 1
+            n = sum(1 for _ in range(6) if r.random() < 0.125)   # 1.7.10: tall grass drops seeds an eighth of the time
+            if not n:
+                self.changed = False
+            else:
+                self.got(a, "wheat_seeds", n)
+        elif name == "gather:saplings":
+            if self.leaves <= 0:
+                return "NOT_SEEN"
+            self.leaves -= 1
+            n = sum(1 for _ in range(8) if r.random() < 0.05)   # leaves: a sapling a twentieth of the time
+            if not n:
+                self.changed = False
+            else:
+                self.got(a, "sapling", n)
+        elif name == "gather:sugar_cane":
+            if self.cane <= 0:
+                return "NOT_SEEN"
+            self.cane -= 1
+            self.got(a, "sugar_cane", r.randint(2, 3))
+        elif name == "till:farm":
+            n = min(4, 16 - self.plots)
+            if n <= 0:
+                return "DONE_ALREADY"
+            self.plots += n
+            a.dist = r.uniform(2, 5)
+        elif name == "plant:wheat":
+            n = min(a.n("wheat_seeds"), self.plots - self.planted)
+            if n <= 0:
+                return "NO_SEEDS"
+            a.add("wheat_seeds", -n)
+            self.planted += n
+            g0, g1 = CAL["crops"]["grow_s"]
+            self.crops += [(self.t + r.uniform(g0, g1), a.did, a.i) for _ in range(n)]
+        elif name == "harvest:farm":
+            if not self.ripe:
+                return "NOT_RIPE"
+            n = len(self.ripe)
+            self.ren_wheat += self.ripe
+            self.ripe = []
+            self.planted -= n
+            self.got(a, "wheat", n)
+            s0, s1 = CAL["crops"]["seeds_per_harvest"]
+            self.got(a, "wheat_seeds", sum(r.randint(s0, s1) for _ in range(n)))
+        elif name == "plant:sapling":
+            if a.n("sapling") < 1:
+                return "NO_ITEMS"
+            a.add("sapling", -1)
+            g0, g1 = CAL["saplings"]["grow_s"]
+            self.saplings.append(self.t + r.uniform(g0, g1))
+        elif name == "build_pen:pasture":
+            if a.n("fence") < 15 or a.n("fence_gate") < 1:
+                return "NO_ITEMS"
+            a.add("fence", -15)
+            a.add("fence_gate", -1)
+            self.pen = True
+        elif name == "lure:pen":
+            if self.animals <= 0:
+                return "NO_ANIMAL"
+            self.leave(a)
+            n = min(self.animals, r.randint(1, 2))
+            self.animals -= n
+            for _ in range(n):   # the kinds as the real arena has them (rl/sim-calibration.json: cows are rare)
+                kind = r.choices(list(ANIMALS), weights=list(ANIMALS.values()))[0]
+                self.pen_adults[kind] = self.pen_adults.get(kind, 0) + 1
+        elif name == "breed:pen":
+            kinds = [k for k, v in self.pen_adults.items() if v >= 2 and self.pen_rest.get(k, 0) <= self.t]
+            if not kinds or a.n("wheat") + a.n("wheat_seeds") < 2:
+                return "NO_MATE"
+            k = kinds[0]
+            for f in ("wheat", "wheat_seeds"):
+                if a.n(f) >= 2:
+                    a.add(f, -2)
+                    break
+            self.pen_young.append((self.t + CAL["pasture"]["grow_s"], k))
+            self.pen_rest[k] = self.t + CAL["pasture"]["breed_cooldown_s"]
+            self.bred += 1
+            self.xp(a, 3)
+            if k == "cow":
+                self.achieve(a, "breedCow")
+        elif name == "slaughter:pen":
+            k = max(self.pen_adults, key=lambda x: self.pen_adults[x], default=None)
+            if k is None or self.pen_adults[k] < 1:
+                return "NO_ANIMAL"
+            self.pen_adults[k] -= 1
+            got = self.drops(a, k)
+            if got:   # pen meat: renewable while the pen breeds
+                self.ren_food.append((FOOD_PTS["food_raw"] * got, a.did, a.i))
+        elif name == "enchant:best":
+            if not self.ench_table:
+                return "NO_TABLE"
+            if a.xp < 1:
+                return "NO_XP"
+            lvl = min(a.xp, 1 + 2 * self.shelves, 30)   # what the table offers with the shelves around
+            spent = min(lvl if lvl <= 3 else max(1, lvl // 3), a.xp)
+            a.xp -= spent
+            a.enchanted += 1
+            self.give(a, "enchant.item")
+            self.give(a, "enchant.levels", spent)
         return ""
+
+    def drops(self, a: Agent, kind: str) -> int:
+        """an animal killed: its drops (1.7.10's: sheep wool, chickens feathers, cows leather); its raw meat"""
+        r = self.rng
+        if kind == "sheep":
+            self.got(a, "wool", 1)
+            return 0
+        n = r.randint(1, 3)
+        self.got(a, "food_raw", n, "gathered.food")
+        if kind == "chicken":
+            f = r.randint(0, 2)
+            if f:
+                self.got(a, "feather", f)
+        if kind == "cow":
+            le = r.randint(0, 2)
+            if le:
+                self.got(a, "leather", le)
+                self.achieve(a, "killCow")
+        return n
+
+    def end_trip(self, a: Agent):
+        """RlScore.Trip: back on the surface with ore got below: a trip done (its descent the cause)"""
+        if a.trip_out and a.trip_ores > 0:
+            a.trips += 1
+            self.give(a, "mine.return", causes=[self.cause(a, "trip")])
+        a.trip_out = False
+        a.trip_ores = 0
+
+    def put_table(self, a: Agent):
+        self.table, self.table_d = True, a.dist
+        self.table_bad = self.noise and self.rng.random() < SK["craft_table"].get("table_bad", 0.0)
+
+    def on_craft(self, a: Agent, item: str):
+        if item == "crafting_table":
+            self.achieve(a, "buildWorkBench")
+        elif item.endswith("_pickaxe"):
+            self.achieve(a, "buildPickaxe")
+            if item != "wooden_pickaxe":
+                self.achieve(a, "buildBetterPickaxe")
+        elif item.endswith("_sword"):
+            self.achieve(a, "buildSword")
+        elif item == "furnace":
+            self.achieve(a, "buildFurnace")
+        elif item.endswith("_hoe"):
+            self.achieve(a, "buildHoe")
+        elif item == "bread":
+            self.achieve(a, "makeBread")
+        elif item == "enchanting_table":
+            self.achieve(a, "enchantments")
+        elif item == "bookshelf":
+            self.achieve(a, "bookcase")
 
     # ---- the world's time -------------------------------------------------------------------------------
     def poisson(self, lam: float) -> int:
@@ -538,12 +1360,37 @@ class SimEnv:
                 return k
             k += 1
 
-    def hurt(self, a: Agent, rate: float, dt: float, dmg: float = 3.0):
+    def hurt(self, a: Agent, rate: float, dt: float, dmg: float = 3.0, inside: bool = False):
         n = self.poisson(rate * dt)
         if n:
-            hp = n * dmg * (1 - 0.04 * a.armor)
+            hp = n * dmg * (1 - 0.04 * a.armor())
             a.health -= hp
             self.give(a, "damage", hp)
+            if inside:
+                self.give(a, "perimeter.hurt_inside", hp)
+            return hp
+        return 0.0
+
+    def kill(self, a: Agent, k: int, inside: bool = False, weapon: str | None = None):
+        """k mobs killed by a: the causes are the craft of the weapon that did it and the post it took"""
+        if inside:
+            self.inside -= k
+        else:
+            self.enemies -= k
+        self.kills += k
+        weapon = weapon or a.best_item("sword")
+        causes = [self.cause(a, weapon), self.cause(a, "post") if a.post else None]
+        self.give(a, "kill", k, causes=causes)
+        self.give(a, "perimeter.kill", k, causes=causes)
+        self.chain(a, weapon, "kill", k)
+        self.xp(a, 5 * k)
+        self.achieve(a, "killEnemy")
+        if a.enchanted and a.tier("sword") >= 4 and self.rng.random() < 0.1 * k:   # 18 in a hit: an enchanted diamond sword
+            self.achieve(a, "overkill")
+        if self.rng.random() < 0.3 * k:   # spiders' string
+            n = self.rng.randint(0, 2)
+            if n:
+                self.got(a, "string", n)
 
     def advance(self, until: float):
         while self.t < until - 1e-9 and not self.done:
@@ -553,6 +1400,12 @@ class SimEnv:
                 if a.alive:
                     self.give(a, "time", dt)
             self.world(dt)
+            self.measure()
+            if V2 and not self.sim_only:
+                for a in self.agents:   # RlScore.Stall
+                    if a.alive and self.t - a.progress_t >= STALL_S:
+                        a.progress_t = self.t
+                        self.give(a, "stall")
             if self.phase in ("prep", "break", "wave") and self.t >= self.phase_until:
                 self.next_phase()
             if self.t >= self.sc["seconds"] and not self.done:
@@ -560,18 +1413,57 @@ class SimEnv:
 
     def world(self, dt: float):
         wave = self.phase == "wave"
-        wallf = self.wall / RING if self.ring else 0.0
+        open_ = 2 if self.gate_open else 0
+        wallf = max(0.0, self.wall - open_) / RING if self.ring else 0.0
         leak = (1 - wallf) * (1 - 0.4 * self.moat / MOAT)
+        if self.crops:   # crops, saplings, young animals grow
+            ripe = [c for c in self.crops if c[0] <= self.t]
+            if ripe:
+                self.ripe += [(c[1], c[2]) for c in ripe]
+                self.crops = [c for c in self.crops if c[0] > self.t]
+        if self.saplings:
+            grown = [s for s in self.saplings if s <= self.t]
+            if grown:
+                self.trees += len(grown)
+                self.grown += len(grown)
+                self.saplings = [s for s in self.saplings if s > self.t]
+        if self.pen_young:
+            for t, k in [y for y in self.pen_young if y[0] <= self.t]:
+                self.pen_adults[k] = self.pen_adults.get(k, 0) + 1
+            self.pen_young = [y for y in self.pen_young if y[0] > self.t]
         for a in self.agents:
             if not a.alive:
                 if self.t >= a.free_at:   # back at the base, the bag empty
-                    a.alive, a.health, a.dist, a.post = True, 20.0, 0.5, False
+                    a.alive, a.health, a.dist, a.post, a.depth, a.food, a.sat = True, 20.0, 0.5, False, 0, 20.0, 5.0
                 continue
-            a.health = min(20.0, a.health + 0.25 * dt)   # the agents count as fed: 1 a 4 s
+            if self.hunger:
+                drain = dt / CAL["hunger"]["drain_s"] * (1.5 if a.depth or wave else 1.0)
+                if a.sat > 0:
+                    a.sat = max(0.0, a.sat - drain)
+                else:
+                    a.food = max(0.0, a.food - drain)
+                if a.food >= CAL["hunger"]["regen_min_food"]:
+                    a.health = min(20.0, a.health + 0.25 * dt)
+                elif a.food <= 0 and a.health > 1:   # normal difficulty: hunger hurts down to half a heart
+                    hp = min(a.health - 1, dt / CAL["hunger"]["starve_dmg_s"])
+                    a.health -= hp
+                    self.give(a, "damage", hp)
+            else:
+                a.health = min(20.0, a.health + 0.25 * dt)   # the agents count as fed: 1 a 4 s
+            if a.depth:   # under the surface: caves' mobs, now and then lava or a fall
+                lit = 0.5 if a.n("torch") else 1.0
+                self.hurt(a, CAL["mine"]["cave_hits"][a.depth] * lit, dt, 4.0)
+                if self.noise and self.rng.random() < CAL["mine"]["accident"][a.depth] * dt / 10:
+                    self.give(a, "accident")
+                    self.die(a, out=False, accident=True)
+                    continue
+                if a.health <= 0:
+                    self.die(a, out=False)
+                continue
             if not wave:
                 continue
             e = max(0.0, self.enemies)
-            if e <= 0:
+            if e <= 0 and self.inside <= 0:
                 continue
             inside = a.dist < 8 and self.ring
             if a.dist > 10:   # out in the field during a wave
@@ -580,38 +1472,64 @@ class SimEnv:
                 self.hurt(a, 0.025 * math.sqrt(e) * (0.4 + leak), dt)
                 k = min(self.poisson((0.05 + 0.04 * a.held) * dt * min(1.0, e / 2)), int(math.ceil(self.enemies)))
                 if k:
-                    self.enemies -= k
-                    self.give(a, "kill", k)
+                    self.kill(a, k)
             else:
-                self.hurt(a, 0.025 * e * (leak if inside else 1.0), dt)
-                if leak > 0.3:
+                self.hurt(a, 0.025 * e * (leak if inside else 1.0), dt, inside=bool(inside))
+                if leak > 0.3 or not self.ring:
                     k = min(self.poisson(0.012 * (1 + a.held) * dt), int(math.ceil(self.enemies)))
                     if k:
-                        self.enemies -= k
-                        self.give(a, "kill", k)
+                        self.kill(a, k)
+            if inside and self.inside > 0:   # what got in hits the agents inside, they fight it
+                self.hurt(a, 0.05 * self.inside, dt, inside=True)
+                k = min(self.poisson(0.04 * (1 + a.held) * dt), int(math.ceil(self.inside)))
+                if k:
+                    self.kill(a, k, inside=True)
             if a.health <= 0:
                 self.die(a, out=not inside)
         if wave:
             if self.ring and self.wave_num >= 6 and self.wall > 0:   # creepers from the 6th wave
                 self.wall = max(0, self.wall - self.poisson(0.01 * self.enemies * dt * (1 - 0.5 * self.moat / MOAT)))
-            if self.enemies <= 0.5:
-                self.enemies = 0
+            if self.ring and self.enemies > 0:   # the perimeter: mobs that get inside the wall
+                k = min(self.poisson(0.02 * self.enemies * leak * dt), int(self.enemies))
+                if k:
+                    self.enemies -= k
+                    self.inside += k
+                    self.breaches += k
+                    self.wave_breaches += k
+                    self.give_all("perimeter.breach", k)
+            if self.inside > 0:
+                self.mob_s += self.inside * dt
+                self.wave_mob_s += self.inside * dt
+                self.give_all("perimeter.mob_seconds", self.inside * dt)
+            if self.enemies <= 0.5 and self.inside <= 0.5:
+                self.enemies = self.inside = 0
                 self.cleared += 1
                 self.give_all("wave_cleared")
-                self.phase, self.phase_until = "break", self.t + 20
+                self.give_all("perimeter.wave_cleared")
+                if self.wave_breaches == 0 and self.ring:   # a clean wave: the wall's builders are its causes
+                    self.clean += 1
+                    self.give_all("perimeter.clean_wave", causes=[b[0] for b in self.builders[-8:]])
+                self.phase, self.phase_until = "break", self.t + (60 if self.sc["seconds"] > 1200 else 20)
             elif self.wave_losses >= len(self.agents):
                 self.done, self.reason = True, "lost"
 
-    def die(self, a: Agent, out: bool):
-        self.give(a, "death")
+    def die(self, a: Agent, out: bool, accident: bool = False):
+        if not accident:
+            self.give(a, "death")
         if out and self.phase == "wave":
             self.give(a, "out_died")
+            self.give(a, "perimeter.out_died")
         if self.phase == "wave":
             self.wave_losses += 1
         a.alive = False
         a.bag = {}
+        a.worn = {}
+        a.made = {}
         a.held = 0
         a.health = 0
+        a.depth = 0
+        a.trip_out = False
+        a.trip_ores = 0
         if a.post:
             self.posts_taken -= 1
         a.post = a.holding = False
@@ -627,18 +1545,28 @@ class SimEnv:
             mult = 0.7 if self.waves == "easy" else 1.0
             n = self.wave_num
             self.enemies = float(max(1, math.floor(mult * (2 + 1.6 * n + 0.12 * n * n))))
-            self.enemies *= 1 - min(0.3, self.torches / 40)
+            self.enemies *= 1 - min(0.3, self.torches / 40) if not self.sim_only else 1 - min(0.8, self.torches / 15)
+            self.enemies = float(round(self.enemies))
+            self.spawned += int(self.enemies)
+            self.give_all("spawned", self.enemies)   # delay:torches: no cause named (torches act through the spawn)
             self.wave_losses = 0
+            self.wave_breaches = 0
+            self.wave_mob_s = 0.0
             self.phase, self.phase_until = "wave", self.t + 240
             if self.ring:
                 self.give_all("holes_at_wave", RING - self.wall)
+                self.give_all("perimeter.holes_at_wave", RING - self.wall)
         elif self.phase == "wave":   # its time is up: the mobs go
             self.enemies = 0
+            self.inside = 0
             self.phase, self.phase_until = "break", self.t + 20
 
     # ---- the protocol -----------------------------------------------------------------------------------
     def decide(self, ready: list[Agent], first: bool = False, final: bool = False):
-        out = {"agents": [], "obs": [], "mask": [], "raw": [], "reward": [], "components": [], "done": bool(self.done)}
+        out = {"agents": [], "obs": [], "mask": [], "raw": [], "reward": [], "components": [], "done": bool(self.done),
+               "decision_ids": [], "events": [], "t": self.t}
+        if not first:
+            self.measure()
         for a in ready:
             if self.shaping and not first:
                 phi = 0.0 if final else self.potential()
@@ -648,16 +1576,30 @@ class SimEnv:
                 self.comp["shaping"] = self.comp.get("shaping", 0.0) + f
                 a.phi = phi
             raw = self.raw(a)
+            SimEnv._did += 1
+            a.next_did = SimEnv._did
             out["agents"].append(a.i)
             out["raw"].append(raw)
             out["obs"].append(spec.vector(raw))
             out["mask"].append(spec.mask(raw))
             out["reward"].append(a.acc)
             out["components"].append(a.comp)
-            a.acc, a.comp = 0.0, {}
+            out["decision_ids"].append(a.next_did)
+            out["events"].append(a.events)
+            a.acc, a.comp, a.events = 0.0, {}, []
         out["info"] = {"t": self.t, "ticks": int(self.t * 20), "scenario": self.scenario, "done_reason": self.reason,
                        "success": self.success() if self.done else False, "cleared": self.cleared,
-                       "goal_progress": self.progress(), "episode_components": dict(self.comp) if self.done else {}}
+                       "goal_progress": self.progress(), "episode_components": dict(self.comp) if self.done else {},
+                       "achievements": self.crew_ach(), "breaches": self.breaches, "mob_seconds": round(self.mob_s, 1),
+                       "clean_waves": self.clean, "novel": self.novel, "kills": self.kills, "spawned": self.spawned,
+                       "sustain": [round(self.sus["food_renew"], 2), round(self.sus["food_eaten"], 2)]}
+        if self.done:
+            got = set()
+            for a in self.agents:
+                got |= a.ach
+            out["info"]["achievement_ids"] = sorted(got - {"openInventory"})
+            out["info"]["chains"] = [{"agent": k[0], "cause": k[2], "made_s": round(v[0], 1), "last_s": round(v[2], 1), "effects": v[1]}
+                                     for k, v in self.chains.items()]
         return out
 
     def step(self, actions: dict[int, int]):
@@ -698,9 +1640,10 @@ if __name__ == "__main__":   # a random agent (uniform over the allowed actions,
     env = SimEnv(0)
     t0 = time.time()
     steps = 0
-    for sc in spec.SCEN:
+    n_ep = int(sys.argv[1]) if len(sys.argv) > 1 else 200
+    for sc in spec.SCENARIOS + list(SIM_SCEN):
         res = collections.Counter()
-        for ep in range(200):
+        for ep in range(n_ep):
             o = env.reset(sc, ep, crew=1 + ep % 3)
             while not o["done"]:
                 acts = {}
@@ -709,8 +1652,8 @@ if __name__ == "__main__":   # a random agent (uniform over the allowed actions,
                     acts[i] = env.rng.choice(ok)
                 o = env.step(acts)
                 steps += 1
-            res["success"] += o["info"]["success"]
+            for k in ("success", "cleared", "achievements", "breaches", "novel"):
+                res[k] += o["info"][k]
             res[o["info"]["done_reason"]] += 1
-            res["cleared"] += o["info"]["cleared"]
         print(sc, dict(res))
     print(steps, "steps", round(time.time() - t0, 1), "s")
