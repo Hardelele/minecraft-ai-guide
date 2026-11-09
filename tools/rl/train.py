@@ -67,6 +67,7 @@ class Curriculum:
 
     def __init__(self, stages, threshold=0.8, window=200, mix=0.3, start=0, rng=None, peek=0.15, stage_max=0):
         self.stages, self.threshold, self.window, self.mix, self.peek = stages, threshold, window, mix, peek
+        self.uniform = False
         self.stage_max = stage_max   # epochs on a stage at most (0: no limit): a stage the calibrated world makes too hard is left
         self.since = 0
         self.cur = start
@@ -75,6 +76,8 @@ class Curriculum:
         self.log: list[str] = []
 
     def sample(self) -> str:
+        if self.uniform:   # all the stages alike (after the curriculum: none forgotten)
+            return self.stages[int(self.rng.integers(0, len(self.stages)))]
         u = self.rng.random()
         if self.cur + 1 < len(self.stages) and u < self.peek:
             return self.stages[self.cur + 1]
@@ -263,6 +266,7 @@ def main():
     ap.add_argument("--peek", type=float, default=0.15, help="share of episodes of the NEXT stage (a look ahead)")
     ap.add_argument("--stages", default=",".join(STAGES))
     ap.add_argument("--start-stage", type=int, default=0)
+    ap.add_argument("--uniform", action="store_true", help="the stages drawn alike (a stage named twice: twice as often), no curriculum")
     ap.add_argument("--stage-max", type=int, default=0, help="epochs on a curriculum stage at most (0: until passed)")
     ap.add_argument("--init", default=None, help="a checkpoint to start from")
     ap.add_argument("--seed", type=int, default=1)
@@ -296,6 +300,7 @@ def main():
     opt = torch.optim.Adam(pol.parameters(), lr=a.lr, eps=1e-5)
     rng = np.random.default_rng(a.seed)
     cur = Curriculum(a.stages.split(","), a.threshold, a.window, start=a.start_stage, rng=rng, peek=a.peek, stage_max=a.stage_max)
+    cur.uniform = a.uniform
     envs = Envs(a.envs, a.workers, a.env, a.seed, a.shaping, a.url, a.curiosity)
     retnorm = RetNorm(a.gamma_s ** 20 if a.gamma_s else a.gamma)
     import credit as CR
