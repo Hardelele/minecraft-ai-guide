@@ -41,6 +41,7 @@ public final class RlTest {
         score();
         causes();
         body();
+        near();
         System.out.println("RlTest " + (bad == 0 ? "PASS" : "FAIL") + " (" + passed + " checks, " + bad + " failed)");
         if (bad > 0) System.exit(1);
     }
@@ -55,7 +56,17 @@ public final class RlTest {
             check(ids.add(a.id), "action id unique: " + a.id);
             if (!a.id.equals("noop")) check(skills.contains(a.tool), "a skill of the minds or the environment: " + a.tool);
         }
-        check(RlSpec.ACTIONS.size() == 124, "124 actions: " + RlSpec.ACTIONS.size());
+        check(RlSpec.ACTIONS.size() == 136, "136 actions: " + RlSpec.ACTIONS.size());
+        // contract 3's actions are the first 124, the same (a v3 net's action k is k here); its spaces frozen
+        boolean same3 = RlSpec3.ACTIONS.size() == RlSpec.V3_ACTIONS;
+        for (int i = 0; same3 && i < RlSpec3.ACTIONS.size(); i++) {
+            RlSpec3.Action o = RlSpec3.ACTIONS.get(i);
+            RlSpec.Action n = RlSpec.ACTIONS.get(i);
+            same3 = o.id.equals(n.id) && o.tool.equals(n.tool) && o.args.equals(n.args) && o.mask.json().equals(n.mask.json());
+        }
+        check(same3, "the first 124 are contract 3's, rules and all");
+        check(RlSpec3.hash().equals("553dfd026d9d") && RlSpec3.obsHash().equals("7821a391980f") && RlSpec3.rewardHash().equals("c5c25ba77c8a"),
+                "contract 3's hashes as they were: " + RlSpec3.hash() + " " + RlSpec3.obsHash() + " " + RlSpec3.rewardHash());
         // contract 1's actions are the first 38, the same (a v1 net's action k is k here)
         check(RlSpec1.ACTIONS.size() == RlSpec.V1_ACTIONS, "contract 1 had 38");
         boolean same = true;
@@ -72,10 +83,13 @@ public final class RlTest {
         check(RlSpec.call(RlSpec.index("craft_armor:iron")).arg("material").equals("iron"), "craft_armor's material");
         check(RlSpec.hash().length() == 12 && !RlSpec.hash().equals(RlSpec1.hash()), "the actions' hash (its rules in it)");
         // the spaces of a net by its version and size: none silently
-        check(RlSpec.space(fake(1, 137, 38)) == RlSpec.V1 && RlSpec.space(fake(3, RlSpec.FEATURES.size(), 124)) == RlSpec.V2, "a net's spaces by its version and size");
-        check(RlSpec.space(fake(3, 137, 38)) == null && RlSpec.space(fake(1, RlSpec.FEATURES.size(), 124)) == null && RlSpec.space(fake(2, RlSpec.FEATURES.size(), 124)) == null,
+        check(RlSpec.space(fake(1, 137, 38)) == RlSpec.V1 && RlSpec.space(fake(4, RlSpec.FEATURES.size(), 136)) == RlSpec.V2 && RlSpec.space(fake(3, 402, 124)) == RlSpec.V3,
+                "a net's spaces by its version and size");
+        check(RlSpec.space(fake(3, 137, 38)) == null && RlSpec.space(fake(1, RlSpec.FEATURES.size(), 136)) == null && RlSpec.space(fake(3, RlSpec.FEATURES.size(), 136)) == null
+                && RlSpec.space(fake(4, 402, 124)) == null,
                 "a net whose version and size disagree is refused");
-        check(RlSpec.V1.index("wait:5") == 37 && RlSpec.V1.index("descend:mine") == -1 && RlSpec.V2.index("descend:mine") == 38, "the actions a net of each contract has");
+        check(RlSpec.V1.index("wait:5") == 37 && RlSpec.V1.index("descend:mine") == -1 && RlSpec.V2.index("descend:mine") == 38 && RlSpec.V3.index("dig@below") == -1
+                && RlSpec.V2.index("dig@below") == 124 && RlSpec.V3.features() == 402, "the actions a net of each contract has");
     }
 
     static PolicyNet fake(int version, int d, int a) {
@@ -275,6 +289,73 @@ public final class RlTest {
         sl.progress("1", 100);
         check(!sl.check("1", 150) && sl.check("1", 160), "progress starts the window again");
         check(RlScore.progress("mine") && RlScore.progress("goal") && !RlScore.progress("time") && !RlScore.progress("skill_fail"), "what counts as progress");
+    }
+
+    /** a world of cells for RlNear: solid at the cells given, else air (a mob where asked) */
+    static RlNear.Grid grid(final java.util.Set<Long> solid, final java.util.Set<Long> lava, final long mob) {
+        return new RlNear.Grid() {
+            public int at(int x, int y, int z) {
+                long k = RlCause.key(x, y, z);
+                return lava.contains(k) ? RlNear.LAVA : solid.contains(k) ? RlNear.SOLID : RlNear.AIR;
+            }
+            public boolean mob(int x, int y, int z) { return RlCause.key(x, y, z) == mob; }
+        };
+    }
+
+    /** round an agent (3.1) on synthetic worlds: a pillar up, a pit down, four blocks round, shut in; the masks of the primitives */
+    static void near() {
+        java.util.Set<Long> s = new java.util.HashSet<Long>(), lava = new java.util.HashSet<Long>();
+        for (int x = -3; x <= 3; x++) for (int z = -3; z <= 3; z++) for (int y = 0; y < 64; y++) s.add(RlCause.key(x, y, z));   // ground to y 63
+        Map<String, Double> r = new HashMap<String, Double>();
+        // on flat ground at y 64, facing +z (south)
+        RlNear.facts(r, grid(s, lava, -1), 0, 64, 0, 0, 1, true);
+        check(r.get("nb_below_solid") == 1 && r.get("nb_front_air") == 1 && r.get("nb_above_air") == 1 && r.get("walls_around") == 0 && r.get("enclosed") == 0, "flat ground: open round");
+        check(r.get("nb_below_dig") == 1 && r.get("nb_front_dig") == 0 && r.get("pillar_ok") == 1 && r.get("nb_left_free") == 1 && r.get("nb_above_free") == 0,
+                "flat: dig down yes, nothing ahead to dig, a pillar yes; a block at the left (the floor holds it), over the head nothing to hold it");
+        check(on(r, "dig@below") && !on(r, "dig@front") && !on(r, "pillar:up"), "the masks read the same facts (no block in hand: no pillar)");
+        r.put("slot_block", 5.0);
+        check(on(r, "pillar:up") && on(r, "place:block@left") && !on(r, "place:block@above"), "with blocks: a pillar, a block at the left");
+        // a pillar up: three blocks under it, it stands at y 67
+        for (int y = 64; y <= 66; y++) s.add(RlCause.key(0, y, 0));
+        r.clear();
+        RlNear.facts(r, grid(s, lava, -1), 0, 67, 0, 0, 1, true);
+        check(r.get("nb_below_solid") == 1 && r.get("nb_front_air") == 1 && r.get("nb_left_free") == 0 && r.get("pillar_ok") == 1,
+                "on its pillar: the sides free but nothing to put a block against, up again yes");
+        check(r.get("nb_below_dig") == 1, "it may dig its pillar down (a drop of one, then the next)");
+        for (int y = 64; y <= 66; y++) s.remove(RlCause.key(0, y, 0));
+        // a pit down: it dug three under itself, it stands at y 61 with walls round at feet and head
+        for (int y = 61; y <= 63; y++) s.remove(RlCause.key(0, y, 0));
+        r.clear();
+        RlNear.facts(r, grid(s, lava, -1), 0, 61, 0, 0, 1, true);
+        check(r.get("walls_around") == 4 && r.get("enclosed") == 0 && r.get("nb_above_air") == 1, "in its pit: walls round, open over the head");
+        check(r.get("nb_front_dig") == 1 && r.get("nb_below_dig") == 1 && r.get("nb_above_free") == 1, "in the pit: the walls may be dug, down again, a block over its head (the walls hold it)");
+        s.add(RlCause.key(0, 63, 0));   // a block over the head: shut in
+        r.clear();
+        RlNear.facts(r, grid(s, lava, -1), 0, 61, 0, 0, 1, true);
+        check(r.get("enclosed") == 1 && r.get("shelter") == 1, "the pit roofed: shut in, sheltered at night");
+        r.clear();
+        RlNear.facts(r, grid(s, lava, -1), 0, 61, 0, 0, 1, false);
+        check(r.get("enclosed") == 1 && r.get("shelter") == 0, "by day it is no shelter (the metric counts nights and waves)");
+        // no digging down over lava or a drop
+        lava.add(RlCause.key(0, 59, 0));
+        r.clear();
+        RlNear.facts(r, grid(s, lava, -1), 0, 61, 0, 0, 1, true);
+        check(r.get("nb_below_dig") == 0, "not down when lava is under the block");
+        lava.clear();
+        for (int y = 56; y <= 59; y++) s.remove(RlCause.key(0, y, 0));
+        r.clear();
+        RlNear.facts(r, grid(s, lava, -1), 0, 61, 0, 0, 1, true);
+        check(r.get("nb_below_dig") == 0, "not down over a drop of three");
+        // four blocks round on flat ground: walls at the feet, not shut in (the head open)
+        s.clear();
+        for (int x = -3; x <= 3; x++) for (int z = -3; z <= 3; z++) s.add(RlCause.key(x, 63, z));
+        for (int[] d : new int[][] { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) s.add(RlCause.key(d[0], 64, d[1]));
+        r.clear();
+        RlNear.facts(r, grid(s, lava, RlCause.key(0, 64, 3)), 0, 64, 0, 0, 1, true);
+        check(r.get("walls_around") == 4 && r.get("enclosed") == 0 && r.get("nb_front_solid") == 1 && r.get("nb_left_solid") == 1 && r.get("nb_back_solid") == 1,
+                "four blocks round: four walls, not shut in");
+        check(r.get("nb_front_mob") == 0, "a mob two away is not in the front cell");
+        check(RlNear.off("left", 0, 1)[0] == 1 && RlNear.off("right", 0, 1)[0] == -1 && RlNear.off("back", 0, 1)[2] == -1, "left and right of a southward look (east, west)");
     }
 
     /** the agents' experience and hunger as a player's of 1.7.10 */

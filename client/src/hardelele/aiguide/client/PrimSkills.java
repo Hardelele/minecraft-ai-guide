@@ -38,6 +38,10 @@ final class PrimSkills {
             case "front": return new int[] { fx + dx, fy, fz + dz };
             case "below": return new int[] { fx, fy, fz };
             case "front_down": return new int[] { fx + dx, fy - 1, fz + dz };
+            case "left": case "right": case "back": case "above": {   // (3.1) round itself, by its facing
+                int[] o = RlNear.off(t, dx, dz);
+                return new int[] { fx + o[0], fy + o[1], fz + o[2] };
+            }
             case "hole": return nearest(a, DefenseWorld.holes(w), 24);
             case "moat": return DefenseWorld.moat == null ? null : nearest(a, DefenseWorld.moat, 24);
             case "mob": {
@@ -83,8 +87,42 @@ final class PrimSkills {
 
     static boolean door(Block b) { return b instanceof BlockDoor || b instanceof BlockFenceGate; }
 
+    /** the agent's facing as a step: { dx, dz } */
+    static int[] facing(Agent a) {
+        double yaw = Math.toRadians(a.rotationYawHead), lx = -Math.sin(yaw), lz = Math.cos(yaw);
+        int dx = Math.abs(lx) >= Math.abs(lz) ? (lx > 0 ? 1 : -1) : 0, dz = dx == 0 ? (lz > 0 ? 1 : -1) : 0;
+        return new int[] { dx, dz };
+    }
+
+    /** the world as RlNear reads it round the agent: a cell's kind (a block its bag cannot take is HARD), a mob in it */
+    static RlNear.Grid grid(final Agent a, final WorldServer w) {
+        return new RlNear.Grid() {
+            public int at(int x, int y, int z) {
+                Block b = w.getBlock(x, y, z);
+                Material m = b.getMaterial();
+                if (m == Material.lava) return RlNear.LAVA;
+                if (m == Material.water) return RlNear.WATER;
+                if (b == Blocks.bedrock) return RlNear.BEDROCK;
+                if (door(b)) return RlNear.SOLID;
+                if (Crew.soft(w, x, y, z) || !m.isSolid()) return RlNear.AIR;
+                return MindSkills.canHarvest(a, b) || b.getBlockHardness(w, x, y, z) >= 0 && m.isToolNotRequired() ? RlNear.SOLID : RlNear.HARD;
+            }
+            @SuppressWarnings("unchecked")
+            public boolean mob(int x, int y, int z) {
+                for (Object o : w.getEntitiesWithinAABB(EntityLiving.class, AxisAlignedBB.getBoundingBox(x, y, z, x + 1, y + 1, z + 1)))
+                    if (o != a && Guard.hostile((EntityLiving) o)) return true;
+                return false;
+            }
+        };
+    }
+
     /** the raw facts of the target slots (and the hand's blocks, the buckets) */
     static void facts(Map<String, Double> r, Crew c, Agent a, WorldServer w) {
+        int[] fc = facing(a);
+        WaveCycle.View wv = Waves.state();
+        long time = w.getWorldTime() % 24000;
+        RlNear.facts(r, grid(a, w), MathHelper.floor_double(a.posX), MathHelper.floor_double(a.boundingBox.minY + 0.01), MathHelper.floor_double(a.posZ), fc[0], fc[1],
+                time >= 13000 && time < 23000 || wv.phase == WaveCycle.Phase.WAVE);
         for (String t : RlSpec.TARGETS) {
             int[] p = target(c, a, w, t);
             r.put("tgt_" + t, p == null ? 0.0 : 1.0);
@@ -110,6 +148,8 @@ final class PrimSkills {
             case "use_at": return use(c, a, w, call.arg("slot"), call.arg("target"));
             case "attack": return attack(c, a, w, call.arg("target"));
             case "open": return open(c, a, w, call.arg("target"));
+            case "dig_at": return dig(c, a, w, call.arg("target"));
+            case "pillar": return pillar(c, a, w);
             default: return null;
         }
     }
@@ -244,6 +284,68 @@ final class PrimSkills {
             }
         };
         s.lease = 20 * 30;
+        return s;
+    }
+
+    // ---- dig round itself, pillar up (3.1) ---------------------------------------------------------------------
+
+    /**
+     * A dig of the cells at d (a side: its column, the head's first; above; below; in front one down) by the body as a
+     * player's: only what the eyes see in reach, the bag's best tool. Under its own feet it digs and falls in (no step
+     * aside first: that is the point), but not over lava or a drop of three (NO_SPOT, as the mask).
+     */
+    static MindSkills.Skill dig(Crew c, Agent a, WorldServer w, final String d) {
+        java.util.Map<String, Double> f = new java.util.HashMap<String, Double>();
+        int[] fc = facing(a);
+        final int x = MathHelper.floor_double(a.posX), y = MathHelper.floor_double(a.boundingBox.minY + 0.01), z = MathHelper.floor_double(a.posZ);
+        RlNear.facts(f, grid(a, w), x, y, z, fc[0], fc[1], false);
+        if (f.get("nb_" + d + "_dig") == null || f.get("nb_" + d + "_dig") < 0.5) return MindSkills.failed("NO_SPOT", "nothing to dig at " + d + " (air, bedrock, no tool for it, or over lava or a drop)");
+        final java.util.List<int[]> cells = new java.util.ArrayList<int[]>();
+        for (int[] q : RlNear.digCells(d, x, y, z, fc[0], fc[1])) if (RlNear.solid(grid(a, w).at(q[0], q[1], q[2]))) cells.add(q);
+        MindSkills.Skill s = new MindSkills.Skill() {
+            int i, t, got;
+            Crew.Collect pick;
+            Result run(Agent ag, WorldServer ww) {
+                if (pick != null) { Result r = pick.step(ag, ww); if (r == Result.RUNNING) return r; detail = "dug " + got + " at " + d; return got > 0 ? Result.OK : Result.BLOCKED; }
+                if (++t > 20 * 30) { reason = "TIMEOUT"; return Result.TIMEOUT; }
+                if (i >= cells.size()) { pick = new Crew.Collect(x + 0.5, y, z + 0.5, 3); return Result.RUNNING; }
+                int[] q = cells.get(i);
+                if (ww.isAirBlock(q[0], q[1], q[2])) { i++; return Result.RUNNING; }
+                Result r = ag.body.dig(ww, q[0], q[1], q[2]);
+                if (r == Result.RUNNING) return r;
+                if (r == Result.OK) got++;
+                else if (r == Result.NO_TOOL) { reason = "NO_TOOL"; detail = "no tool of the bag takes the block at " + d; return r; }
+                i++;
+                return Result.RUNNING;
+            }
+        };
+        s.lease = 20 * 40;
+        return s;
+    }
+
+    /** up one block: a jump, a block of the bag put under its feet at the top of it (as a player builds under itself) */
+    static MindSkills.Skill pillar(Crew c, Agent a, WorldServer w) {
+        final int x = MathHelper.floor_double(a.posX), y = MathHelper.floor_double(a.boundingBox.minY + 0.01), z = MathHelper.floor_double(a.posZ);
+        if (!Crew.soft(w, x, y + 2, z)) return MindSkills.failed("BLOCKED", "no room over its head");
+        if (Skills.Scaffold.block(a, null) == null) return MindSkills.failed("NO_ITEMS", "no block in the bag to stand on");
+        MindSkills.Skill s = new MindSkills.Skill() {
+            int t;
+            Result run(Agent ag, WorldServer ww) {
+                if (++t > 20 * 6) { reason = "TIMEOUT"; detail = "could not get a block under itself"; return Result.TIMEOUT; }
+                if (!ww.isAirBlock(x, y, z) && !Crew.soft(ww, x, y, z)) { detail = "up on a block at " + x + " " + y + " " + z; return Result.OK; }
+                ItemStack st = Skills.Scaffold.block(ag, null);
+                if (st == null) { reason = "NO_ITEMS"; return Result.NO_ITEMS; }
+                ag.body.stepTo(x + 0.5, ag.posY, z + 0.5, 0.6);
+                ag.body.lookAt(x + 0.5, y - 0.01, z + 0.5);
+                if (ag.onGround && ag.posY < y + 0.5) ag.body.jump();
+                if (ag.posY >= y + 1.05) {
+                    Result r = ag.body.place(ww, x, y, z, st.getItem(), st.getMetadata());
+                    if (r == Result.OK) Ledger.act(ag, "pillar up");
+                }
+                return Result.RUNNING;
+            }
+        };
+        s.lease = 20 * 10;
         return s;
     }
 

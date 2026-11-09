@@ -1,7 +1,8 @@
 {
-  "version": 3,
-  "hash": "7821a391980f",
-  "dim": 402,
+  "version": 4,
+  "contract": "3.1",
+  "hash": "67a26ca97558",
+  "dim": 441,
   "note": "Generated from RlSpec.java (docs/rl/CONTRACT-v2.md). The server sends the scaled vector in this order. div: clip(x/scale, -1, 2); log: log1p(max(x,0))/log1p(scale); bool: 1 if x > 0.5 else 0. A distance to nothing seen is scale (1 scaled).",
   "features": [
     {
@@ -1115,6 +1116,141 @@
       "scale": 64.0
     },
     {
+      "name": "nb_front_solid",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_front_air",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_front_liquid",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_front_mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_back_solid",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_back_air",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_back_liquid",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_back_mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_left_solid",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_left_air",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_left_liquid",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_left_mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_right_solid",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_right_air",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_right_liquid",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_right_mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_above_solid",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_above_air",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_above_liquid",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_above_mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_below_solid",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_below_air",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_below_liquid",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "nb_below_mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "walls_around",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "enclosed",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "shelter",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
       "name": "novel_count",
       "kind": "div",
       "scale": 20.0
@@ -1996,6 +2132,66 @@
     },
     {
       "name": "last_action_open@gate",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_dig@below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_dig@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_dig@front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_dig@left",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_dig@right",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_dig@back",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_dig@above",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@left",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@right",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@back",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@above",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_pillar:up",
       "kind": "bool",
       "scale": 1.0
     },

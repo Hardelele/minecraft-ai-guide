@@ -17,7 +17,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The learning environment's spaces of contract 3 (docs/rl/CONTRACT-v2.md: the development v2 and its causes), with no game in them: the discrete
+ * The learning environment's spaces of contract 3.1 (docs/rl/CONTRACT-v2.md: the development v2, its causes, the
+ * primitives of digging and building round itself; the files' version 4), with no game in them: the discrete
  * actions (a mind's skill with its arguments fixed) each with the rule of its mask (a condition over the raw facts,
  * written into actions.json so that Python reads the very rule instead of a port of it), the observation's features
  * (a name, a kind of scaling, a scale), the reward's weights and scales, the scenarios with the scales each turns on.
@@ -27,7 +28,11 @@ import java.util.Map;
 final class RlSpec {
     private RlSpec() { }
 
-    static final int CONTRACT = 3, ACTIONS_VERSION = 3, OBS_VERSION = 3, REWARD_VERSION = 3, ACHIEVEMENTS_VERSION = 3;
+    static final int CONTRACT = 4, ACTIONS_VERSION = 4, OBS_VERSION = 4, REWARD_VERSION = 4, ACHIEVEMENTS_VERSION = 4;
+    /** the contract's name (v3.1: the files' version 4); contract 3 is RlSpec3, frozen */
+    static final String NAME = "3.1";
+    /** the first actions are contract 3's, in its order (a v3 net's action k is this k) */
+    static final int V3_ACTIONS = 124;
     static final int MAX_AGENTS = 4;
     /** the first actions are contract 1's, in its order (a v1 net's action k is this k) */
     static final int V1_ACTIONS = 38;
@@ -213,6 +218,10 @@ final class RlSpec {
         l.add(new Action("attack@animal", "attack", has("animals_seen"), "target", "animal"));
         l.add(new Action("open@front", "open", on("tgt_front_door"), "target", "front"));
         l.add(new Action("open@gate", "open", on("door_placed"), "target", "gate"));
+        // contract 3.1: digging and building round itself (RlNear: the six cells by its facing)
+        for (String d : RlNear.DIG) l.add(new Action("dig@" + d, "dig_at", on("nb_" + d + "_dig"), "target", d));
+        for (String d : RlNear.PUT) l.add(new Action("place:block@" + d, "place_at", all(has("slot_block"), on("nb_" + d + "_free")), "slot", "block", "target", d));
+        l.add(new Action("pillar:up", "pillar", all(has("slot_block"), on("pillar_ok"))));
         return l;
     }
 
@@ -256,7 +265,7 @@ final class RlSpec {
 
     /** the tools of the actions that are not the minds' own (Mind.skills): the environment's skills */
     static final String[] ENV_TOOLS = { "hunt", "descend", "ascend", "tunnel", "craft_armor", "shoot", "build_gate", "close_gate", "till", "plant", "harvest",
-            "gather", "build_pen", "lure", "breed", "slaughter", "place_shelf", "enchant", "place_at", "use_at", "attack", "open" };
+            "gather", "build_pen", "lure", "breed", "slaughter", "place_shelf", "enchant", "place_at", "use_at", "attack", "open", "dig_at", "pillar" };
 
     /** the action as a mind's call (its tool and arguments), the why saying it was the policy's */
     static Mind.Call call(int k) {
@@ -271,24 +280,29 @@ final class RlSpec {
 
     // ---- the spaces of a net: contract 2's or contract 1's (the weights say which) ------------------------------
 
-    /** the spaces a net was learned on: its vector, mask and actions (contract 1's action k is contract 2's k) */
+    /** the spaces a net was learned on: its vector, mask and actions (an older contract's action k is this contract's k) */
     static final class Space {
-        final int contract;
+        final int contract;   // 4 (v3.1), 3, 1
         Space(int contract) { this.contract = contract; }
-        float[] vector(Map<String, Double> raw) { return contract == 2 ? RlSpec.vector(raw) : RlSpec1.vector(raw); }
-        int[] mask(Map<String, Double> raw) { return contract == 2 ? RlSpec.mask(raw) : RlSpec1.mask(raw); }
-        int actions() { return contract == 2 ? ACTIONS.size() : RlSpec1.ACTIONS.size(); }
+        float[] vector(Map<String, Double> raw) { return contract == CONTRACT ? RlSpec.vector(raw) : contract == 3 ? RlSpec3.vector(raw) : RlSpec1.vector(raw); }
+        int[] mask(Map<String, Double> raw) { return contract == CONTRACT ? RlSpec.mask(raw) : contract == 3 ? RlSpec3.mask(raw) : RlSpec1.mask(raw); }
+        int actions() { return contract == CONTRACT ? ACTIONS.size() : contract == 3 ? RlSpec3.ACTIONS.size() : RlSpec1.ACTIONS.size(); }
+        int features() { return contract == CONTRACT ? FEATURES.size() : contract == 3 ? RlSpec3.FEATURES.size() : RlSpec1.FEATURES.size(); }
+        String hash() { return contract == CONTRACT ? RlSpec.hash() : contract == 3 ? RlSpec3.hash() : RlSpec1.hash(); }
+        String obsHash() { return contract == CONTRACT ? RlSpec.obsHash() : contract == 3 ? RlSpec3.obsHash() : RlSpec1.obsHash(); }
+        String name() { return contract == CONTRACT ? NAME : String.valueOf(contract); }
         String id(int k) { return ACTIONS.get(k).id; }
         int index(String id) { int i = RlSpec.index(id); return i < actions() ? i : -1; }
-        boolean has(String scenario) { return contract == 2 ? scenario(scenario) != null : RlSpec1.scenario(scenario) != null; }
+        boolean has(String scenario) { return contract == 1 ? RlSpec1.scenario(scenario) != null : contract == 3 ? RlSpec3.scenario(scenario) != null : scenario(scenario) != null; }
     }
 
-    static final Space V2 = new Space(2), V1 = new Space(1);
+    static final Space V2 = new Space(CONTRACT), V3 = new Space(3), V1 = new Space(1);
 
     /** the spaces of the net's size and version, null when it fits neither (it is refused: no silent mismatch) */
     static Space space(PolicyNet n) {
         if (n == null) return null;
         if (n.version == ACTIONS_VERSION && n.d == FEATURES.size() && n.a == ACTIONS.size()) return V2;
+        if (n.version == 3 && n.d == RlSpec3.FEATURES.size() && n.a == RlSpec3.ACTIONS.size()) return V3;
         if (n.version == 1 && n.d == RlSpec1.FEATURES.size() && n.a == RlSpec1.ACTIONS.size()) return V1;
         return null;
     }
@@ -389,6 +403,9 @@ final class RlSpec {
             add(f, "bool", 1, "tgt_" + t + "_free", "tgt_" + t + "_water", "tgt_" + t + "_lava");
         }
         f.add(new Feature("tgt_front_door", "bool", 1)); f.add(new Feature("slot_block", "log", 64));
+        // round itself (3.1): its six neighbour cells, the walls at its feet, shut in, sheltered at night or in a wave
+        for (String d : RlNear.DIRS) add(f, "bool", 1, "nb_" + d + "_solid", "nb_" + d + "_air", "nb_" + d + "_liquid", "nb_" + d + "_mob");
+        f.add(new Feature("walls_around", "div", 4)); add(f, "bool", 1, "enclosed", "shelter");
         // the causes: kinds of cause and effect new in this episode (curiosity)
         f.add(new Feature("novel_count", "div", 20));
         // the others
@@ -493,6 +510,7 @@ final class RlSpec {
         w.put("safety.moat", 1.0);
         w.put("safety.light", 0.5);
         w.put("safety.gate", 0.5);
+        w.put("safety.shelter", 0.0);   // (3.1) seconds an agent is shut in at night or in a wave: measured, not paid
         // perimeter: no zombie into the base
         w.put("perimeter.mob_seconds", -0.02);
         w.put("perimeter.breach", -0.2);
@@ -668,9 +686,11 @@ final class RlSpec {
     static JsonObject actionsJson() {
         JsonObject o = new JsonObject();
         o.addProperty("version", ACTIONS_VERSION);
+        o.addProperty("contract", NAME);
         o.addProperty("hash", hash());
         o.addProperty("n", ACTIONS.size());
         o.addProperty("v1_prefix", V1_ACTIONS);
+        o.addProperty("v3_prefix", V3_ACTIONS);
         o.addProperty("note", "Generated from RlSpec.java (docs/rl/CONTRACT-v2.md). The index is the action's number; noop (0) is always allowed and ends the episode "
                 + "with -1. The first 38 are contract 1's in its order. 'mask': the rule of the action's mask over the raw facts (a fact missing is 0): "
                 + "{\"all\":[...]}, {\"any\":[...]}, [fact, op, number or another fact], op one of > >= < <= == !=.");
@@ -692,6 +712,7 @@ final class RlSpec {
     static JsonObject obsJson() {
         JsonObject o = new JsonObject();
         o.addProperty("version", OBS_VERSION);
+        o.addProperty("contract", NAME);
         o.addProperty("hash", obsHash());
         o.addProperty("dim", FEATURES.size());
         o.addProperty("note", "Generated from RlSpec.java (docs/rl/CONTRACT-v2.md). The server sends the scaled vector in this order. div: clip(x/scale, -1, 2); "
@@ -711,6 +732,7 @@ final class RlSpec {
     static JsonObject rewardJson() {
         JsonObject o = new JsonObject();
         o.addProperty("version", REWARD_VERSION);
+        o.addProperty("contract", NAME);
         o.addProperty("note", "Generated from RlSpec.java (docs/rl/CONTRACT-v2.md): the weights the server uses unless -Daiguide.rl.reward=<file> gives others (same keys). "
                 + "A key 'a.b' is part b of the component a in info.components. The components named in 'scales' are paid only in the scenarios whose "
                 + "scenarioScales name them (times the factor); the others always.");
@@ -837,7 +859,7 @@ final class RlSpec {
         Files.write(new File(dir, "obs.json").toPath(), pretty(obsJson()).getBytes(StandardCharsets.UTF_8));
         Files.write(new File(dir, "reward.json").toPath(), pretty(rewardJson()).getBytes(StandardCharsets.UTF_8));
         Files.write(new File(dir, "achievements.json").toPath(), pretty(RlAchievements.json(ACHIEVEMENTS_VERSION)).getBytes(StandardCharsets.UTF_8));
-        System.out.println("rl spec " + CONTRACT + ": " + ACTIONS.size() + " actions (" + hash() + "), " + FEATURES.size() + " features (" + obsHash() + "), reward ("
+        System.out.println("rl spec " + NAME + " (version " + CONTRACT + "): " + ACTIONS.size() + " actions (" + hash() + "), " + FEATURES.size() + " features (" + obsHash() + "), reward ("
                 + rewardHash() + ") -> " + dir);
     }
 }

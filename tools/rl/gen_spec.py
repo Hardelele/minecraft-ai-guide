@@ -1,10 +1,10 @@
 """Writes the contract's files from the code: rl/actions.json, rl/obs.json, rl/reward.json, rl/achievements.json of
-contract 2 (RlSpec.java, RlAchievements.java: docs/rl/CONTRACT-v2.md) and rl/v1/*.json of contract 1, frozen
-(RlSpec1.java: docs/rl/CONTRACT.md). The classes with no game in them are compiled alone (as tools/test_client.py's
+contract 3.1 (RlSpec.java, RlAchievements.java: docs/rl/CONTRACT-v2.md), rl/v3/*.json of contract 3 (RlSpec3.java)
+and rl/v1/*.json of contract 1 (RlSpec1.java: docs/rl/CONTRACT.md), both frozen. The classes with no game in them are compiled alone (as tools/test_client.py's
 pure tests).
 
-    python tools/rl/gen_spec.py            # writes rl/ and rl/v1/
-    python tools/rl/gen_spec.py --check    # fails when rl/ or rl/v1/ is not what the code says
+    python tools/rl/gen_spec.py            # writes rl/, rl/v3/ and rl/v1/
+    python tools/rl/gen_spec.py --check    # fails when rl/, rl/v3/ or rl/v1/ is not what the code says
 """
 import filecmp
 import os
@@ -20,7 +20,7 @@ from build import tool  # noqa: E402
 from test_client import PURE, SRC, GSON  # noqa: E402
 
 OUT = os.path.join(ROOT, "build", "rl-spec-classes")
-RL = [f for f in ["RlSpec.java", "RlSpec1.java", "RlAchievements.java", "RlReward.java"] if f not in PURE]
+RL = [f for f in ["RlSpec.java", "RlSpec1.java", "RlSpec3.java", "RlAchievements.java", "RlNear.java", "RlReward.java"] if f not in PURE]
 V2 = ("actions.json", "obs.json", "reward.json", "achievements.json")
 V1 = ("actions.json", "obs.json", "reward.json")
 
@@ -40,9 +40,10 @@ def run(cls, *args):
     subprocess.check_call([tool("java"), "-Dfile.encoding=UTF-8", "-cp", os.pathsep.join([OUT, GSON]), "hardelele.aiguide.client." + cls] + list(args))
 
 
-def write(dest2, dest1):
+def write(dest2, dest1, dest3):
     run("RlSpec", dest2)
     run("RlSpec1", dest1)
+    run("RlSpec3", dest3)
 
 
 def cases(path, n=2000):
@@ -55,16 +56,18 @@ def main():
     rl = os.path.join(ROOT, "rl")
     if "--check" in sys.argv:
         tmp = tempfile.mkdtemp()
-        write(os.path.join(tmp, "v2"), os.path.join(tmp, "v1"))
+        write(os.path.join(tmp, "v2"), os.path.join(tmp, "v1"), os.path.join(tmp, "v3"))
         bad = [f for f in V2 if not os.path.isfile(os.path.join(rl, f)) or not filecmp.cmp(os.path.join(tmp, "v2", f), os.path.join(rl, f), shallow=False)]
         bad += ["v1/" + f for f in V1 if not os.path.isfile(os.path.join(rl, "v1", f))
                 or not filecmp.cmp(os.path.join(tmp, "v1", f), os.path.join(rl, "v1", f), shallow=False)]
+        bad += ["v3/" + f for f in V2 if not os.path.isfile(os.path.join(rl, "v3", f))
+                or not filecmp.cmp(os.path.join(tmp, "v3", f), os.path.join(rl, "v3", f), shallow=False)]
         shutil.rmtree(tmp, ignore_errors=True)
         if bad:
-            sys.exit("rl/ differs from RlSpec.java / RlSpec1.java: " + ", ".join(bad) + " (python tools/rl/gen_spec.py)")
-        print("rl/ is what RlSpec.java says, rl/v1/ what RlSpec1.java says")
+            sys.exit("rl/ differs from RlSpec.java / RlSpec1.java / RlSpec3.java: " + ", ".join(bad) + " (python tools/rl/gen_spec.py)")
+        print("rl/ is what RlSpec.java says, rl/v3/ what RlSpec3.java says, rl/v1/ what RlSpec1.java says")
         return
-    write(rl, os.path.join(rl, "v1"))
+    write(rl, os.path.join(rl, "v1"), os.path.join(rl, "v3"))
 
 
 if __name__ == "__main__":

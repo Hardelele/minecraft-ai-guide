@@ -1,0 +1,4504 @@
+{
+  "version": 3,
+  "hash": "553dfd026d9d",
+  "n": 124,
+  "v1_prefix": 38,
+  "note": "Generated from RlSpec.java (docs/rl/CONTRACT-v2.md). The index is the action's number; noop (0) is always allowed and ends the episode with -1. The first 38 are contract 1's in its order. 'mask': the rule of the action's mask over the raw facts (a fact missing is 0): {\"all\":[...]}, {\"any\":[...]}, [fact, op, number or another fact], op one of > >= < <= == !=.",
+  "actions": [
+    {
+      "id": "noop",
+      "tool": "noop",
+      "args": {},
+      "mask": {
+        "all": []
+      }
+    },
+    {
+      "id": "look_around",
+      "tool": "look_around",
+      "args": {},
+      "mask": {
+        "all": []
+      }
+    },
+    {
+      "id": "go_to:frontier",
+      "tool": "go_to",
+      "args": {
+        "target": "frontier"
+      },
+      "mask": {
+        "all": [
+          [
+            "frontier",
+            ">",
+            0.0
+          ],
+          [
+            "underground",
+            "<",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "chop_tree:near",
+      "tool": "chop_tree",
+      "args": {
+        "at": "near"
+      },
+      "mask": {
+        "all": [
+          [
+            "trees_free",
+            ">",
+            0.0
+          ],
+          [
+            "underground",
+            "<",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "mine:stone",
+      "tool": "mine",
+      "args": {
+        "block": "stone",
+        "count": "8"
+      },
+      "mask": [
+        "pick_tier",
+        ">=",
+        1.0
+      ]
+    },
+    {
+      "id": "mine:coal_ore",
+      "tool": "mine",
+      "args": {
+        "block": "coal_ore",
+        "count": "3"
+      },
+      "mask": {
+        "all": [
+          [
+            "pick_tier",
+            ">=",
+            1.0
+          ],
+          [
+            "coal_minable",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "mine:iron_ore",
+      "tool": "mine",
+      "args": {
+        "block": "iron_ore",
+        "count": "3"
+      },
+      "mask": {
+        "all": [
+          [
+            "pick_tier",
+            ">=",
+            2.0
+          ],
+          [
+            "iron_minable",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:planks",
+      "tool": "craft",
+      "args": {
+        "item": "planks",
+        "count": "4"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_planks",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_planks",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "bag_planks",
+            "<",
+            64.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:stick",
+      "tool": "craft",
+      "args": {
+        "item": "stick",
+        "count": "4"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_stick",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_stick",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "bag_stick",
+            "<",
+            32.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:crafting_table",
+      "tool": "craft",
+      "args": {
+        "item": "crafting_table",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_crafting_table",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_crafting_table",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "bag_crafting_table",
+            "<=",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:wooden_pickaxe",
+      "tool": "craft",
+      "args": {
+        "item": "wooden_pickaxe",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_wooden_pickaxe",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_wooden_pickaxe",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "pick_tier",
+            "<",
+            1.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:stone_pickaxe",
+      "tool": "craft",
+      "args": {
+        "item": "stone_pickaxe",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_stone_pickaxe",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_stone_pickaxe",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "pick_tier",
+            "<",
+            2.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:iron_pickaxe",
+      "tool": "craft",
+      "args": {
+        "item": "iron_pickaxe",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_iron_pickaxe",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_iron_pickaxe",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "pick_tier",
+            "<",
+            3.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:wooden_sword",
+      "tool": "craft",
+      "args": {
+        "item": "wooden_sword",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_wooden_sword",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_wooden_sword",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "sword_tier",
+            "<",
+            1.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:stone_sword",
+      "tool": "craft",
+      "args": {
+        "item": "stone_sword",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_stone_sword",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_stone_sword",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "sword_tier",
+            "<",
+            2.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:iron_sword",
+      "tool": "craft",
+      "args": {
+        "item": "iron_sword",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_iron_sword",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_iron_sword",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "sword_tier",
+            "<",
+            3.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:furnace",
+      "tool": "craft",
+      "args": {
+        "item": "furnace",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_furnace",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_furnace",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "bag_furnace",
+            "<=",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:torch",
+      "tool": "craft",
+      "args": {
+        "item": "torch",
+        "count": "4"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_torch",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_torch",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "bag_torch",
+            "<",
+            32.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:chest",
+      "tool": "craft",
+      "args": {
+        "item": "chest",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_chest",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_chest",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "all": [
+              [
+                "bag_chest",
+                "<=",
+                0.0
+              ],
+              [
+                "chest_known",
+                "<",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "smelt:iron_ingot",
+      "tool": "smelt",
+      "args": {
+        "item": "iron_ingot",
+        "count": "3"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_iron_ore",
+            ">",
+            0.0
+          ],
+          [
+            "fuel",
+            ">",
+            0.0
+          ],
+          {
+            "any": [
+              {
+                "all": [
+                  [
+                    "furnace_known",
+                    ">",
+                    0.5
+                  ],
+                  [
+                    "furnace_dist",
+                    "<=",
+                    24.0
+                  ]
+                ]
+              },
+              {
+                "all": [
+                  [
+                    "bag_furnace",
+                    ">",
+                    0.0
+                  ],
+                  [
+                    "place_spot",
+                    ">",
+                    0.5
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "smelt:food",
+      "tool": "smelt",
+      "args": {
+        "item": "food",
+        "count": "4"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_food_raw",
+            ">",
+            0.0
+          ],
+          [
+            "fuel",
+            ">",
+            0.0
+          ],
+          {
+            "any": [
+              {
+                "all": [
+                  [
+                    "furnace_known",
+                    ">",
+                    0.5
+                  ],
+                  [
+                    "furnace_dist",
+                    "<=",
+                    24.0
+                  ]
+                ]
+              },
+              {
+                "all": [
+                  [
+                    "bag_furnace",
+                    ">",
+                    0.0
+                  ],
+                  [
+                    "place_spot",
+                    ">",
+                    0.5
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "place:crafting_table",
+      "tool": "place",
+      "args": {
+        "item": "crafting_table",
+        "at": "near"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_crafting_table",
+            ">",
+            0.0
+          ],
+          [
+            "place_spot",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              [
+                "table_known",
+                "<",
+                0.5
+              ],
+              [
+                "table_dist",
+                ">",
+                6.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "place:furnace",
+      "tool": "place",
+      "args": {
+        "item": "furnace",
+        "at": "near"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_furnace",
+            ">",
+            0.0
+          ],
+          [
+            "place_spot",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              [
+                "furnace_known",
+                "<",
+                0.5
+              ],
+              [
+                "furnace_dist",
+                ">",
+                6.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "place:chest",
+      "tool": "place",
+      "args": {
+        "item": "chest",
+        "at": "near"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_chest",
+            ">",
+            0.0
+          ],
+          [
+            "place_spot",
+            ">",
+            0.5
+          ],
+          [
+            "chest_known",
+            "<",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "build_wall:ring",
+      "tool": "build_wall",
+      "args": {
+        "shape": "around base",
+        "height": "2",
+        "material": "any"
+      },
+      "mask": {
+        "all": [
+          [
+            "base_known",
+            ">",
+            0.5
+          ],
+          [
+            "underground",
+            "<",
+            0.5
+          ],
+          [
+            "wall_blocks",
+            ">",
+            0.0
+          ],
+          {
+            "any": [
+              [
+                "ring_planned",
+                "<",
+                0.5
+              ],
+              [
+                "wall_frac",
+                "<",
+                1.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "repair_wall:nearest",
+      "tool": "repair_wall",
+      "args": {},
+      "mask": {
+        "all": [
+          [
+            "underground",
+            "<",
+            0.5
+          ],
+          [
+            "ring_planned",
+            ">",
+            0.5
+          ],
+          [
+            "holes",
+            ">",
+            0.0
+          ],
+          [
+            "wall_blocks",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "dig_moat:ring",
+      "tool": "dig_moat",
+      "args": {
+        "depth": "1"
+      },
+      "mask": {
+        "all": [
+          [
+            "underground",
+            "<",
+            0.5
+          ],
+          [
+            "ring_planned",
+            ">",
+            0.5
+          ],
+          [
+            "moat_frac",
+            "<",
+            1.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "light_area:base",
+      "tool": "light_area",
+      "args": {
+        "radius": "12"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_torch",
+            ">",
+            0.0
+          ],
+          [
+            "light_spots",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "equip:best",
+      "tool": "equip",
+      "args": {
+        "what": "best"
+      },
+      "mask": [
+        "can_equip",
+        ">",
+        0.0
+      ]
+    },
+    {
+      "id": "take_post:auto",
+      "tool": "take_post",
+      "args": {
+        "where": "auto"
+      },
+      "mask": {
+        "all": [
+          [
+            "ring_planned",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              {
+                "all": [
+                  [
+                    "has_post",
+                    "<",
+                    0.5
+                  ],
+                  [
+                    "posts_free",
+                    ">",
+                    0.0
+                  ]
+                ]
+              },
+              {
+                "all": [
+                  [
+                    "has_post",
+                    ">",
+                    0.5
+                  ],
+                  [
+                    "post_dist",
+                    ">",
+                    2.0
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "hold_line:post",
+      "tool": "hold_line",
+      "args": {
+        "radius": "4",
+        "seconds": "60"
+      },
+      "mask": {
+        "all": [
+          [
+            "waves_active",
+            ">",
+            0.5
+          ],
+          [
+            "health",
+            ">=",
+            "low_health"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "retreat:home",
+      "tool": "retreat",
+      "args": {
+        "where": "home"
+      },
+      "mask": {
+        "all": [
+          [
+            "base_known",
+            ">",
+            0.5
+          ],
+          [
+            "base_dist",
+            ">",
+            3.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "eat:best",
+      "tool": "eat",
+      "args": {},
+      "mask": {
+        "all": [
+          [
+            "food_items",
+            ">",
+            0.0
+          ],
+          {
+            "any": [
+              {
+                "all": [
+                  [
+                    "hunger_on",
+                    "<",
+                    0.5
+                  ],
+                  [
+                    "health",
+                    "<",
+                    "max_health"
+                  ]
+                ]
+              },
+              {
+                "all": [
+                  [
+                    "hunger_on",
+                    ">",
+                    0.5
+                  ],
+                  [
+                    "food_level",
+                    "<",
+                    20.0
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "hunt:near",
+      "tool": "hunt",
+      "args": {
+        "at": "near"
+      },
+      "mask": [
+        "animals_seen",
+        ">",
+        0.0
+      ]
+    },
+    {
+      "id": "put:chest_all",
+      "tool": "put",
+      "args": {
+        "chest": "crew",
+        "item": "all",
+        "count": "1728"
+      },
+      "mask": {
+        "all": [
+          [
+            "chest_known",
+            ">",
+            0.5
+          ],
+          [
+            "bag_stackables",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "take:chest_food",
+      "tool": "take",
+      "args": {
+        "chest": "crew",
+        "item": "food",
+        "count": "8"
+      },
+      "mask": {
+        "all": [
+          [
+            "chest_known",
+            ">",
+            0.5
+          ],
+          [
+            "chest_food",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "go_to:base",
+      "tool": "go_to",
+      "args": {
+        "target": "base"
+      },
+      "mask": {
+        "all": [
+          [
+            "base_known",
+            ">",
+            0.5
+          ],
+          [
+            "base_dist",
+            ">",
+            4.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "wait:5",
+      "tool": "wait",
+      "args": {
+        "seconds": "5"
+      },
+      "mask": {
+        "all": []
+      }
+    },
+    {
+      "id": "descend:mine",
+      "tool": "descend",
+      "args": {},
+      "mask": {
+        "all": [
+          [
+            "pick_tier",
+            ">=",
+            1.0
+          ],
+          [
+            "depth_level",
+            "<",
+            2.0
+          ],
+          [
+            "base_known",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ascend:surface",
+      "tool": "ascend",
+      "args": {},
+      "mask": {
+        "all": [
+          [
+            "underground",
+            ">",
+            0.5
+          ],
+          [
+            "mine_known",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "tunnel:branch",
+      "tool": "tunnel",
+      "args": {
+        "length": "12"
+      },
+      "mask": {
+        "all": [
+          [
+            "underground",
+            ">",
+            0.5
+          ],
+          [
+            "at_horizon",
+            ">",
+            0.5
+          ],
+          [
+            "pick_tier",
+            ">=",
+            1.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "mine:gold_ore",
+      "tool": "mine",
+      "args": {
+        "block": "gold_ore",
+        "count": "3"
+      },
+      "mask": {
+        "all": [
+          [
+            "pick_tier",
+            ">=",
+            3.0
+          ],
+          [
+            "gold_minable",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "mine:redstone_ore",
+      "tool": "mine",
+      "args": {
+        "block": "redstone_ore",
+        "count": "4"
+      },
+      "mask": {
+        "all": [
+          [
+            "pick_tier",
+            ">=",
+            3.0
+          ],
+          [
+            "redstone_minable",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "mine:diamond_ore",
+      "tool": "mine",
+      "args": {
+        "block": "diamond_ore",
+        "count": "2"
+      },
+      "mask": {
+        "all": [
+          [
+            "pick_tier",
+            ">=",
+            3.0
+          ],
+          [
+            "diamond_minable",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "mine:obsidian",
+      "tool": "mine",
+      "args": {
+        "block": "obsidian",
+        "count": "4"
+      },
+      "mask": {
+        "all": [
+          [
+            "pick_tier",
+            ">=",
+            4.0
+          ],
+          [
+            "obsidian_minable",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "mine:gravel",
+      "tool": "mine",
+      "args": {
+        "block": "gravel",
+        "count": "4"
+      },
+      "mask": [
+        "gravel_minable",
+        ">",
+        0.0
+      ]
+    },
+    {
+      "id": "smelt:gold_ingot",
+      "tool": "smelt",
+      "args": {
+        "item": "gold_ingot",
+        "count": "3"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_gold_ore",
+            ">",
+            0.0
+          ],
+          [
+            "fuel",
+            ">",
+            0.0
+          ],
+          {
+            "any": [
+              {
+                "all": [
+                  [
+                    "furnace_known",
+                    ">",
+                    0.5
+                  ],
+                  [
+                    "furnace_dist",
+                    "<=",
+                    24.0
+                  ]
+                ]
+              },
+              {
+                "all": [
+                  [
+                    "bag_furnace",
+                    ">",
+                    0.0
+                  ],
+                  [
+                    "place_spot",
+                    ">",
+                    0.5
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "craft:diamond_pickaxe",
+      "tool": "craft",
+      "args": {
+        "item": "diamond_pickaxe",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_diamond_pickaxe",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_diamond_pickaxe",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "pick_tier",
+            "<",
+            4.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:diamond_sword",
+      "tool": "craft",
+      "args": {
+        "item": "diamond_sword",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_diamond_sword",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_diamond_sword",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "sword_tier",
+            "<",
+            4.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:bow",
+      "tool": "craft",
+      "args": {
+        "item": "bow",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_bow",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_bow",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "bag_bow",
+            "<=",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:arrow",
+      "tool": "craft",
+      "args": {
+        "item": "arrow",
+        "count": "4"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_arrow",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_arrow",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "bag_arrow",
+            "<",
+            64.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:bucket",
+      "tool": "craft",
+      "args": {
+        "item": "bucket",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_bucket",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_bucket",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "buckets",
+            "<",
+            2.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:flint_and_steel",
+      "tool": "craft",
+      "args": {
+        "item": "flint_and_steel",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_flint_and_steel",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_flint_and_steel",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "bag_flint_and_steel",
+            "<=",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft_armor:leather",
+      "tool": "craft_armor",
+      "args": {
+        "material": "leather"
+      },
+      "mask": {
+        "all": [
+          [
+            "armor_craftable_leather",
+            ">",
+            0.0
+          ],
+          {
+            "any": [
+              {
+                "all": [
+                  [
+                    "table_known",
+                    ">",
+                    0.5
+                  ],
+                  [
+                    "table_dist",
+                    "<=",
+                    24.0
+                  ]
+                ]
+              },
+              {
+                "all": [
+                  [
+                    "bag_crafting_table",
+                    ">",
+                    0.0
+                  ],
+                  [
+                    "place_spot",
+                    ">",
+                    0.5
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "craft_armor:golden",
+      "tool": "craft_armor",
+      "args": {
+        "material": "golden"
+      },
+      "mask": {
+        "all": [
+          [
+            "armor_craftable_golden",
+            ">",
+            0.0
+          ],
+          {
+            "any": [
+              {
+                "all": [
+                  [
+                    "table_known",
+                    ">",
+                    0.5
+                  ],
+                  [
+                    "table_dist",
+                    "<=",
+                    24.0
+                  ]
+                ]
+              },
+              {
+                "all": [
+                  [
+                    "bag_crafting_table",
+                    ">",
+                    0.0
+                  ],
+                  [
+                    "place_spot",
+                    ">",
+                    0.5
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "craft_armor:iron",
+      "tool": "craft_armor",
+      "args": {
+        "material": "iron"
+      },
+      "mask": {
+        "all": [
+          [
+            "armor_craftable_iron",
+            ">",
+            0.0
+          ],
+          {
+            "any": [
+              {
+                "all": [
+                  [
+                    "table_known",
+                    ">",
+                    0.5
+                  ],
+                  [
+                    "table_dist",
+                    "<=",
+                    24.0
+                  ]
+                ]
+              },
+              {
+                "all": [
+                  [
+                    "bag_crafting_table",
+                    ">",
+                    0.0
+                  ],
+                  [
+                    "place_spot",
+                    ">",
+                    0.5
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "craft_armor:diamond",
+      "tool": "craft_armor",
+      "args": {
+        "material": "diamond"
+      },
+      "mask": {
+        "all": [
+          [
+            "armor_craftable_diamond",
+            ">",
+            0.0
+          ],
+          {
+            "any": [
+              {
+                "all": [
+                  [
+                    "table_known",
+                    ">",
+                    0.5
+                  ],
+                  [
+                    "table_dist",
+                    "<=",
+                    24.0
+                  ]
+                ]
+              },
+              {
+                "all": [
+                  [
+                    "bag_crafting_table",
+                    ">",
+                    0.0
+                  ],
+                  [
+                    "place_spot",
+                    ">",
+                    0.5
+                  ]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "shoot:post",
+      "tool": "shoot",
+      "args": {
+        "seconds": "30"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_bow",
+            ">",
+            0.0
+          ],
+          [
+            "bag_arrow",
+            ">",
+            0.0
+          ],
+          [
+            "enemies_visible",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "build_gate:door",
+      "tool": "build_gate",
+      "args": {},
+      "mask": {
+        "all": [
+          [
+            "underground",
+            "<",
+            0.5
+          ],
+          [
+            "ring_planned",
+            ">",
+            0.5
+          ],
+          [
+            "bag_wooden_door",
+            ">",
+            0.0
+          ],
+          [
+            "door_placed",
+            "<",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "close:gate",
+      "tool": "close_gate",
+      "args": {},
+      "mask": {
+        "all": [
+          [
+            "door_placed",
+            ">",
+            0.5
+          ],
+          [
+            "gate_open",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:wooden_hoe",
+      "tool": "craft",
+      "args": {
+        "item": "wooden_hoe",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_wooden_hoe",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_wooden_hoe",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "hoes",
+            "<=",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:stone_hoe",
+      "tool": "craft",
+      "args": {
+        "item": "stone_hoe",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_stone_hoe",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_stone_hoe",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "hoe_tier",
+            "<",
+            2.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:bread",
+      "tool": "craft",
+      "args": {
+        "item": "bread",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_bread",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_bread",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "bag_bread",
+            "<",
+            64.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:wooden_door",
+      "tool": "craft",
+      "args": {
+        "item": "wooden_door",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_wooden_door",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_wooden_door",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "all": [
+              [
+                "bag_wooden_door",
+                "<=",
+                0.0
+              ],
+              [
+                "door_placed",
+                "<",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "craft:fence",
+      "tool": "craft",
+      "args": {
+        "item": "fence",
+        "count": "2"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_fence",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_fence",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "all": [
+              [
+                "bag_fence",
+                "<",
+                32.0
+              ],
+              [
+                "pen_built",
+                "<",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "craft:fence_gate",
+      "tool": "craft",
+      "args": {
+        "item": "fence_gate",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_fence_gate",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_fence_gate",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "all": [
+              [
+                "bag_fence_gate",
+                "<=",
+                0.0
+              ],
+              [
+                "pen_built",
+                "<",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "till:farm",
+      "tool": "till",
+      "args": {
+        "count": "8"
+      },
+      "mask": {
+        "all": [
+          [
+            "base_known",
+            ">",
+            0.5
+          ],
+          [
+            "underground",
+            "<",
+            0.5
+          ],
+          [
+            "hoes",
+            ">",
+            0.0
+          ],
+          [
+            "farm_plots",
+            "<",
+            16.0
+          ],
+          [
+            "till_spots",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "plant:wheat",
+      "tool": "plant",
+      "args": {
+        "what": "wheat",
+        "count": "8"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_wheat_seeds",
+            ">",
+            0.0
+          ],
+          [
+            "farm_empty",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "harvest:farm",
+      "tool": "harvest",
+      "args": {
+        "count": "16",
+        "replant": "yes"
+      },
+      "mask": [
+        "farm_ripe",
+        ">",
+        0.0
+      ]
+    },
+    {
+      "id": "gather:seeds",
+      "tool": "gather",
+      "args": {
+        "what": "seeds",
+        "count": "8"
+      },
+      "mask": {
+        "all": [
+          [
+            "underground",
+            "<",
+            0.5
+          ],
+          [
+            "grass_seen",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "gather:saplings",
+      "tool": "gather",
+      "args": {
+        "what": "saplings",
+        "count": "16"
+      },
+      "mask": {
+        "all": [
+          [
+            "underground",
+            "<",
+            0.5
+          ],
+          [
+            "leaves_seen",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "gather:sugar_cane",
+      "tool": "gather",
+      "args": {
+        "what": "sugar_cane",
+        "count": "6"
+      },
+      "mask": {
+        "all": [
+          [
+            "underground",
+            "<",
+            0.5
+          ],
+          [
+            "cane_seen",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "plant:sapling",
+      "tool": "plant",
+      "args": {
+        "what": "sapling",
+        "count": "4"
+      },
+      "mask": {
+        "all": [
+          [
+            "underground",
+            "<",
+            0.5
+          ],
+          [
+            "bag_sapling",
+            ">",
+            0.0
+          ],
+          [
+            "sapling_spots",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "build_pen:pasture",
+      "tool": "build_pen",
+      "args": {},
+      "mask": {
+        "all": [
+          [
+            "base_known",
+            ">",
+            0.5
+          ],
+          [
+            "underground",
+            "<",
+            0.5
+          ],
+          [
+            "bag_fence",
+            ">=",
+            15.0
+          ],
+          [
+            "bag_fence_gate",
+            ">",
+            0.0
+          ],
+          [
+            "pen_built",
+            "<",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "lure:pen",
+      "tool": "lure",
+      "args": {},
+      "mask": {
+        "all": [
+          [
+            "pen_built",
+            ">",
+            0.5
+          ],
+          [
+            "lure_targets",
+            ">",
+            0.0
+          ],
+          [
+            "pen_animals",
+            "<",
+            8.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "breed:pen",
+      "tool": "breed",
+      "args": {},
+      "mask": [
+        "pen_pairs",
+        ">",
+        0.0
+      ]
+    },
+    {
+      "id": "slaughter:pen",
+      "tool": "slaughter",
+      "args": {},
+      "mask": [
+        "pen_adults",
+        ">=",
+        3.0
+      ]
+    },
+    {
+      "id": "craft:paper",
+      "tool": "craft",
+      "args": {
+        "item": "paper",
+        "count": "3"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_paper",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_paper",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "bag_paper",
+            "<",
+            32.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:book",
+      "tool": "craft",
+      "args": {
+        "item": "book",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_book",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_book",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "bag_book",
+            "<",
+            16.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:bookshelf",
+      "tool": "craft",
+      "args": {
+        "item": "bookshelf",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_bookshelf",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_bookshelf",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "shelves_total",
+            "<",
+            15.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:enchanting_table",
+      "tool": "craft",
+      "args": {
+        "item": "enchanting_table",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_enchanting_table",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_enchanting_table",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "all": [
+              [
+                "bag_enchanting_table",
+                "<=",
+                0.0
+              ],
+              [
+                "ench_table_known",
+                "<",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "place:enchanting_table",
+      "tool": "place",
+      "args": {
+        "item": "enchanting_table",
+        "at": "base"
+      },
+      "mask": {
+        "all": [
+          [
+            "base_known",
+            ">",
+            0.5
+          ],
+          [
+            "underground",
+            "<",
+            0.5
+          ],
+          [
+            "bag_enchanting_table",
+            ">",
+            0.0
+          ],
+          [
+            "ench_table_known",
+            "<",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:bookshelf",
+      "tool": "place_shelf",
+      "args": {},
+      "mask": {
+        "all": [
+          [
+            "bag_bookshelf",
+            ">",
+            0.0
+          ],
+          [
+            "ench_table_known",
+            ">",
+            0.5
+          ],
+          [
+            "ench_table_dist",
+            "<=",
+            16.0
+          ],
+          [
+            "shelf_spots",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "enchant:best",
+      "tool": "enchant",
+      "args": {},
+      "mask": {
+        "all": [
+          [
+            "ench_table_known",
+            ">",
+            0.5
+          ],
+          [
+            "ench_table_dist",
+            "<=",
+            24.0
+          ],
+          [
+            "xp_level",
+            ">=",
+            1.0
+          ],
+          [
+            "enchantable",
+            ">",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:block@front",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "front"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:block@below",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "below"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_below",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_below_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:block@front_down",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "front_down"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front_down",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_down_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:block@hole",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "hole"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_hole",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_hole_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:block@moat",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "moat"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_moat",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_moat_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:block@mob",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "mob"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_mob",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_mob_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:water@front",
+      "tool": "place_at",
+      "args": {
+        "slot": "water",
+        "target": "front"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_water_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:water@below",
+      "tool": "place_at",
+      "args": {
+        "slot": "water",
+        "target": "below"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_water_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_below",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_below_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:water@front_down",
+      "tool": "place_at",
+      "args": {
+        "slot": "water",
+        "target": "front_down"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_water_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front_down",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_down_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:water@hole",
+      "tool": "place_at",
+      "args": {
+        "slot": "water",
+        "target": "hole"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_water_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_hole",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_hole_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:water@moat",
+      "tool": "place_at",
+      "args": {
+        "slot": "water",
+        "target": "moat"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_water_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_moat",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_moat_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:water@mob",
+      "tool": "place_at",
+      "args": {
+        "slot": "water",
+        "target": "mob"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_water_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_mob",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_mob_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:lava@front",
+      "tool": "place_at",
+      "args": {
+        "slot": "lava",
+        "target": "front"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_lava_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:lava@below",
+      "tool": "place_at",
+      "args": {
+        "slot": "lava",
+        "target": "below"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_lava_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_below",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_below_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:lava@front_down",
+      "tool": "place_at",
+      "args": {
+        "slot": "lava",
+        "target": "front_down"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_lava_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front_down",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_down_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:lava@hole",
+      "tool": "place_at",
+      "args": {
+        "slot": "lava",
+        "target": "hole"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_lava_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_hole",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_hole_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:lava@moat",
+      "tool": "place_at",
+      "args": {
+        "slot": "lava",
+        "target": "moat"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_lava_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_moat",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_moat_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:lava@mob",
+      "tool": "place_at",
+      "args": {
+        "slot": "lava",
+        "target": "mob"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_lava_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_mob",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_mob_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:torch@front",
+      "tool": "place_at",
+      "args": {
+        "slot": "torch",
+        "target": "front"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_torch",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:torch@below",
+      "tool": "place_at",
+      "args": {
+        "slot": "torch",
+        "target": "below"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_torch",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_below",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_below_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:torch@front_down",
+      "tool": "place_at",
+      "args": {
+        "slot": "torch",
+        "target": "front_down"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_torch",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front_down",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_down_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:torch@hole",
+      "tool": "place_at",
+      "args": {
+        "slot": "torch",
+        "target": "hole"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_torch",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_hole",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_hole_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:torch@moat",
+      "tool": "place_at",
+      "args": {
+        "slot": "torch",
+        "target": "moat"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_torch",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_moat",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_moat_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:torch@mob",
+      "tool": "place_at",
+      "args": {
+        "slot": "torch",
+        "target": "mob"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_torch",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_mob",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_mob_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "use:bucket@front",
+      "tool": "use_at",
+      "args": {
+        "slot": "bucket",
+        "target": "front"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              [
+                "tgt_front_water_src",
+                ">",
+                0.5
+              ],
+              [
+                "tgt_front_lava_src",
+                ">",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "use:bucket@below",
+      "tool": "use_at",
+      "args": {
+        "slot": "bucket",
+        "target": "below"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_below",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              [
+                "tgt_below_water_src",
+                ">",
+                0.5
+              ],
+              [
+                "tgt_below_lava_src",
+                ">",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "use:bucket@front_down",
+      "tool": "use_at",
+      "args": {
+        "slot": "bucket",
+        "target": "front_down"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front_down",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              [
+                "tgt_front_down_water_src",
+                ">",
+                0.5
+              ],
+              [
+                "tgt_front_down_lava_src",
+                ">",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "use:bucket@hole",
+      "tool": "use_at",
+      "args": {
+        "slot": "bucket",
+        "target": "hole"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_hole",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              [
+                "tgt_hole_water_src",
+                ">",
+                0.5
+              ],
+              [
+                "tgt_hole_lava_src",
+                ">",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "use:bucket@moat",
+      "tool": "use_at",
+      "args": {
+        "slot": "bucket",
+        "target": "moat"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_moat",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              [
+                "tgt_moat_water_src",
+                ">",
+                0.5
+              ],
+              [
+                "tgt_moat_lava_src",
+                ">",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "use:bucket@mob",
+      "tool": "use_at",
+      "args": {
+        "slot": "bucket",
+        "target": "mob"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_mob",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              [
+                "tgt_mob_water_src",
+                ">",
+                0.5
+              ],
+              [
+                "tgt_mob_lava_src",
+                ">",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "use:fire@front",
+      "tool": "use_at",
+      "args": {
+        "slot": "fire",
+        "target": "front"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_flint_and_steel",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "use:fire@below",
+      "tool": "use_at",
+      "args": {
+        "slot": "fire",
+        "target": "below"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_flint_and_steel",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_below",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_below_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "use:fire@front_down",
+      "tool": "use_at",
+      "args": {
+        "slot": "fire",
+        "target": "front_down"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_flint_and_steel",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front_down",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_down_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "use:fire@hole",
+      "tool": "use_at",
+      "args": {
+        "slot": "fire",
+        "target": "hole"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_flint_and_steel",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_hole",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_hole_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "use:fire@moat",
+      "tool": "use_at",
+      "args": {
+        "slot": "fire",
+        "target": "moat"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_flint_and_steel",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_moat",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_moat_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "use:fire@mob",
+      "tool": "use_at",
+      "args": {
+        "slot": "fire",
+        "target": "mob"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_flint_and_steel",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_mob",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_mob_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "attack@mob",
+      "tool": "attack",
+      "args": {
+        "target": "mob"
+      },
+      "mask": [
+        "tgt_mob",
+        ">",
+        0.5
+      ]
+    },
+    {
+      "id": "attack@animal",
+      "tool": "attack",
+      "args": {
+        "target": "animal"
+      },
+      "mask": [
+        "animals_seen",
+        ">",
+        0.0
+      ]
+    },
+    {
+      "id": "open@front",
+      "tool": "open",
+      "args": {
+        "target": "front"
+      },
+      "mask": [
+        "tgt_front_door",
+        ">",
+        0.5
+      ]
+    },
+    {
+      "id": "open@gate",
+      "tool": "open",
+      "args": {
+        "target": "gate"
+      },
+      "mask": [
+        "door_placed",
+        ">",
+        0.5
+      ]
+    }
+  ]
+}

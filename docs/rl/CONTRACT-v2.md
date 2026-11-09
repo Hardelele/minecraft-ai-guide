@@ -1,4 +1,4 @@
-# Контракт среды и обучения v2 (версия файлов 3)
+# Контракт среды и обучения v2 (версия файлов 3 и v3.1)
 
 ТЗ «развитие v2». Версия контракта **3**: 2 — первая редакция этого документа (коммит 10ab7f0, 82 действия, 322
 признака); 3 — она же с причинной разметкой, отложенной наградой, примитивами и любопытством (раздел 2.1, 3.1).
@@ -9,12 +9,23 @@
 (`gen_spec.py --check`, тесты `tools/tests/test_rl_env.py`, `test_rl_spec2.py`). Контракт 1 заморожен:
 `RlSpec1.java` → `rl/v1/*.json` (байт в байт прежние файлы, [`CONTRACT.md`](CONTRACT.md)).
 
+**Сейчас в `rl/*.json` — v3.1 (версия файлов 4), раздел 11.** Контракт 3 заморожен: `RlSpec3.java` → `rl/v3/*.json`
+(байт в байт те файлы, на которых идёт обучение); сервер по умолчанию отдаёт его.
+
+| контракт | файлы | действия | признаки | награда |
+|---|---|---|---|---|
+| 3.1 (версия 4) | `rl/*.json` | 136, `45d2a5d06270` | 441, `67a26ca97558` | `06f7bd34fcb6` |
+| 3 | `rl/v3/*.json` | 124, `553dfd026d9d` | 402, `7821a391980f` | `c5c25ba77c8a` |
+| 1 | `rl/v1/*.json` | 38, `1e7a66545050` | 137, `4ba70eaea357` | — |
+
+Контракт 3 подробно:
+
 | файл | версия | хеш | размер |
 |---|---|---|---|
-| `rl/actions.json` | 3 | `553dfd026d9d` | 124 действия (первые 38 — v1 в том же порядке) |
-| `rl/obs.json` | 3 | `7821a391980f` | 402 признака |
-| `rl/reward.json` | 3 | `c5c25ba77c8a` (веса + `scenarioScales`) | 45 весов, 9 шкал, 17 сценариев |
-| `rl/achievements.json` | 3 | — | 33 достижения 1.7.10, 18 поддержаны |
+| `rl/v3/actions.json` | 3 | `553dfd026d9d` | 124 действия (первые 38 — v1 в том же порядке) |
+| `rl/v3/obs.json` | 3 | `7821a391980f` | 402 признака |
+| `rl/v3/reward.json` | 3 | `c5c25ba77c8a` (веса + `scenarioScales`) | 45 весов, 9 шкал, 17 сценариев |
+| `rl/v3/achievements.json` | 3 | — | 33 достижения 1.7.10, 18 поддержаны |
 
 Хеш действий считается по id, навыку, аргументам **и правилу маски** (поменять правило — поменять хеш). Хеши
 печатает `gen_spec.py`; среда отдаёт их в `info`.
@@ -180,7 +191,7 @@
 | 81 | `place:enchanting_table` | place (item=enchanting_table, at=base) | base_known > 0.5 и underground < 0.5 и bag_enchanting_table > 0 и ench_table_known < 0.5 |
 | 82 | `place:bookshelf` | place_shelf | bag_bookshelf > 0 и ench_table_known > 0.5 и ench_table_dist <= 16 и shelf_spots > 0 |
 | 83 | `enchant:best` | enchant | ench_table_known > 0.5 и ench_table_dist <= 24 и xp_level >= 1 и enchantable > 0 |
-| 84–89 | 84 `place:block@front`, 85 `place:block@below`, 86 `place:block@front_down`, 87 `place:block@hole`, 88 `place:block@moat`, 89 `place:block@mob` | place_at (slot=block, target=<t>) | slot_block > 0 и tgt_<t> > 0.5 и tgt_<t>_free > 0.5 |
+| 84–134 | 84 `place:block@front`, 85 `place:block@below`, 86 `place:block@front_down`, 87 `place:block@hole`, 88 `place:block@moat`, 89 `place:block@mob`, 131 `place:block@left`, 132 `place:block@right`, 133 `place:block@back`, 134 `place:block@above` | place_at (slot=block, target=<t>) | slot_block > 0 и tgt_<t> > 0.5 и tgt_<t>_free > 0.5 |
 | 90–95 | 90 `place:water@front`, 91 `place:water@below`, 92 `place:water@front_down`, 93 `place:water@hole`, 94 `place:water@moat`, 95 `place:water@mob` | place_at (slot=water, target=<t>) | bag_water_bucket > 0 и tgt_<t> > 0.5 и tgt_<t>_free > 0.5 |
 | 96–101 | 96 `place:lava@front`, 97 `place:lava@below`, 98 `place:lava@front_down`, 99 `place:lava@hole`, 100 `place:lava@moat`, 101 `place:lava@mob` | place_at (slot=lava, target=<t>) | bag_lava_bucket > 0 и tgt_<t> > 0.5 и tgt_<t>_free > 0.5 |
 | 102–107 | 102 `place:torch@front`, 103 `place:torch@below`, 104 `place:torch@front_down`, 105 `place:torch@hole`, 106 `place:torch@moat`, 107 `place:torch@mob` | place_at (slot=torch, target=<t>) | bag_torch > 0 и tgt_<t> > 0.5 и tgt_<t>_free > 0.5 |
@@ -190,6 +201,14 @@
 | 121 | `attack@animal` | attack (target=animal) | animals_seen > 0 |
 | 122 | `open@front` | open (target=front) | tgt_front_door > 0.5 |
 | 123 | `open@gate` | open (target=gate) | door_placed > 0.5 |
+| 124 | `dig@below` | dig_at (target=below) | nb_below_dig > 0.5 |
+| 125 | `dig@front` | dig_at (target=front) | nb_front_dig > 0.5 |
+| 126 | `dig@front_down` | dig_at (target=front_down) | nb_front_down_dig > 0.5 |
+| 127 | `dig@left` | dig_at (target=left) | nb_left_dig > 0.5 |
+| 128 | `dig@right` | dig_at (target=right) | nb_right_dig > 0.5 |
+| 129 | `dig@back` | dig_at (target=back) | nb_back_dig > 0.5 |
+| 130 | `dig@above` | dig_at (target=above) | nb_above_dig > 0.5 |
+| 135 | `pillar:up` | pillar | slot_block > 0 и pillar_ok > 0.5 |
 
 СТОЛ = `(table_known > 0.5 и table_dist <= 24) или (bag_crafting_table > 0 и place_spot > 0.5)`; ПЕЧЬ — то же для печи (`place_spot` — свободная клетка рядом). «craftable»
 у крафта — `craftable_<item> > 0 и (small_<item> > 0 или СТОЛ)`; точная формула каждого — в `actions.json`.
@@ -444,9 +463,52 @@ redstone, diamond, obsidian, gravel: увиденное в 32 по горизо�
 - Причины не прослеживаются через взрывы, падающие блоки, урон от падения и предметы, переложенные из штабелей
   (метка — только у нештабелируемых вещей).
 
+## 11. v3.1: копать и строить вокруг себя
+
+Зачем: в v3 у агентов не было действий «копнуть соседний блок», «поставить блок сбоку/над головой», «встать на блок
+под собой» — поэтому они не копали вниз, не строили столб, не обкладывались блоками и не складывали укрытия даже
+случайно. v3.1 = v3 + эти примитивы; ничего готового (бункер, яма) нет — складывается из них.
+
+**Совместимость.** Первые 124 действия v3.1 — действия v3 с теми же правилами маски; веса награды — те же плюс
+`safety.shelter` с весом 0. Сервер отдаёт оба контракта: по умолчанию 3 (`info` как раньше, плюс `contracts` — хеши
+обоих), `reset` с `"contract":"3.1"` — эпизод v3.1 (`"contract":"3"` — явно v3); `-Daiguide.rl.contract=3.1` меняет
+умолчание. В эпизоде v3 вектор, маска, сырые факты и награда — как были (новые факты из `info.raw` убраны, метрика
+укрытия не считается). `policy.bin` версии 4 — сеть v3.1, версии 3 — сеть v3 (в игре берётся по версии и размеру).
+
+**Действия (124–135).** Направления — по взгляду агента: `front`, `back`, `left`, `right` — клетки на уровне ног,
+`above` — над головой (y+2), `below` — под ногами, `front_down` — перед собой на блок ниже.
+
+- `dig@below`, `dig@front`, `dig@front_down`, `dig@left`, `dig@right`, `dig@back`, `dig@above` — копать телом, как
+  игрок: видимое, в досягаемости, лучшим инструментом сумки. Сбоку копается столбец (голова, потом ноги). Под собой —
+  копает и падает в яму (без шага в сторону), но не над лавой (лава под блоком или рядом с ним) и не над обрывом в 3+
+  блока: маска 0 и отказ `NO_SPOT`. Блок, который инструменты сумки не берут, и бедрок — маска 0.
+  Маска: `nb_<d>_dig > 0.5`.
+- `place:block@left`, `place:block@right`, `place:block@back`, `place:block@above` — строительный блок сумки в клетку
+  (вдобавок к `@front`, `@below`, `@front_down`, `@hole`, `@moat`, `@mob` из v3). Маска: `slot_block > 0` и
+  `nb_<d>_free > 0.5` (клетка свободна, без моба, есть к чему приставить).
+- `pillar:up` — прыжок и блок под ноги в верхней точке (как игрок строит под себя). Маска: `slot_block > 0` и
+  `pillar_ok > 0.5` (над головой пусто, под ногами твёрдое).
+
+**Признаки (+39, всего 441).** По 6 соседним клеткам (`front`, `back`, `left`, `right`, `above`, `below`):
+`nb_<d>_solid`, `nb_<d>_air`, `nb_<d>_liquid`, `nb_<d>_mob` (враг в клетке; у боковых — и на уровне головы);
+`walls_around` (сколько из 4 сторон закрыто на уровне ног, `div 4`), `enclosed` (4 стороны закрыты на уровне ног и
+головы и есть крыша над головой — дверь считается стеной), `shelter` (`enclosed` ночью или во время волны). Факты
+только для маски: `nb_<d>_dig` (7 направлений), `nb_<d>_free` (4), `pillar_ok`. Геометрия — `RlNear.java` (без игры).
+
+**Награда.** Новой большой награды нет: укрытие уже окупается шкалами выживания (`damage`, `death`), периметра и
+безопасности. Метрика `safety.shelter` (вес 0) — секунды, которые агент провёл закрытым ночью или во время волны;
+видна в `info.measured`.
+
+**Проверка.** `RlTest.near`: синтетические миры — столб вверх (на столбе можно вверх ещё, блок сбоку не к чему
+приставить), яма вниз (стены вокруг, открыто сверху; блок над головой → `enclosed`, ночью `shelter`), нельзя вниз над
+лавой и над обрывом, обложиться 4 блоками (`walls_around` 4, не `enclosed`); маски тех же фактов. `test_rl_spec2.py`:
+маски Java = Python и для новых действий, первые 124 действия и веса — v3, `rl/v3` — прежние хеши.
+
 ## Журнал изменений
 
 - 1 — исходные 38 действий, 137 признаков, общая награда за навыки.
+- 3.1 (версия файлов 4) — копать и строить вокруг себя: `dig@…` (7), `place:block@left|right|back|above`, `pillar:up`;
+  39 признаков соседних клеток и укрытия; метрика `safety.shelter`; сервер отдаёт и 3, и 3.1 (раздел 11).
 - 3 — причинная разметка движка и цепочки причин у событий награды (`decision_id`, `assigned`, `events`),
   примитивы второго уровня (`place:<слот>@<цель>`, `use:bucket|fire@<цель>`, `attack@`, `open@`; крафт ведра и огнива),
   42 + 2 действия (124), признаки целей и `novel_count` (402), шкала `curiosity`, журнал открытий, рефлекс «вода под
