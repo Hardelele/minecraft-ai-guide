@@ -1,40 +1,457 @@
 {
-  "version": 1,
-  "note": "Generated from RlSpec.java: the weights the server uses unless -Daiguide.rl.reward=<file> gives others (same keys). A key 'a.b' is part b of the component a in info.components.",
+  "version": 3,
+  "note": "Generated from RlSpec.java (docs/rl/CONTRACT-v2.md): the weights the server uses unless -Daiguide.rl.reward=<file> gives others (same keys). A key 'a.b' is part b of the component a in info.components. The components named in 'scales' are paid only in the scenarios whose scenarioScales name them (times the factor); the others always.",
   "weights": {
     "noop": -1.0,
     "time": -0.001,
+    "stall": -0.05,
     "skill_fail": -0.05,
     "skill_ok": 0.02,
-    "tier_up": 0.5,
-    "new_item": 0.1,
-    "gathered.log": 0.02,
-    "gathered.cobblestone": 0.01,
-    "gathered.coal": 0.05,
-    "gathered.iron_ore": 0.1,
-    "gathered.food": 0.05,
-    "built.wall": 0.02,
-    "built.moat": 0.01,
-    "built.torch": 0.02,
-    "ate": 0.05,
-    "kill": 0.2,
     "damage": -0.01,
     "death": -1.0,
     "accident": -1.5,
-    "out_died": -0.5,
-    "wave_cleared": 1.0,
-    "holes_at_wave": -0.05,
     "goal": 5.0,
-    "human": 2.0
+    "human": 2.0,
+    "safety.wall": 2.0,
+    "safety.moat": 1.0,
+    "safety.light": 0.5,
+    "safety.gate": 0.5,
+    "perimeter.mob_seconds": -0.02,
+    "perimeter.breach": -0.2,
+    "perimeter.hurt_inside": -0.02,
+    "perimeter.clean_wave": 1.0,
+    "perimeter.wave_cleared": 0.5,
+    "perimeter.kill": 0.2,
+    "perimeter.out_died": -0.5,
+    "perimeter.holes_at_wave": -0.05,
+    "equipment.armor": 1.0,
+    "equipment.weapon": 0.5,
+    "equipment.pickaxe": 0.5,
+    "equipment.ranged": 0.3,
+    "mine.depth": 0.5,
+    "mine.coal": 0.03,
+    "mine.iron": 0.1,
+    "mine.gold": 0.15,
+    "mine.redstone": 0.03,
+    "mine.diamond": 0.5,
+    "mine.obsidian": 0.1,
+    "mine.return": 1.0,
+    "enchant.table": 0.5,
+    "enchant.shelf": 0.05,
+    "enchant.item": 1.0,
+    "enchant.levels": 0.05,
+    "sustain.food": 0.05,
+    "sustain.wood": 0.05,
+    "sustain.source": 0.5,
+    "stock.value": 0.5,
+    "achievement.new": 0.3,
+    "achievement.depth": 0.05,
+    "curiosity.novel": 0.2
+  },
+  "scales": [
+    "safety",
+    "perimeter",
+    "equipment",
+    "mine",
+    "enchant",
+    "sustain",
+    "stock",
+    "achievement",
+    "curiosity"
+  ],
+  "scenarioScales": {
+    "wood": {
+      "stock": 1.0,
+      "achievement": 1.0,
+      "curiosity": 1.0
+    },
+    "pickaxe": {
+      "achievement": 1.0,
+      "equipment": 0.0,
+      "equipment.pickaxe": 1.0,
+      "curiosity": 1.0
+    },
+    "sword": {
+      "achievement": 1.0,
+      "equipment": 0.0,
+      "equipment.weapon": 1.0,
+      "curiosity": 1.0
+    },
+    "armor": {
+      "achievement": 1.0,
+      "equipment": 0.0,
+      "equipment.armor": 1.0,
+      "curiosity": 1.0
+    },
+    "iron": {
+      "mine": 1.0,
+      "achievement": 1.0,
+      "equipment": 0.0,
+      "equipment.pickaxe": 1.0,
+      "curiosity": 1.0
+    },
+    "bow": {
+      "achievement": 1.0,
+      "equipment": 0.0,
+      "equipment.ranged": 1.0,
+      "curiosity": 1.0
+    },
+    "mine_trip": {
+      "mine": 1.0,
+      "achievement": 1.0,
+      "curiosity": 1.0
+    },
+    "diamond": {
+      "mine": 1.0,
+      "equipment": 1.0,
+      "achievement": 1.0,
+      "curiosity": 1.0
+    },
+    "farm": {
+      "sustain": 1.0,
+      "stock": 1.0,
+      "achievement": 1.0,
+      "curiosity": 1.0
+    },
+    "pasture": {
+      "sustain": 1.0,
+      "stock": 1.0,
+      "achievement": 1.0,
+      "curiosity": 1.0
+    },
+    "enchant": {
+      "enchant": 1.0,
+      "equipment": 1.0,
+      "achievement": 1.0,
+      "curiosity": 1.0
+    },
+    "fortify": {
+      "safety": 1.0,
+      "curiosity": 1.0
+    },
+    "food": {
+      "stock": 1.0,
+      "sustain": 1.0,
+      "curiosity": 1.0
+    },
+    "waves:easy": {
+      "safety": 1.0,
+      "perimeter": 1.0,
+      "curiosity": 1.0
+    },
+    "waves:normal": {
+      "safety": 1.0,
+      "perimeter": 1.0,
+      "curiosity": 1.0
+    },
+    "waves:long": {
+      "safety": 1.0,
+      "perimeter": 1.0,
+      "sustain": 1.0,
+      "equipment": 1.0,
+      "curiosity": 1.0
+    },
+    "achievements": {
+      "achievement": 2.0,
+      "curiosity": 1.0
+    }
   },
   "scenarios": [
     "wood",
     "pickaxe",
     "sword",
+    "armor",
     "iron",
-    "food",
+    "bow",
+    "mine_trip",
+    "diamond",
+    "farm",
+    "pasture",
+    "enchant",
     "fortify",
+    "food",
     "waves:easy",
-    "waves:normal"
-  ]
+    "waves:normal",
+    "waves:long",
+    "achievements"
+  ],
+  "scenario": {
+    "wood": {
+      "goal": "items",
+      "goal_item": "log",
+      "per_agent": 10,
+      "crew_goal": false,
+      "seconds": 300,
+      "time": 1000,
+      "health": 20.0,
+      "kit": "",
+      "chest": "",
+      "xp_levels": 0,
+      "hunger": false,
+      "defense": false
+    },
+    "pickaxe": {
+      "goal": "items",
+      "goal_item": "stone_pickaxe",
+      "per_agent": 1,
+      "crew_goal": false,
+      "seconds": 600,
+      "time": 1000,
+      "health": 20.0,
+      "kit": "",
+      "chest": "",
+      "xp_levels": 0,
+      "hunger": false,
+      "defense": false
+    },
+    "sword": {
+      "goal": "items",
+      "goal_item": "stone_sword",
+      "per_agent": 1,
+      "crew_goal": false,
+      "seconds": 600,
+      "time": 1000,
+      "health": 20.0,
+      "kit": "",
+      "chest": "",
+      "xp_levels": 0,
+      "hunger": false,
+      "defense": false
+    },
+    "armor": {
+      "goal": "armor",
+      "per_agent": 6,
+      "crew_goal": false,
+      "seconds": 600,
+      "time": 1000,
+      "health": 20.0,
+      "kit": "iron_ingot 8, leather 5, crafting_table 1",
+      "chest": "",
+      "xp_levels": 0,
+      "hunger": false,
+      "defense": false
+    },
+    "iron": {
+      "goal": "items",
+      "goal_item": "iron_pickaxe",
+      "per_agent": 1,
+      "crew_goal": false,
+      "seconds": 900,
+      "time": 1000,
+      "health": 20.0,
+      "kit": "stone_pickaxe 1, planks 16, stick 4",
+      "chest": "",
+      "xp_levels": 0,
+      "hunger": false,
+      "defense": false
+    },
+    "bow": {
+      "goal": "bow",
+      "per_agent": 8,
+      "crew_goal": false,
+      "seconds": 600,
+      "time": 1000,
+      "health": 20.0,
+      "kit": "string 3, stick 8, flint 4, feather 4, crafting_table 1",
+      "chest": "",
+      "xp_levels": 0,
+      "hunger": false,
+      "defense": false
+    },
+    "mine_trip": {
+      "goal": "mine_trip",
+      "per_agent": 1,
+      "crew_goal": false,
+      "seconds": 900,
+      "time": 1000,
+      "health": 20.0,
+      "kit": "stone_pickaxe 1, torch 16, cooked_beef 4, cobblestone 16",
+      "chest": "",
+      "xp_levels": 0,
+      "hunger": true,
+      "defense": false
+    },
+    "diamond": {
+      "goal": "items",
+      "goal_item": "diamond",
+      "per_agent": 1,
+      "crew_goal": true,
+      "seconds": 1500,
+      "time": 1000,
+      "health": 20.0,
+      "kit": "iron_pickaxe 1, torch 32, cooked_beef 6, cobblestone 32",
+      "chest": "",
+      "xp_levels": 0,
+      "hunger": true,
+      "defense": false
+    },
+    "farm": {
+      "goal": "farm",
+      "per_agent": 2,
+      "crew_goal": false,
+      "seconds": 1200,
+      "time": 1000,
+      "health": 20.0,
+      "kit": "wooden_hoe 1, wheat_seeds 8, cooked_beef 2",
+      "chest": "",
+      "xp_levels": 0,
+      "hunger": true,
+      "defense": false
+    },
+    "pasture": {
+      "goal": "pasture",
+      "per_agent": 1,
+      "crew_goal": true,
+      "seconds": 1200,
+      "time": 1000,
+      "health": 20.0,
+      "kit": "fence 15, fence_gate 1, wheat 16, wheat_seeds 8, wooden_sword 1",
+      "chest": "",
+      "xp_levels": 0,
+      "hunger": true,
+      "defense": false
+    },
+    "enchant": {
+      "goal": "enchant",
+      "per_agent": 1,
+      "crew_goal": false,
+      "seconds": 600,
+      "time": 1000,
+      "health": 20.0,
+      "kit": "enchanting_table 1, bookshelf 6, iron_sword 1, iron_pickaxe 1",
+      "chest": "",
+      "xp_levels": 8,
+      "hunger": false,
+      "defense": false
+    },
+    "fortify": {
+      "goal": "fortify",
+      "per_agent": 1,
+      "crew_goal": false,
+      "seconds": 600,
+      "time": 1000,
+      "health": 20.0,
+      "kit": "cobblestone 140, stone_pickaxe 1, wooden_door 1",
+      "chest": "",
+      "xp_levels": 0,
+      "hunger": false,
+      "defense": true
+    },
+    "food": {
+      "goal": "food",
+      "per_agent": 2,
+      "crew_goal": false,
+      "seconds": 300,
+      "time": 1000,
+      "health": 10.0,
+      "kit": "wooden_sword 1",
+      "chest": "",
+      "xp_levels": 0,
+      "hunger": false,
+      "defense": false
+    },
+    "waves:easy": {
+      "goal": "none",
+      "per_agent": 1,
+      "crew_goal": false,
+      "seconds": 900,
+      "time": 14000,
+      "health": 20.0,
+      "kit": "stone_sword 1, cobblestone 64, bread 6, torch 8",
+      "chest": "bread 16",
+      "xp_levels": 0,
+      "hunger": false,
+      "waves": "easy",
+      "defense": true
+    },
+    "waves:normal": {
+      "goal": "none",
+      "per_agent": 1,
+      "crew_goal": false,
+      "seconds": 900,
+      "time": 14000,
+      "health": 20.0,
+      "kit": "stone_sword 1, cobblestone 64, bread 6, torch 8",
+      "chest": "bread 16",
+      "xp_levels": 0,
+      "hunger": false,
+      "waves": "normal",
+      "defense": true
+    },
+    "waves:long": {
+      "goal": "none",
+      "per_agent": 1,
+      "crew_goal": false,
+      "seconds": 2400,
+      "time": 14000,
+      "health": 20.0,
+      "kit": "stone_sword 1, cobblestone 64, bread 6, torch 8, wooden_hoe 1, wheat_seeds 8, bow 1, arrow 32, wooden_door 1",
+      "chest": "bread 16",
+      "xp_levels": 0,
+      "hunger": true,
+      "waves": "normal",
+      "defense": true
+    },
+    "achievements": {
+      "goal": "achievements",
+      "per_agent": 8,
+      "crew_goal": false,
+      "seconds": 1800,
+      "time": 1000,
+      "health": 20.0,
+      "kit": "",
+      "chest": "",
+      "xp_levels": 0,
+      "hunger": true,
+      "defense": false
+    }
+  },
+  "constants": {
+    "stock_cap_value": {
+      "log": [
+        32.0,
+        1.0
+      ],
+      "cobblestone": [
+        128.0,
+        1.0
+      ],
+      "coal": [
+        32.0,
+        1.0
+      ],
+      "iron_ingot": [
+        24.0,
+        2.0
+      ],
+      "food": [
+        60.0,
+        2.0
+      ],
+      "torch": [
+        32.0,
+        0.5
+      ],
+      "arrow": [
+        32.0,
+        0.5
+      ],
+      "wheat_seeds": [
+        16.0,
+        0.3
+      ],
+      "wheat": [
+        32.0,
+        0.5
+      ]
+    },
+    "stall_s": 60,
+    "window_s": 120,
+    "horizons_y": [
+      40,
+      12
+    ],
+    "horizon_near": 4,
+    "grow": 20
+  }
 }

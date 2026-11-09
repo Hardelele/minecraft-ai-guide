@@ -1,8 +1,8 @@
 {
-  "version": 1,
-  "hash": "4ba70eaea357",
-  "dim": 137,
-  "note": "Generated from RlSpec.java. The server sends the scaled vector in this order. div: clip(x/scale, -1, 2); log: log1p(max(x,0))/log1p(scale); bool: 1 if x > 0.5 else 0. A distance to nothing seen is scale (1 scaled).",
+  "version": 3,
+  "hash": "7821a391980f",
+  "dim": 402,
+  "note": "Generated from RlSpec.java (docs/rl/CONTRACT-v2.md). The server sends the scaled vector in this order. div: clip(x/scale, -1, 2); log: log1p(max(x,0))/log1p(scale); bool: 1 if x > 0.5 else 0. A distance to nothing seen is scale (1 scaled).",
   "features": [
     {
       "name": "scen_wood",
@@ -20,17 +20,52 @@
       "scale": 1.0
     },
     {
+      "name": "scen_armor",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
       "name": "scen_iron",
       "kind": "bool",
       "scale": 1.0
     },
     {
-      "name": "scen_food",
+      "name": "scen_bow",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_mine_trip",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_diamond",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_farm",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_pasture",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_enchant",
       "kind": "bool",
       "scale": 1.0
     },
     {
       "name": "scen_fortify",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_food",
       "kind": "bool",
       "scale": 1.0
     },
@@ -45,7 +80,57 @@
       "scale": 1.0
     },
     {
-      "name": "scen_siege",
+      "name": "scen_waves_long",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scen_achievements",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scale_safety",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scale_perimeter",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scale_equipment",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scale_mine",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scale_enchant",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scale_sustain",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scale_stock",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scale_achievement",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scale_curiosity",
       "kind": "bool",
       "scale": 1.0
     },
@@ -102,6 +187,31 @@
     {
       "name": "at_home",
       "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "hunger_on",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "food_level",
+      "kind": "div",
+      "scale": 20.0
+    },
+    {
+      "name": "saturation",
+      "kind": "div",
+      "scale": 20.0
+    },
+    {
+      "name": "xp_level",
+      "kind": "div",
+      "scale": 30.0
+    },
+    {
+      "name": "xp_progress",
+      "kind": "div",
       "scale": 1.0
     },
     {
@@ -225,6 +335,171 @@
       "scale": 64.0
     },
     {
+      "name": "bag_gold_ore",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_gold_ingot",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_diamond",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_redstone",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_obsidian",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_gravel",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_flint",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_string",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_feather",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_leather",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_bow",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_arrow",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_diamond_pickaxe",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_diamond_sword",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_armor",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_wooden_hoe",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_stone_hoe",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_wheat_seeds",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_wheat",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_bread",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_sapling",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_sugar_cane",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_paper",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_book",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_bookshelf",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_enchanting_table",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_wooden_door",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_fence",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_fence_gate",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_bucket",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_water_bucket",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_lava_bucket",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_flint_and_steel",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
       "name": "bag_total",
       "kind": "log",
       "scale": 256.0
@@ -268,6 +543,61 @@
       "name": "iron_dist",
       "kind": "div",
       "scale": 48.0
+    },
+    {
+      "name": "gold_seen",
+      "kind": "div",
+      "scale": 8.0
+    },
+    {
+      "name": "gold_dist",
+      "kind": "div",
+      "scale": 48.0
+    },
+    {
+      "name": "redstone_seen",
+      "kind": "div",
+      "scale": 8.0
+    },
+    {
+      "name": "redstone_dist",
+      "kind": "div",
+      "scale": 48.0
+    },
+    {
+      "name": "diamond_seen",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "diamond_dist",
+      "kind": "div",
+      "scale": 48.0
+    },
+    {
+      "name": "obsidian_seen",
+      "kind": "div",
+      "scale": 8.0
+    },
+    {
+      "name": "gravel_seen",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "grass_seen",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "leaves_seen",
+      "kind": "div",
+      "scale": 32.0
+    },
+    {
+      "name": "cane_seen",
+      "kind": "div",
+      "scale": 8.0
     },
     {
       "name": "animals_seen",
@@ -325,6 +655,156 @@
       "scale": 64.0
     },
     {
+      "name": "ench_table_known",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ench_table_dist",
+      "kind": "div",
+      "scale": 24.0
+    },
+    {
+      "name": "bookshelves",
+      "kind": "div",
+      "scale": 15.0
+    },
+    {
+      "name": "shelf_spots",
+      "kind": "div",
+      "scale": 15.0
+    },
+    {
+      "name": "underground",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "y_rel",
+      "kind": "div",
+      "scale": 64.0
+    },
+    {
+      "name": "depth_level",
+      "kind": "div",
+      "scale": 2.0
+    },
+    {
+      "name": "at_horizon",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "mine_known",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "mine_level",
+      "kind": "div",
+      "scale": 2.0
+    },
+    {
+      "name": "mine_dist",
+      "kind": "div",
+      "scale": 64.0
+    },
+    {
+      "name": "tunnels",
+      "kind": "div",
+      "scale": 8.0
+    },
+    {
+      "name": "trip_ores",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "farm_plots",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "farm_planted",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "farm_ripe",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "farm_empty",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "till_spots",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "hoes",
+      "kind": "div",
+      "scale": 2.0
+    },
+    {
+      "name": "saplings_planted",
+      "kind": "div",
+      "scale": 8.0
+    },
+    {
+      "name": "trees_grown",
+      "kind": "div",
+      "scale": 8.0
+    },
+    {
+      "name": "sapling_spots",
+      "kind": "div",
+      "scale": 8.0
+    },
+    {
+      "name": "pen_built",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "pen_animals",
+      "kind": "div",
+      "scale": 8.0
+    },
+    {
+      "name": "pen_adults",
+      "kind": "div",
+      "scale": 8.0
+    },
+    {
+      "name": "pen_babies",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "pen_pairs",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "pen_dist",
+      "kind": "div",
+      "scale": 32.0
+    },
+    {
+      "name": "door_placed",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "gate_open",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
       "name": "waves_active",
       "kind": "bool",
       "scale": 1.0
@@ -380,6 +860,11 @@
       "scale": 10.0
     },
     {
+      "name": "enemies_visible",
+      "kind": "div",
+      "scale": 10.0
+    },
+    {
       "name": "ring_planned",
       "kind": "bool",
       "scale": 1.0
@@ -420,6 +905,221 @@
       "scale": 1.0
     },
     {
+      "name": "mobs_inside",
+      "kind": "div",
+      "scale": 8.0
+    },
+    {
+      "name": "breaches",
+      "kind": "div",
+      "scale": 8.0
+    },
+    {
+      "name": "mob_seconds",
+      "kind": "log",
+      "scale": 600.0
+    },
+    {
+      "name": "clean_waves",
+      "kind": "div",
+      "scale": 10.0
+    },
+    {
+      "name": "food_renew",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "food_eaten",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "wood_renew",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "wood_used",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "sources",
+      "kind": "div",
+      "scale": 3.0
+    },
+    {
+      "name": "stock_value",
+      "kind": "div",
+      "scale": 10.0
+    },
+    {
+      "name": "tgt_front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_dist",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "tgt_front_free",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_water",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_lava",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_below_dist",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "tgt_below_free",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_below_water",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_below_lava",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_down_dist",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "tgt_front_down_free",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_down_water",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_down_lava",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_hole",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_hole_dist",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "tgt_hole_free",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_hole_water",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_hole_lava",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_moat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_moat_dist",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "tgt_moat_free",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_moat_water",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_moat_lava",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_mob_dist",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "tgt_mob_free",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_mob_water",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_mob_lava",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_door",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "slot_block",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "novel_count",
+      "kind": "div",
+      "scale": 20.0
+    },
+    {
       "name": "allies_alive",
       "kind": "div",
       "scale": 3.0
@@ -443,6 +1143,196 @@
       "name": "ally_dist",
       "kind": "div",
       "scale": 32.0
+    },
+    {
+      "name": "ach_openInventory",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_mineWood",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_buildWorkBench",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_buildPickaxe",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_buildFurnace",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_acquireIron",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_buildHoe",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_makeBread",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_buildBetterPickaxe",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_buildSword",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_killEnemy",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_killCow",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_snipeSkeleton",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_diamonds",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_enchantments",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_overkill",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_bookcase",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_breedCow",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_openInventory",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_mineWood",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_buildWorkBench",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_buildPickaxe",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_buildFurnace",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_acquireIron",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_buildHoe",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_makeBread",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_buildBetterPickaxe",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_buildSword",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_killEnemy",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_killCow",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_snipeSkeleton",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_diamonds",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_enchantments",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_overkill",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_bookcase",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_target_breedCow",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "ach_count",
+      "kind": "div",
+      "scale": 18.0
+    },
+    {
+      "name": "ach_available",
+      "kind": "div",
+      "scale": 18.0
     },
     {
       "name": "last_none",
@@ -680,6 +1570,436 @@
       "scale": 1.0
     },
     {
+      "name": "last_action_descend:mine",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_ascend:surface",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_tunnel:branch",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_mine:gold_ore",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_mine:redstone_ore",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_mine:diamond_ore",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_mine:obsidian",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_mine:gravel",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_smelt:gold_ingot",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:diamond_pickaxe",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:diamond_sword",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:bow",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:arrow",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:bucket",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:flint_and_steel",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft_armor:leather",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft_armor:golden",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft_armor:iron",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft_armor:diamond",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_shoot:post",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_build_gate:door",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_close:gate",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:wooden_hoe",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:stone_hoe",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:bread",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:wooden_door",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:fence",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:fence_gate",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_till:farm",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_plant:wheat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_harvest:farm",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_gather:seeds",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_gather:saplings",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_gather:sugar_cane",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_plant:sapling",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_build_pen:pasture",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_lure:pen",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_breed:pen",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_slaughter:pen",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:paper",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:book",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:bookshelf",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:enchanting_table",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:enchanting_table",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:bookshelf",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_enchant:best",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@hole",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@moat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:water@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:water@below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:water@front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:water@hole",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:water@moat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:water@mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:lava@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:lava@below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:lava@front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:lava@hole",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:lava@moat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:lava@mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:torch@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:torch@below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:torch@front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:torch@hole",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:torch@moat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:torch@mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:bucket@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:bucket@below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:bucket@front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:bucket@hole",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:bucket@moat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:bucket@mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:fire@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:fire@below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:fire@front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:fire@hole",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:fire@moat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:fire@mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_attack@mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_attack@animal",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_open@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_open@gate",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
       "name": "time_frac",
       "kind": "div",
       "scale": 1.0
@@ -688,6 +2008,11 @@
       "name": "goal_progress",
       "kind": "div",
       "scale": 1.0
+    },
+    {
+      "name": "stall",
+      "kind": "div",
+      "scale": 60.0
     }
   ]
 }

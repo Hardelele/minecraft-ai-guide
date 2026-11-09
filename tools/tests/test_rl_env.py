@@ -1,4 +1,4 @@
-"""The learning environment without the game (docs/rl/CONTRACT.md): rl/*.json is what RlSpec.java says, the files agree
+"""The learning environment without the game (docs/rl/CONTRACT-v2.md): rl/*.json is what RlSpec.java says, the files agree
 with each other and with the contract's text, the client (tools/rl/env_client.py) against a stand-in server that keeps
 the protocol (reset, step, the masks, noop ends the episode, the errors), the vector of envs resetting by itself, a
 random masked policy's numbers; and in the mod's sources: the minds in the environment never reach the model."""
@@ -111,14 +111,19 @@ def main():
     assert OBS["dim"] == len(names) == len(set(names)), "the features"
     assert all("last_action_" + a in names for a in ids), "a last-action feature for every action"
     assert all(f["kind"] in ("div", "log", "bool") and f["scale"] > 0 for f in OBS["features"]), "the kinds of scaling"
-    contract = (ROOT / "docs" / "rl" / "CONTRACT.md").read_text(encoding="utf-8")
+    contract = (ROOT / "docs" / "rl" / "CONTRACT-v2.md").read_text(encoding="utf-8")
     missing = [a for a in ids if "`" + a + "`" not in contract]
     assert not missing, "actions the contract does not name: %s" % missing
-    comps = {k.split(".")[0] for k in REWARD["weights"]}
-    missing = [c for c in comps if "`" + c + "`" not in contract]
-    assert not missing, "reward components the contract does not name: %s" % missing
+    missing = [k for k in REWARD["weights"] if "`" + k + "`" not in contract]
+    assert not missing, "reward keys the contract does not name: %s" % missing
     for s in REWARD["scenarios"]:
         assert "`" + s + "`" in contract, "scenario %s not in the contract" % s
+    for h in (ACTIONS["hash"], OBS["hash"]):
+        assert "`" + h + "`" in contract, "the contract names the hash %s" % h
+    # contract 1, frozen: its files are what CONTRACT.md tells
+    v1 = (ROOT / "docs" / "rl" / "CONTRACT.md").read_text(encoding="utf-8")
+    a1 = json.loads((ROOT / "rl" / "v1" / "actions.json").read_text(encoding="utf-8"))
+    assert [a["id"] for a in a1["actions"]] == ids[:38] and all("`" + a["id"] + "`" in v1 for a in a1["actions"]), "contract 1's 38 are the first 38"
 
     # the client against the stand-in server
     stub = Stub()

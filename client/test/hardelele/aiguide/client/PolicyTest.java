@@ -37,7 +37,9 @@ public class PolicyTest {
             System.exit(bad == 0 ? 0 : 1);
         }
         PolicyNet net = PolicyNet.load(weights);
-        check(net.d == RlSpec.FEATURES.size() && net.a == RlSpec.ACTIONS.size(), "the net fits RlSpec (" + net.d + " features, " + net.a + " actions)");
+        check(net.d == RlSpec.FEATURES.size() && net.a == RlSpec.ACTIONS.size() || net.d == RlSpec1.FEATURES.size() && net.a == RlSpec1.ACTIONS.size(),
+                "the net fits RlSpec (contract 2) or RlSpec1 (contract 1): " + net.d + " features, " + net.a + " actions");
+        check(RlSpec.space(net) != null, "RlSpec.space takes it (its version and size): contract " + (RlSpec.space(net) == null ? "none" : RlSpec.space(net).contract));
         FileInputStream in = new FileInputStream(test);
         Map<String, float[]> t;
         try { t = PolicyNet.tensors(PolicyNet.bytes(in), PolicyNet.TEST_MAGIC, 1, null); } finally { in.close(); }
@@ -95,8 +97,9 @@ public class PolicyTest {
             return;
         }
         JsonObject o = new JsonParser().parse(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8)).getAsJsonObject();
-        check(o.get("obs_hash").getAsString().equals(RlSpec.obsHash()) && o.get("actions_hash").getAsString().equals(RlSpec.hash()),
-                "spec.py read the same rl/obs.json and rl/actions.json as RlSpec has");
+        boolean v2 = o.get("obs_hash").getAsString().equals(RlSpec.obsHash()) && o.get("actions_hash").getAsString().equals(RlSpec.hash());
+        boolean v1 = o.get("obs_hash").getAsString().equals(RlSpec1.obsHash()) && o.get("actions_hash").getAsString().equals(RlSpec1.hash());
+        check(v1 || v2, "spec.py read the same obs.json and actions.json as RlSpec (contract 2) or RlSpec1 (contract 1) has: " + (v2 ? "2" : v1 ? "1" : "neither"));
         JsonArray cases = o.getAsJsonArray("cases");
         int vecBad = 0, maskBad = 0;
         double worst = 0;
@@ -104,7 +107,7 @@ public class PolicyTest {
             JsonObject c = e.getAsJsonObject();
             Map<String, Double> raw = new HashMap<String, Double>();
             for (Map.Entry<String, JsonElement> kv : c.getAsJsonObject("raw").entrySet()) raw.put(kv.getKey(), kv.getValue().getAsDouble());
-            float[] v = RlSpec.vector(raw);
+            float[] v = v1 && !v2 ? RlSpec1.vector(raw) : RlSpec.vector(raw);
             JsonArray pv = c.getAsJsonArray("obs");
             boolean vb = v.length != pv.size();
             for (int i = 0; !vb && i < v.length; i++) {
@@ -113,12 +116,12 @@ public class PolicyTest {
                 if (d > 1e-5) vb = true;
             }
             if (vb) vecBad++;
-            int[] m = RlSpec.mask(raw);
+            int[] m = v1 && !v2 ? RlSpec1.mask(raw) : RlSpec.mask(raw);
             JsonArray pm = c.getAsJsonArray("mask");
             boolean mb = m.length != pm.size();
             for (int i = 0; !mb && i < m.length; i++) if (m[i] != pm.get(i).getAsInt()) {
                 mb = true;
-                if (maskBad < 3) System.out.println("     mask differs at " + RlSpec.ACTIONS.get(i).id + ": java " + m[i] + ", python " + pm.get(i));
+                if (maskBad < 3) System.out.println("     mask differs at " + (v1 && !v2 ? RlSpec1.ACTIONS.get(i).id : RlSpec.ACTIONS.get(i).id) + ": java " + m[i] + ", python " + pm.get(i));
             }
             if (mb) maskBad++;
         }

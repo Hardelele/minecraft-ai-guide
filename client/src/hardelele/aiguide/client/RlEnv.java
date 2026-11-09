@@ -291,7 +291,13 @@ public class RlEnv {
         o.add("obs", f);
         JsonObject rw = new JsonObject();
         rw.addProperty("version", RlSpec.REWARD_VERSION);
+        rw.addProperty("hash", RlSpec.rewardHash());
         o.add("reward", rw);
+        JsonObject ach = new JsonObject();
+        ach.addProperty("version", RlSpec.ACHIEVEMENTS_VERSION);
+        ach.addProperty("n", RlAchievements.ALL.size());
+        ach.addProperty("supported", RlAchievements.supported().size());
+        o.add("achievements", ach);
         JsonArray sc = new JsonArray();
         for (String n : RlSpec.available()) sc.add(new JsonPrimitive(n));
         o.add("scenarios", sc);
@@ -379,7 +385,7 @@ public class RlEnv {
         Mind.Limits lim = new Mind.Limits();
         lim.steps = lim.seconds = lim.tokens = lim.badCalls = lim.sameFailure = Integer.MAX_VALUE;
         for (Agent a : c.agents) AgentMind.minds.put(a.skin(), new AgentMind(a.skin(), new Mind(a.who(), g, lim, System.currentTimeMillis()), w));
-        reward = new RlReward(weights);
+        reward = new RlReward(weights, s);
         done = false;
         doneReason = "";
         ticks = 0;
@@ -505,11 +511,11 @@ public class RlEnv {
             public void wave(String what, WaveCycle.View v) {
                 if (state == State.IDLE || done || sc == null || sc.waves == null || Crew.instance == null) return;
                 WorldServer w = Waves.world();
-                if (what.equals("end")) for (Agent a : Crew.instance.agents) reward.add(id(a), "wave_cleared", 1);
+                if (what.equals("end")) for (Agent a : Crew.instance.agents) reward.add(id(a), "perimeter.wave_cleared", 1);
                 else if (what.equals("start") && v.phase == WaveCycle.Phase.WAVE && w != null) {
                     int holes = 0;
                     for (Defense.Perimeter p : DefenseWorld.walls()) { int st = DefenseWorld.standing(w, p); if (st > 0) holes += p.cells.size() - st; }
-                    if (holes > 0) for (Agent a : Crew.instance.agents) reward.add(id(a), "holes_at_wave", holes);
+                    if (holes > 0) for (Agent a : Crew.instance.agents) reward.add(id(a), "perimeter.holes_at_wave", holes);
                 }
             }
         });
@@ -544,29 +550,8 @@ public class RlEnv {
             Defense.Tally t = Defense.of(a.who()), d = t.since(m.tally);
             m.tally = t.copy();
             String k = id(a);
-            reward.add(k, "kill", d.kills);
+            reward.add(k, "perimeter.kill", d.kills);
             reward.add(k, "damage", d.taken);
-            reward.add(k, "built.wall", d.wallBuilt + d.wallRepaired);
-            reward.add(k, "built.torch", d.torches);
-            reward.add(k, "ate", d.eaten);
-            int[] tr = tiers(a);
-            for (int i = 0; i < 3; i++) if (tr[i] > m.tierMax[i]) { reward.add(k, "tier_up", tr[i] - m.tierMax[i]); m.tierMax[i] = tr[i]; }
-            for (ItemStack it : a.bag) {
-                String kd = kind(it);
-                if (itemsSeen.add(kd)) reward.add(k, "new_item", 1);
-                now.add(kd);
-            }
-        }
-        if (DefenseWorld.moat != null) {
-            int dug = 0;
-            for (int[] q : DefenseWorld.moat) if (DefenseWorld.open(w, q[0], q[1], q[2])) dug++;
-            if (dug > moatDug) {
-                List<Agent> by = new ArrayList<Agent>();
-                for (Agent a : c.agents) { AgentMind mm = AgentMind.minds.get(a.skin()); if (mm != null && mm.call != null && "dig_moat".equals(mm.call.tool)) by.add(a); }
-                if (by.isEmpty()) by.addAll(c.agents);
-                for (Agent a : by) reward.add(id(a), "built.moat", (dug - moatDug) / (double) by.size());
-            }
-            moatDug = Math.max(moatDug, dug);
         }
     }
 
@@ -685,25 +670,14 @@ public class RlEnv {
         mm.seconds = seconds;
         mm.repeated = m.mind.repeated();
         String k = id(a);
-        e.reward.add(k, "OK".equals(result) ? "skill_ok" : "skill_fail", 1);
-        if (before != null && after != null && (tool.equals("chop_tree") || tool.equals("mine") || tool.equals("hunt")))
-            for (Map.Entry<String, Integer> x : after.entrySet()) {
-                int gain = x.getValue() - (before.containsKey(x.getKey()) ? before.get(x.getKey()) : 0);
-                if (gain <= 0) continue;
-                String key = gatherKey(x.getKey());
-                if (key != null) e.reward.add(k, key, gain);
-            }
+        if (!"OK".equals(result)) e.reward.add(k, "skill_fail", 1);
+        else if (effect(tool, before, after)) e.reward.add(k, "skill_ok", 1);   // an OK with nothing measurable to show pays nothing (wait, look_around)
     }
 
-    static String gatherKey(String id) {
-        String b = id.indexOf(':') < 0 ? id : id.substring(0, id.indexOf(':'));
-        if (b.equals("log") || b.equals("log2")) return "gathered.log";
-        if (b.equals("cobblestone")) return "gathered.cobblestone";
-        if (b.equals("coal")) return "gathered.coal";
-        if (b.equals("iron_ore")) return "gathered.iron_ore";
-        Object[] it = MindSkills.item(id);
-        if (it != null && RlSkills.food(new ItemStack((Item) it[0], 1, Math.max(0, (Integer) it[1])))) return "gathered.food";
-        return null;
+    /** a step OK that changed something one can check: the bag (contract 2: no pay for an OK of words alone) */
+    static boolean effect(String tool, Map<String, Integer> before, Map<String, Integer> after) {
+        if (tool.equals("wait") || tool.equals("look_around")) return false;
+        return before != null && after != null && !MindSkills.diff(before, after).isEmpty();
     }
 
     /** an agent died (Agent.onDeath): in a fight, or by an accident; outside the wall in a wave besides */
@@ -713,7 +687,7 @@ public class RlEnv {
         String k = id(a);
         e.reward.add(k, "accident".equals(cause) || "starve".equals(cause) ? "accident" : "death", 1);
         Defense.Perimeter p = DefenseWorld.ring;
-        if (Waves.state().phase == WaveCycle.Phase.WAVE && p != null && !p.inside(a.posX, a.posZ)) e.reward.add(k, "out_died", 1);
+        if (Waves.state().phase == WaveCycle.Phase.WAVE && p != null && !p.inside(a.posX, a.posZ)) e.reward.add(k, "perimeter.out_died", 1);
     }
 
     // ---- the answer: the observations, the masks, the rewards ---------------------------------------------------

@@ -18,7 +18,7 @@ from pathlib import Path
 import mask_rules
 
 ROOT = Path(__file__).resolve().parents[2]
-RL = Path(os.environ.get("AIGUIDE_RL_SPEC") or ROOT / "rl")
+RL = Path(os.environ.get("AIGUIDE_RL_SPEC") or ROOT / "rl")   # rl/v1 for contract 1's files
 
 _actions = json.loads((RL / "actions.json").read_text(encoding="utf-8"))
 _obs = json.loads((RL / "obs.json").read_text(encoding="utf-8"))

@@ -57,8 +57,8 @@ final class PolicyNet {
     static PolicyNet load(InputStream in) throws IOException {
         int[] head = new int[4];
         Map<String, float[]> t = tensors(bytes(in), MAGIC, 4, head);
-        // version 1: the v1 spaces (38 actions, 137 features); 2: the v2 spaces (docs/rl/CONTRACT-v2.md); the same layout
-        if (head[0] != 1 && head[0] != 2) throw new IOException("policy.bin version " + head[0] + ", not 1 or 2");
+        // version 1: the v1 spaces (38 actions, 137 features); 2, 3: the v2 spaces (docs/rl/CONTRACT-v2.md); the same layout
+        if (head[0] < 1 || head[0] > 3) throw new IOException("policy.bin version " + head[0] + ", not 1 to 3");
         PolicyNet n = new PolicyNet(head[1], head[2], head[3], t);
         n.version = head[0];
         return n;
