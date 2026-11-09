@@ -140,6 +140,7 @@ final class PolicyMind {
                 return d;
             }
         }
+        RlAch.decided(a);
         long t0 = System.nanoTime();
         Map<String, Double> raw = RlEnv.facts(c, a, w, mm.scenario, mm.mine, mm.timeFrac, mm.progress);
         float[] obs = sp.vector(raw);

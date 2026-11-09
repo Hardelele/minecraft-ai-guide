@@ -115,7 +115,13 @@ final class MindSkills {
             case "give": return give(c, a, w, call.arg("to"), call.arg("item"), clamp(n, 1, 64 * 9));
             case "wait": return new Wait(clamp(call.num("seconds", 5), 1, 120));
             case "hunt": return RlSkills.hunt(c, a, w);
-            default: return DefenseSkills.make(c, a, w, call);   // the defence's (or UNKNOWN_TOOL)
+            default: {   // contract 3's skills, then the defence's (or UNKNOWN_TOOL)
+                Skill s = PrimSkills.make(c, a, w, call);
+                if (s == null) s = MineSkills.make(c, a, w, call);
+                if (s == null) s = GearSkills.make(c, a, w, call);
+                if (s == null) s = FarmSkills.make(c, a, w, call);
+                return s != null ? s : DefenseSkills.make(c, a, w, call);
+            }
         }
     }
 
@@ -588,6 +594,7 @@ final class MindSkills {
                 return finish(a);
             }
             made += r.stackSize;
+            if (!r.isStackable()) RlEnv.made(a, Skills.lastOf(a, r.getItem()));   // its decision in it (the causes)
             w.playSoundEffect(a.posX, a.posY + 1, a.posZ, "random.wood_click", 0.4F, 1.2F);
             if (!r.isStackable()) a.body.hold(Skills.lastOf(a, r.getItem()));
             return made >= want ? finish(a) : Result.RUNNING;

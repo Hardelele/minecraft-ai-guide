@@ -213,6 +213,7 @@ class Guard {
         a.swingItem();
         float before = target.getHealth();
         h.attackTargetEntityWithCurrentItem(target);
+        if (Agent.hungerOn) a.hunger.exhaust(Hunger.ATTACK);   // a hit costs food as a player's
         Defense.Tally t = Defense.of(a.who());
         t.hits++;
         t.dealt += Math.max(0, before - Math.max(0, target.getHealth()));

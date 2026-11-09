@@ -32,23 +32,28 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import net.minecraft.block.Block;
 import net.minecraft.entity.EntityLiving;
+import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.init.Blocks;
+import net.minecraft.init.Items;
 import net.minecraft.inventory.IInventory;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemArmor;
 import net.minecraft.item.ItemBow;
+import net.minecraft.item.ItemFood;
 import net.minecraft.item.ItemPickaxe;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.ItemSword;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.util.DamageSource;
+import net.minecraft.util.MathHelper;
 import net.minecraft.world.EnumSkyBlock;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.common.util.FakePlayer;
 import net.minecraftforge.common.util.FakePlayerFactory;
 
 /**
- * The learning environment (docs/rl/CONTRACT.md) on a dedicated server started with -Daiguide.rl=PORT: a TCP line
+ * The learning environment (docs/rl/CONTRACT-v2.md; contract 1: CONTRACT.md) on a dedicated server started with -Daiguide.rl=PORT: a TCP line
  * protocol a policy drives; the agents' minds take their decisions from it instead of a model (AgentMind asks decide).
  * At a decision point an agent stands; at the end of the tick the agents waiting are sent to the policy in one batch
  * and the server thread waits for its answer: no tick runs while the policy thinks. The reward is put together as it
@@ -316,24 +321,42 @@ public class RlEnv {
     long seed;
     int crewSize, episode;
     boolean raw, done;
-    String doneReason = "";
+    String doneReason = "", target = "";
     long ticks, resetMs, startNs;
     final Set<Agent> waiting = new LinkedHashSet<Agent>();     // at a decision point this tick
     final Set<Integer> asked = new HashSet<Integer>();          // sent to the policy, its answer awaited
     final Map<Integer, Integer> chosen = new HashMap<Integer, Integer>();   // the policy's action for an agent, by its number
     final Map<Integer, int[]> masks = new HashMap<Integer, int[]>();
     final Map<Integer, Mine> mine = new HashMap<Integer, Mine>();
-    final Set<String> itemsSeen = new HashSet<String>();
-    int moatDug, labelsAt;
+    int labelsAt;
     long labelsOffset;
+    // the measures of the scales (RlScore) and what they paid with their causes
+    RlScore.Track track = new RlScore.Track();
+    RlScore.Sustain sustain = new RlScore.Sustain();
+    RlScore.Perimeter perimeter = new RlScore.Perimeter();
+    RlScore.Stall stall = new RlScore.Stall();
+    double stockValue, sources;
+    int breadMade, births;
+    /** the decisions that changed blocks this second (the causes of a measured change of the world) */
+    final List<RlCause.Link> worldChanges = new ArrayList<RlCause.Link>();
+    /** the step's events: rewards with their chains (by agent, key, the chain's head), achievements, discoveries */
+    final Map<String, JsonObject> rewardEvents = new LinkedHashMap<String, JsonObject>();
+    final List<JsonObject> events = new ArrayList<JsonObject>();
+    /** the decisions given to the actions of the last step: agent -> decision_id */
+    final JsonObject assigned = new JsonObject();
 
     /** what the environment keeps of one agent through an episode */
     static final class Mine {
-        String outcome = "none";
-        int last = -1, repeated;
+        String outcome = "none", lastTool = "";
+        int last = -1, repeated, novel, trips;
         double seconds;
-        int[] tierMax = new int[3];
         Defense.Tally tally = new Defense.Tally();
+        Map<String, Integer> ores = new HashMap<String, Integer>();
+        RlScore.Trip trip = new RlScore.Trip();
+        long dangerAt = -1;
+        String dangerKind = "";
+        List<RlCause.Link> water;
+        boolean decided;
     }
 
     Mine mine(Agent a) {
@@ -348,20 +371,31 @@ public class RlEnv {
         String name = msg.has("scenario") ? msg.get("scenario").getAsString() : "wood";
         RlSpec.Scenario s = RlSpec.scenario(name);
         if (s == null) throw new IllegalArgumentException("unknown scenario '" + name + "': " + RlSpec.available());
+        String tg = msg.has("target") ? msg.get("target").getAsString() : "";
+        if (!tg.isEmpty() && (!RlAchievements.ALL.containsKey(tg) || !RlAchievements.ALL.get(tg).supported))
+            throw new IllegalArgumentException("unknown or unsupported achievement '" + tg + "': " + RlAchievements.supported());
         long t0 = System.nanoTime();
         sc = s;
+        target = tg;
         seed = msg.has("seed") ? msg.get("seed").getAsLong() : episode;
         crewSize = Math.max(1, Math.min(RlSpec.MAX_AGENTS, msg.has("crew") ? msg.get("crew").getAsInt() : 1));
         raw = msg.has("raw") && msg.get("raw").getAsBoolean();
         w.disableLevelSaving = true;   // the region files stay as generated: the arena is put back from memory
         if (Waves.cycle.active()) Waves.stop("rl_reset");
         clearCrew();
+        RlCauseHooks.start(w);
+        if (!discoveriesRead) { loadDiscoveries(w); discoveriesRead = true; }
         if (arena == null) {
             arena = RlArena.make(w);
             Events.log("rl: the arena at " + arena.x + " " + arena.y + " " + arena.z + ", " + arena.chunks.size() + " chunks, " + arena.animals.size() + " animals (" + arena.picked + "), copied in " + arena.snapMs + " ms");
         }
+        state = State.IDLE;   // (the world's listener ignores the restore's own changes)
         arena.restore(w);
         Exploration.clear(w);
+        RlWorld.reset();
+        RlAch.reset();
+        cause.reset();
+        Agent.hungerOn = s.hunger;
         w.getGameRules().setOrCreateGameRule("doDaylightCycle", "false");
         w.getGameRules().setOrCreateGameRule("doMobSpawning", "false");
         w.getGameRules().setOrCreateGameRule("keepInventory", "false");
@@ -394,13 +428,18 @@ public class RlEnv {
         chosen.clear();
         masks.clear();
         mine.clear();
-        itemsSeen.clear();
-        for (Agent a : c.agents) {
-            Mine m = mine(a);
-            m.tierMax = tiers(a);
-            for (ItemStack it : a.bag) itemsSeen.add(kind(it));
-        }
-        moatDug = 0;
+        track = new RlScore.Track();
+        sustain = new RlScore.Sustain();
+        perimeter = new RlScore.Perimeter();
+        stall = new RlScore.Stall();
+        stockValue = sources = 0;
+        breadMade = births = 0;
+        worldChanges.clear();
+        rewardEvents.clear();
+        events.clear();
+        for (Agent a : c.agents) cause.decide(id(a), 0, "spawn");
+        state = State.RUN;
+        measure(c, w);   // the baselines: nothing paid for the kit, the arena as it is
         labels(w, true);
         if (s.waves != null) {
             listenWaves();
@@ -410,7 +449,8 @@ public class RlEnv {
         resetMs = (System.nanoTime() - t0) / 1000000;
         startNs = System.nanoTime();
         simNs = 0;
-        Events.log("rl: episode " + episode + " " + s.name + ", seed " + seed + ", crew " + crewSize + ", reset in " + resetMs + " ms (arena " + arena.restoreMs + " ms)");
+        Events.log("rl: episode " + episode + " " + s.name + ", seed " + seed + ", crew " + crewSize + (target.isEmpty() ? "" : ", target " + target)
+                + (s.hunger ? ", hunger" : "") + ", reset in " + resetMs + " ms (arena " + arena.restoreMs + " ms)");
     }
 
     /** the crew of the episode before gone (its minds, its board, its agents, what it knew of the world) */
@@ -461,6 +501,7 @@ public class RlEnv {
         a.setLocationAndAngles(cell[0] + 0.5, cell[1], cell[2] + 0.5, rnd.nextFloat() * 360, 0);
         w.spawnEntityInWorld(a);
         a.setHealth(sc.health);
+        a.xp.setLevels(sc.xpLevels);
         for (String[] k : RlSpec.kit(sc.kit)) {
             Object[] it = MindSkills.item(k[0]);
             if (it == null) { Events.log("rl: no item " + k[0] + " for the kit"); continue; }
@@ -502,7 +543,7 @@ public class RlEnv {
         c.chest = at;
     }
 
-    boolean listening;
+    boolean listening, discoveriesRead;
 
     void listenWaves() {
         if (listening) return;
@@ -511,11 +552,16 @@ public class RlEnv {
             public void wave(String what, WaveCycle.View v) {
                 if (state == State.IDLE || done || sc == null || sc.waves == null || Crew.instance == null) return;
                 WorldServer w = Waves.world();
-                if (what.equals("end")) for (Agent a : Crew.instance.agents) reward.add(id(a), "perimeter.wave_cleared", 1);
-                else if (what.equals("start") && v.phase == WaveCycle.Phase.WAVE && w != null) {
+                if (what.equals("end")) {
+                    boolean clean = perimeter.waveEnd();
+                    for (Agent a : Crew.instance.agents) {
+                        pay(id(a), "perimeter.wave_cleared", 1, null);
+                        if (clean) pay(id(a), "perimeter.clean_wave", 1, null);
+                    }
+                } else if (what.equals("start") && v.phase == WaveCycle.Phase.WAVE && w != null) {
                     int holes = 0;
                     for (Defense.Perimeter p : DefenseWorld.walls()) { int st = DefenseWorld.standing(w, p); if (st > 0) holes += p.cells.size() - st; }
-                    if (holes > 0) for (Agent a : Crew.instance.agents) reward.add(id(a), "perimeter.holes_at_wave", holes);
+                    if (holes > 0) for (Agent a : Crew.instance.agents) pay(id(a), "perimeter.holes_at_wave", holes, null);
                 }
             }
         });
@@ -526,10 +572,14 @@ public class RlEnv {
         Crew c = Crew.instance;
         if (c == null) return;
         for (Agent a : c.agents) if (!a.isDead) reward.add(id(a), "time", 1 / 20.0);
-        if (ticks % 20 == 0) progress(c, w);
+        FarmSkills.grow(w, RlSpec.GROW);
+        if (ticks % 20 == 0) {
+            progress(c, w);
+            measure(c, w);
+        }
         if (ticks % 100 == 0) labels(w, false);
         double g = goal(c, w);
-        if (g >= 1) { finish("goal"); for (Agent a : c.agents) reward.add(id(a), "goal", 1); }
+        if (g >= 1) { finish("goal"); for (Agent a : c.agents) pay(id(a), "goal", 1, null); }
         else if (sc.waves != null && Waves.cycle.phase == WaveCycle.Phase.OVER) finish("lost");
         else if (ticks >= sc.seconds * 20L) finish("time");
     }
@@ -541,45 +591,225 @@ public class RlEnv {
         if (Waves.cycle.active()) Waves.stop("rl_" + why);
     }
 
-    /** once a second: what the tallies, the bags and the ground say happened (kills, damage, building, tiers, new things) */
+    /** once a second: the tallies (their tally of the fight for the observation), the stall, the dangers past */
     void progress(Crew c, WorldServer w) {
-        Set<String> now = new HashSet<String>();
+        double t = ticks / 20.0;
         for (Agent a : c.agents) {
-            if (a.isDead) continue;
             Mine m = mine(a);
-            Defense.Tally t = Defense.of(a.who()), d = t.since(m.tally);
-            m.tally = t.copy();
-            String k = id(a);
-            reward.add(k, "perimeter.kill", d.kills);
-            reward.add(k, "damage", d.taken);
+            if (a.isDead) { m.dangerAt = -1; continue; }
+            m.tally = Defense.of(a.who()).copy();
+            if (stall.check(id(a), t)) pay(id(a), "stall", 1, null);
+            // a danger past: alive, out of the lava and not burning 3 s after, with water put for it: saved
+            if (m.dangerAt >= 0 && ticks - m.dangerAt >= 60 && !a.handleLavaMovement() && a.fallDistance < 1) {
+                if (!a.isBurning() && m.water != null) effect(a, "agent_saved", m.water, 0, null);
+                m.dangerAt = -1;
+                m.water = null;
+            }
         }
+    }
+
+    // ---- the measures of the scales (once a second) -----------------------------------------------------------------
+
+    static final String[] ORES = { "coal", "iron_ore", "gold_ore", "redstone", "diamond", "obsidian" };
+    static final String[] ORE_KEYS = { "mine.coal", "mine.iron", "mine.gold", "mine.redstone", "mine.diamond", "mine.obsidian" };
+
+    void measure(Crew c, WorldServer w) {
+        boolean base = ticks == 0;   // the reset's: the baselines only
+        double t = ticks / 20.0;
+        Map<String, Double> stock = new HashMap<String, Double>();
+        List<Agent> alive = new ArrayList<Agent>();
+        for (Agent a : c.agents) if (!a.isDead) alive.add(a);
+        for (Agent a : alive) {
+            String k = id(a);
+            Mine m = mine(a);
+            // equipment
+            double[] e = RlScore.equipment(a.getTotalArmorValue(), swordTier(a), pickTier(a), DefenseSkills.bow(a) != null, Skills.count(a.bag, Items.arrow, -1));
+            for (int i = 0; i < e.length; i++) pay(k, RlScore.EQUIPMENT[i], track.delta(k + "|" + RlScore.EQUIPMENT[i], e[i]), null);
+            // the mine: a horizon reached, ore got by digging, a trip back
+            int fy = MathHelper.floor_double(a.boundingBox.minY);
+            boolean under = fy < RlWorld.now.surfaceY(c) - 4;
+            int h = under ? RlScore.horizon(fy) : 0;
+            pay(k, "mine.depth", track.rise(k + "|horizon", h), null);
+            Map<String, Integer> bag = MindSkills.bag(a);
+            int oreGain = 0;
+            AgentMind mm = AgentMind.minds.get(a.skin());
+            String tool = mm != null && mm.call != null ? mm.call.tool : m.lastTool;
+            boolean digging = tool.equals("mine") || tool.equals("tunnel") || tool.equals("descend");
+            for (int i = 0; i < ORES.length; i++) {
+                int n = count(bag, ORES[i]);
+                Integer was = m.ores.get(ORES[i]);
+                m.ores.put(ORES[i], n);
+                if (was != null && n > was && digging) { pay(k, ORE_KEYS[i], n - was, null); oreGain += n - was; }
+            }
+            if (!base && m.trip.update(h, under, oreGain)) { m.trips++; pay(k, "mine.return", 1, null); }
+            // enchanted things it has
+            pay(k, "enchant.item", track.rise(k + "|enchanted", enchanted(a)), null);
+            // its part of the stock
+            for (ItemStack s : a.bag) stockAdd(stock, s);
+        }
+        IInventory inv = c.chestInv(w);
+        if (inv != null) for (int i = 0; i < inv.getSizeInventory(); i++) if (inv.getStackInSlot(i) != null) stockAdd(stock, inv.getStackInSlot(i));
+        // the crew's: each agent paid the change (the decisions that changed blocks this second as the causes)
+        List<RlCause.Link> world = new ArrayList<RlCause.Link>(worldChanges);
+        worldChanges.clear();
+        stockValue = RlScore.stock(stock);
+        double dStock = track.delta("stock", stockValue);
+        Defense.Perimeter p = DefenseWorld.ring;
+        double wall = 0, moat = moatFrac(w), light = 0, gate = 0;
+        if (p != null && !p.cells.isEmpty()) {
+            wall = DefenseWorld.standing(w, p) / (double) p.cells.size();
+            light = litFrac(c, w);
+        }
+        int[] dr = RlWorld.now.door;
+        if (GearSkills.isDoor(w, dr)) gate = 1;
+        double dWall = track.delta("wall", wall), dMoat = track.delta("moat", moat), dLight = track.delta("light", light), dGate = track.delta("gate", gate);
+        int[] tb = GearSkills.table(alive.isEmpty() ? null : alive.get(0), w, 64);
+        double dTable = track.delta("table", tb != null ? 1 : 0), dShelf = track.delta("shelves", tb == null ? 0 : GearSkills.shelves(w, tb));
+        double[] su = sustain.pay();
+        Map<String, Double> farm = new HashMap<String, Double>();
+        if (!alive.isEmpty()) FarmSkills.facts(farm, c, alive.get(0), w);
+        sources = RlScore.sources((int) RlSpec.g(farm, "farm_planted"), (int) RlSpec.g(farm, "pen_adults"), (int) RlSpec.g(farm, "saplings_planted"));
+        double dSources = track.delta("sources", sources);
+        // the perimeter: the enemies inside the ring this second
+        double[] pm = { 0, 0 };
+        if (p != null && sc.waves != null) {
+            List<Integer> in = new ArrayList<Integer>();
+            for (EntityLiving m : Waves.enemies()) if (!m.isDead && p.inside(m.posX, m.posZ)) in.add(m.getEntityId());
+            pm = perimeter.second(in, 1);
+        }
+        if (base) return;
+        for (Agent a : alive) {
+            String k = id(a);
+            pay(k, "stock.value", dStock, null);
+            pay(k, "safety.wall", dWall, world);
+            pay(k, "safety.moat", dMoat, world);
+            pay(k, "safety.light", dLight, world);
+            pay(k, "safety.gate", dGate, world);
+            pay(k, "enchant.table", dTable, world);
+            pay(k, "enchant.shelf", dShelf, world);
+            pay(k, "sustain.food", su[0], null);
+            pay(k, "sustain.wood", su[1], null);
+            pay(k, "sustain.source", dSources, world);
+            pay(k, "perimeter.mob_seconds", pm[0], null);
+            pay(k, "perimeter.breach", pm[1], null);
+        }
+    }
+
+    static int count(Map<String, Integer> bag, String base) {
+        int n = 0;
+        for (Map.Entry<String, Integer> e : bag.entrySet()) {
+            String k = e.getKey(), b = k.indexOf(':') < 0 ? k : k.substring(0, k.indexOf(':'));
+            if (b.equals(base) || base.equals("redstone") && b.equals("redstone")) n += e.getValue();
+        }
+        return n;
+    }
+
+    /** a stack's part of the stock (RlSpec.STOCK's keys; food in points) */
+    static void stockAdd(Map<String, Double> st, ItemStack s) {
+        if (s == null) return;
+        String id = MindSkills.id(s), b = id.indexOf(':') < 0 ? id : id.substring(0, id.indexOf(':'));
+        if (RlSkills.food(s)) { add(st, "food", ((ItemFood) s.getItem()).getHealAmount(s) * s.stackSize); return; }
+        if (b.equals("log") || b.equals("log2")) add(st, "log", s.stackSize);
+        else if (b.equals("planks")) add(st, "log", s.stackSize / 4.0);
+        else add(st, b, s.stackSize);
+    }
+
+    static void add(Map<String, Double> m, String k, double v) { m.put(k, (m.containsKey(k) ? m.get(k) : 0) + v); }
+
+    /** the things it has (the bag and what it wears) that carry an enchantment */
+    static int enchanted(Agent a) {
+        int n = 0;
+        for (ItemStack s : a.bag) if (s != null && s.isItemEnchanted()) n++;
+        for (int i = 0; i <= 4; i++) { ItemStack s = a.getEquipmentInSlot(i); if (s != null && s.isItemEnchanted() && !a.bag.contains(s)) n++; }
+        return n;
+    }
+
+    /** the share of the dark spots for torches inside the ring that are lit (8 or more) */
+    static double litFrac(Crew c, WorldServer w) {
+        int[] o = DefenseWorld.centre(c, w);
+        if (o == null || DefenseWorld.ring == null) return 0;
+        int all = 0, lit = 0;
+        for (int[] s : Defense.lights(DefenseWorld.ring, o[0], o[2], 12, 5, DefenseWorld.floor(w, o[1]))) {
+            if (!Crew.soft(w, s[0], s[1], s[2]) || !Crew.solid(w, s[0], s[1] - 1, s[2])) continue;
+            all++;
+            if (w.getSavedLightValue(EnumSkyBlock.Block, s[0], s[1], s[2]) >= 8) lit++;
+        }
+        return all == 0 ? 0 : lit / (double) all;
+    }
+
+    /** the reward of an agent with the chain of its causes (none given: the agent's decision running now) */
+    double pay(String agent, String key, double n, List<RlCause.Link> chain) {
+        if (n == 0 || reward == null) return 0;
+        double p = reward.add(agent, key, n);
+        if (p == 0) return 0;
+        String comp = RlSpec.component(key);
+        if (p > 0 && RlScore.progress(comp)) stall.progress(agent, ticks / 20.0);
+        List<RlCause.Link> ch = chain != null && !chain.isEmpty() ? chain : RlCause.chain(cause.now(agent));
+        String head = ch.isEmpty() ? "-" : String.valueOf(ch.get(0).id);
+        String ek = agent + "|" + key + "|" + head;
+        JsonObject e = rewardEvents.get(ek);
+        if (e == null) {
+            rewardEvents.put(ek, e = new JsonObject());
+            e.addProperty("type", "reward");
+            e.addProperty("agent", agent);
+            e.addProperty("key", key);
+            e.addProperty("points", 0.0);
+            e.add("chain", RlCause.json(ch));
+        }
+        e.addProperty("points", RlReward.round(e.get("points").getAsDouble() + p));
+        return p;
+    }
+
+    /** the tiers by the tool's material (wood and gold 1, stone 2, iron 3, diamond 4): the best pickaxe and sword it has */
+    static int material(String m) {
+        if (m == null) return 0;
+        if (m.equals("EMERALD")) return 4;
+        if (m.equals("IRON")) return 3;
+        if (m.equals("STONE")) return 2;
+        return m.equals("WOOD") || m.equals("GOLD") ? 1 : 0;
+    }
+
+    static List<ItemStack> things(Agent a) {
+        List<ItemStack> all = new ArrayList<ItemStack>(a.bag);
+        for (int i = 0; i <= 4; i++) { ItemStack s = a.getEquipmentInSlot(i); if (s != null && !all.contains(s)) all.add(s); }
+        return all;
+    }
+
+    static int pickTier(Agent a) {
+        int t = 0;
+        for (ItemStack s : things(a)) if (s.getItem() instanceof ItemPickaxe) t = Math.max(t, material(((ItemPickaxe) s.getItem()).getToolMaterialName()));
+        return t;
+    }
+
+    static int swordTier(Agent a) {
+        int t = 0;
+        for (ItemStack s : things(a)) if (s.getItem() instanceof ItemSword) t = Math.max(t, material(((ItemSword) s.getItem()).getToolMaterialName()));
+        return t;
+    }
+
+    static int hoeTier(Agent a) {
+        int t = 0;
+        for (ItemStack s : things(a)) if (s.getItem() instanceof net.minecraft.item.ItemHoe) t = Math.max(t, material(((net.minecraft.item.ItemHoe) s.getItem()).getMaterialName()));
+        return t;
     }
 
     /** the agent's best tiers: pickaxe, weapon (sword, bow), armour (in the bag and worn) */
     static int[] tiers(Agent a) {
         int[] t = new int[3];
-        List<ItemStack> all = new ArrayList<ItemStack>(a.bag);
-        for (int i = 0; i <= 4; i++) if (a.getEquipmentInSlot(i) != null) all.add(a.getEquipmentInSlot(i));
-        for (ItemStack s : all) {
+        for (ItemStack s : things(a)) {
             int k = EpochScore.tier(MindSkills.id(s));
             if (s.getItem() instanceof ItemPickaxe) t[0] = Math.max(t[0], k);
             else if (s.getItem() instanceof ItemSword || s.getItem() instanceof ItemBow) t[1] = Math.max(t[1], k);
             else if (s.getItem() instanceof ItemArmor) t[2] = Math.max(t[2], k);
         }
+        t[0] = pickTier(a);
         return t;
-    }
-
-    /** an item's kind for "something new": its id without the variant */
-    static String kind(ItemStack s) {
-        String id = MindSkills.id(s);
-        int c = id.indexOf(':');
-        return c < 0 ? id : id.substring(0, c);
     }
 
     /** the scenario's goal: how far (0..1) */
     double goal(Crew c, WorldServer w) {
         if (sc == null) return 0;
-        int need = Math.max(1, sc.perAgent * crewSize);
+        int need = Math.max(1, sc.crewGoal ? sc.perAgent : sc.perAgent * crewSize);
         switch (sc.goal) {
             case "items": {
                 Object[] it = MindSkills.item(sc.goalItem);
@@ -603,6 +833,21 @@ public class RlEnv {
                 double moat = moatFrac(w);
                 return wall >= 1 && moat >= 0.9 ? 1 : 0.5 * Math.min(1, wall) + 0.5 * Math.min(1, moat / 0.9) * 0.999;
             }
+            case "armor": case "bow": case "mine_trip": case "enchant": case "achievements": {
+                double s = 0;
+                for (Agent a : c.agents) {
+                    double v;
+                    if (sc.goal.equals("armor")) v = a.getTotalArmorValue() / (double) sc.perAgent;
+                    else if (sc.goal.equals("bow")) v = DefenseSkills.bow(a) == null ? 0 : Skills.count(a.bag, Items.arrow, -1) / (double) sc.perAgent;
+                    else if (sc.goal.equals("mine_trip")) v = mine(a).trips;
+                    else if (sc.goal.equals("enchant")) v = enchanted(a);
+                    else v = RlAch.count(a.who()) / (double) sc.perAgent;
+                    s += Math.min(1, v);
+                }
+                return c.agents.isEmpty() ? 0 : s / c.agents.size();
+            }
+            case "farm": return Math.min(1, breadMade / (double) need);
+            case "pasture": return Math.min(1, births / (double) need);
             default:
                 return Math.min(0.999, Waves.state().cleared / 10.0);
         }
@@ -631,7 +876,7 @@ public class RlEnv {
                 if (!o.has("target") || !o.get("target").isJsonObject()) continue;
                 String who = CaseVec.str(o.getAsJsonObject("target"), "agent");
                 int rating = CaseVec.num(o, "rating", 0) > 0 ? 1 : -1;
-                for (Agent a : Crew.instance.agents) if (a.who().equals(who)) reward.add(id(a), "human", rating);
+                for (Agent a : Crew.instance.agents) if (a.who().equals(who)) pay(id(a), "human", rating, null);
             }
         } catch (Exception e) {
             Events.log("rl: the ratings not read: " + e);
@@ -644,9 +889,10 @@ public class RlEnv {
     static Mind.Call decide(AgentMind m, Agent a, WorldServer w) {
         RlEnv e = instance;
         if (e == null || e.state == State.IDLE || e.done) return null;
+        Mine mm = e.mine(a);
+        if (!mm.decided) { mm.decided = true; RlAch.decided(a); }
         Integer k = e.chosen.remove(a.skin());
         if (k != null) {
-            Mine mm = e.mine(a);
             mm.last = k;
             int[] mk = e.masks.get(a.skin());
             if (mk != null && mk[k] == 0) {
@@ -669,9 +915,16 @@ public class RlEnv {
         mm.outcome = RlSpec.outcome(result);
         mm.seconds = seconds;
         mm.repeated = m.mind.repeated();
+        mm.lastTool = tool;
         String k = id(a);
-        if (!"OK".equals(result)) e.reward.add(k, "skill_fail", 1);
-        else if (effect(tool, before, after)) e.reward.add(k, "skill_ok", 1);   // an OK with nothing measurable to show pays nothing (wait, look_around)
+        if (!"OK".equals(result)) e.pay(k, "skill_fail", 1, null);
+        else if (effect(tool, before, after)) e.pay(k, "skill_ok", 1, null);   // an OK with nothing measurable to show pays nothing (wait, look_around)
+        if (before != null && after != null && (tool.equals("craft") || tool.equals("smelt"))) {
+            int bread = count(after, "bread") - count(before, "bread");
+            if (tool.equals("craft") && bread > 0) e.breadMade += bread;
+            int logs = count(before, "log") + count(before, "log2") - count(after, "log") - count(after, "log2");
+            if (logs > 0) e.sustain.add(e.ticks / 20.0, RlScore.WOOD_USED, logs);
+        }
     }
 
     /** a step OK that changed something one can check: the bag (contract 2: no pay for an OK of words alone) */
@@ -680,14 +933,234 @@ public class RlEnv {
         return before != null && after != null && !MindSkills.diff(before, after).isEmpty();
     }
 
-    /** an agent died (Agent.onDeath): in a fight, or by an accident; outside the wall in a wave besides */
+    /** an agent died (Agent.onDeath): in a fight, or by an accident (hunger too); outside the wall in a wave besides */
     static void died(Agent a, String cause) {
         RlEnv e = instance;
         if (e == null || e.reward == null || e.state == State.IDLE || e.done) return;
         String k = id(a);
-        e.reward.add(k, "accident".equals(cause) || "starve".equals(cause) ? "accident" : "death", 1);
+        e.pay(k, "accident".equals(cause) || "starve".equals(cause) ? "accident" : "death", 1, null);
         Defense.Perimeter p = DefenseWorld.ring;
-        if (Waves.state().phase == WaveCycle.Phase.WAVE && p != null && !p.inside(a.posX, a.posZ)) e.reward.add(k, "perimeter.out_died", 1);
+        if (Waves.state().phase == WaveCycle.Phase.WAVE && p != null && !p.inside(a.posX, a.posZ)) e.pay(k, "perimeter.out_died", 1, null);
+    }
+
+    // ---- the causes (RlCause, RlCauseHooks): what the world and the bodies tell -----------------------------------
+
+    final RlCause cause = new RlCause();
+
+    static RlEnv running() {
+        RlEnv e = instance;
+        return e == null || e.state == State.IDLE || e.reward == null ? null : e;
+    }
+
+    /** orbs an agent picked up */
+    static void xpPicked(Agent a, int points) { }
+
+    /** an agent in lava or falling from a height this tick: the start of a danger it may be saved from */
+    static void danger(Agent a, String what) {
+        RlEnv e = running();
+        if (e == null) return;
+        Mine m = e.mine(a);
+        if (m.dangerAt < 0) { m.dangerAt = e.ticks; m.dangerKind = what; }
+    }
+
+    /** the water reflex put water under the agent (its bucket filled by the decision made, 0 unknown): a decision of its own */
+    static void reflexWater(Agent a, int x, int y, int z, long made) {
+        RlEnv e = running();
+        if (e == null) return;
+        RlCause.Link r = e.cause.aside(id(a), e.ticks, "reflex:water");
+        e.cause.placed(RlCause.key(x, y, z), "water", r);
+        Mine m = e.mine(a);
+        m.water = RlCause.chain(r.via("block:water"), made > 0 ? e.cause.item(made, "water_bucket") : null);
+        e.worldChanges.add(r.via("block:water"));
+    }
+
+    /** an agent's decision put a block (a skill's PlaceFrom, a bucket poured, a fire lit): its mark */
+    static void placed(Agent a, WorldServer w, int x, int y, int z) {
+        Block b = w.getBlock(x, y, z);
+        if (b == Blocks.enchanting_table) RlWorld.now.enchTable = new int[] { x, y, z };
+        RlEnv e = running();
+        if (e == null) return;
+        RlCause.Link l = e.cause.current.get(id(a));
+        if (l == null) return;
+        Object n = Block.blockRegistry.getNameForObject(b);
+        e.cause.placed(RlCause.key(x, y, z), n == null ? "?" : n.toString(), l);
+        RlCause.Link via = l.via("block:" + RlCause.plain(n == null ? "?" : n.toString()));
+        e.worldChanges.add(via);
+        Mine m = e.mine(a);
+        if (m.dangerAt >= 0 && b.getMaterial() == net.minecraft.block.material.Material.water) m.water = RlCause.chain(via);
+    }
+
+    /** an agent broke a block (Body.dig): its mark gone; a log of a tree the crew grew is renewable wood */
+    static void broken(Agent a, WorldServer w, int x, int y, int z) {
+        long key = RlCause.key(x, y, z);
+        RlEnv e = running();
+        if (e == null) return;
+        e.cause.broken(key);
+        RlCause.Link l = e.cause.current.get(id(a));
+        if (l != null) e.worldChanges.add(l.via("broke"));
+        if (RlWorld.now.grownLogs.remove(key)) e.sustain.add(e.ticks / 20.0, RlScore.WOOD_RENEW, 1);
+    }
+
+    /** a thing an agent's decision made (a craft, a bucket filled): it carries the decision (things that do not stack) */
+    static void made(Agent a, ItemStack s) {
+        RlEnv e = running();
+        if (e == null || s == null) return;
+        RlCause.Link l = e.cause.current.get(id(a));
+        if (l != null) RlCauseHooks.tag(s, l.id);
+    }
+
+    /** renewable food or wood got (FarmSkills: a harvest of the crew's farm, the meat of an animal born in its pen) */
+    static void renewable(Agent a, int kind, double amount) {
+        RlEnv e = running();
+        if (e != null) e.sustain.add(e.ticks / 20.0, kind, amount);
+    }
+
+    /** food points an agent ate (any food) */
+    static void ate(Agent a, double points) {
+        RlEnv e = running();
+        if (e != null) e.sustain.add(e.ticks / 20.0, RlScore.FOOD_EATEN, points);
+    }
+
+    /** levels an agent spent on an enchanting */
+    static void enchanted(Agent a, ItemStack s, int levels) {
+        RlEnv e = running();
+        if (e != null) e.pay(id(a), "enchant.levels", levels, null);
+    }
+
+    /** a new achievement of an agent (RlAch): its reward, the event */
+    static void achieved(Agent a, String id) {
+        RlEnv e = running();
+        if (e == null) return;
+        String k = id(a);
+        e.pay(k, "achievement.new", 1, null);
+        e.pay(k, "achievement.depth", RlAchievements.depth(id), null);
+        JsonObject o = new JsonObject();
+        o.addProperty("type", "achievement");
+        o.addProperty("agent", k);
+        o.addProperty("id", id);
+        o.addProperty("name", RlAchievements.ALL.get(id).ru);
+        o.addProperty("ticks", e.ticks);
+        e.events.add(o);
+    }
+
+    /** an animal born (a child entered the world): in the pen, of animals the crew fed: a birth, breedCow for a cow's feeder */
+    void born(net.minecraft.entity.passive.EntityAnimal child) {
+        if (!RlWorld.now.inPen(child.posX, child.posZ)) return;
+        RlWorld.now.born.add(child.getEntityId());
+        births++;
+        Set<Integer> feeders = new HashSet<Integer>();
+        for (Object o : child.worldObj.getEntitiesWithinAABB(child.getClass(), child.boundingBox.expand(3, 2, 3))) {
+            net.minecraft.entity.passive.EntityAnimal p = (net.minecraft.entity.passive.EntityAnimal) o;
+            Integer by = RlWorld.now.fedBy.get(p.getEntityId());
+            if (p != child && !p.isChild() && by != null) feeders.add(by);
+        }
+        Crew c = Crew.instance;
+        List<RlCause.Link> chain = new ArrayList<RlCause.Link>();
+        for (Integer f : feeders) {
+            RlCause.Link l = cause.current.get(String.valueOf(f));
+            if (l != null) chain.add(l.via("fed"));
+            if (c != null && child instanceof net.minecraft.entity.passive.EntityCow) for (Agent a : c.agents) if (a.skin() == f) RlAch.grant(a, "breedCow");
+        }
+        JsonObject o = new JsonObject();
+        o.addProperty("type", "effect");
+        o.addProperty("effect", "animal_born");
+        o.add("chain", RlCause.json(chain));
+        o.addProperty("ticks", ticks);
+        events.add(o);
+        Events.log("rl: a " + child.getCommandSenderName() + " born in the pen (" + births + ")");
+    }
+
+    /** a living thing hurt or killed (or an agent saved), with the chain of its causes: rewards, achievements, discoveries */
+    void effect(EntityLivingBase v, String kind, List<RlCause.Link> chain, float amount, DamageSource s) {
+        if (state == State.IDLE || reward == null || done) return;
+        Crew c = Crew.instance;
+        RlCause.Link head = chain.isEmpty() ? null : chain.get(0);
+        Agent by = head == null || c == null ? null : agent(c, head.agent);
+        for (Object[] n : cause.novel(chain, kind)) {
+            JsonObject o = new JsonObject();
+            o.addProperty("type", "novel_effect");
+            o.addProperty("agent", head == null ? "" : head.agent);
+            o.addProperty("cause", (String) n[1]);
+            o.addProperty("effect", kind);
+            o.addProperty("first_ever", (Boolean) n[2]);
+            o.add("chain", RlCause.json(chain));
+            o.addProperty("ticks", ticks);
+            events.add(o);
+            if (by != null) mine(by).novel++;
+            if (RlCause.curious(kind) && head != null) pay(head.agent, "curiosity.novel", 1, chain);
+            Events.log("rl: discovery " + n[0] + (head == null ? "" : " by agent " + head.agent + " (" + head.kind + ")") + ((Boolean) n[2] ? " — first ever" : ""));
+            if ((Boolean) n[2]) discovery((String) n[0], head == null ? "" : head.agent, chain);
+        }
+        if (kind.equals("mob_killed") && head != null) {
+            pay(head.agent, "perimeter.kill", 1, chain);
+            boolean hit = "hit".equals(head.via) || "shot".equals(head.via);
+            if (by != null && hit) {
+                RlAch.grant(by, "killEnemy");
+                if ("shot".equals(head.via) && v instanceof net.minecraft.entity.monster.EntitySkeleton && Math.hypot(v.posX - by.posX, v.posZ - by.posZ) >= 50) RlAch.grant(by, "snipeSkeleton");
+            }
+        } else if (kind.equals("mob_hurt") && by != null && amount >= 18 && "hit".equals(head.via)) RlAch.grant(by, "overkill");
+        else if (kind.equals("agent_hurt") && v instanceof Agent) {
+            Agent a = (Agent) v;
+            pay(id(a), "damage", amount, chain);
+            Defense.Perimeter p = DefenseWorld.ring;
+            if (p != null && sc.waves != null && p.inside(a.posX, a.posZ) && c != null)
+                for (Agent g : c.agents) if (!g.isDead) pay(id(g), "perimeter.hurt_inside", amount, chain);
+        } else if (kind.equals("agent_saved")) {
+            JsonObject o = new JsonObject();
+            o.addProperty("type", "effect");
+            o.addProperty("effect", "agent_saved");
+            o.addProperty("agent", v instanceof Agent ? id((Agent) v) : "");
+            o.add("chain", RlCause.json(chain));
+            o.addProperty("ticks", ticks);
+            events.add(o);
+            Events.log("rl: " + v.getCommandSenderName() + " saved by " + RlCause.kinds(chain));
+        }
+    }
+
+    static Agent agent(Crew c, String id) {
+        for (Agent a : c.agents) if (id(a).equals(id)) return a;
+        return null;
+    }
+
+    /** a kind of link and effect never met before: a line of the discoveries' journal (for the film) */
+    void discovery(String what, String who, List<RlCause.Link> chain) {
+        try {
+            String f = System.getProperty("aiguide.rl.discoveries");
+            File file;
+            if (f != null && !f.isEmpty()) file = new File(f);
+            else {
+                WorldServer w = MinecraftServer.getServer().worldServers[0];
+                file = new File(new File(w.getSaveHandler().getWorldDirectory(), "aiguide-rl"), "discoveries.jsonl");
+            }
+            file.getParentFile().mkdirs();
+            JsonObject o = new JsonObject();
+            o.addProperty("what", what);
+            o.addProperty("who", who);
+            o.add("chain", RlCause.json(chain));
+            o.addProperty("episode", episode);
+            o.addProperty("scenario", sc == null ? "" : sc.name);
+            o.addProperty("ticks", ticks);
+            o.addProperty("time", new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss").format(new java.util.Date()));
+            java.nio.file.Files.write(file.toPath(), (o.toString() + "\n").getBytes(StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        } catch (Exception ex) {
+            Events.log("rl: the discovery not written: " + ex);
+        }
+    }
+
+    /** the kinds met before (the journal's), so that first_ever holds across the server's restarts */
+    void loadDiscoveries(WorldServer w) {
+        try {
+            String f = System.getProperty("aiguide.rl.discoveries");
+            File file = f != null && !f.isEmpty() ? new File(f) : new File(new File(w.getSaveHandler().getWorldDirectory(), "aiguide-rl"), "discoveries.jsonl");
+            if (!file.isFile()) return;
+            for (String line : new String(java.nio.file.Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8).split("\n")) {
+                if (line.trim().isEmpty()) continue;
+                JsonObject o = new JsonParser().parse(line).getAsJsonObject();
+                if (o.has("what")) cause.ever.add(o.get("what").getAsString());
+            }
+        } catch (Exception ex) {
+            Events.log("rl: the discoveries not read: " + ex);
+        }
     }
 
     // ---- the answer: the observations, the masks, the rewards ---------------------------------------------------
@@ -732,6 +1205,15 @@ public class RlEnv {
         info.addProperty("seed", seed);
         info.addProperty("goal_progress", RlReward.round(c == null ? 0 : goal(c, w)));
         info.addProperty("model_calls", modelCalls);
+        JsonObject as = new JsonObject();
+        for (Map.Entry<String, JsonElement> e : assigned.entrySet()) as.add(e.getKey(), e.getValue());
+        info.add("assigned", as);
+        JsonArray ev = new JsonArray();
+        for (JsonObject e : rewardEvents.values()) ev.add(e);
+        for (JsonObject e : events) ev.add(e);
+        info.add("events", ev);
+        rewardEvents.clear();
+        events.clear();
         long wall = (System.nanoTime() - startNs) / 1000000;
         double sim = Math.max(1e-6, simNs / 1e9);
         info.addProperty("wall_ms", wall);
@@ -741,6 +1223,15 @@ public class RlEnv {
         if (done) {
             info.addProperty("done_reason", doneReason);
             info.add("episode_reward", reward.episodeJson());
+            info.add("measured", reward.measuredJson());
+            JsonObject ach = new JsonObject();
+            if (c != null)
+                for (Agent a : c.agents) {
+                    JsonArray l = new JsonArray();
+                    for (String x : RlAch.of(a.who())) l.add(new JsonPrimitive(x));
+                    ach.add(id(a), l);
+                }
+            info.add("achievements", ach);
             Events.log("rl: episode " + episode + " " + sc.name + " done (" + doneReason + ") at " + ticks / 20 + " game s, " + wall + " ms, reward " + reward.episodeJson());
         }
         if (raw) info.add("raw", rawOut);
@@ -765,10 +1256,13 @@ public class RlEnv {
             if (k < 0 || k >= RlSpec.ACTIONS.size()) { r.conn.send(error("action " + k + " out of 0.." + (RlSpec.ACTIONS.size() - 1))); return; }
             got.put(who, k);
         }
+        for (String k : new ArrayList<String>(assignedKeys())) assigned.remove(k);
+        for (Map.Entry<Integer, Integer> e : got.entrySet())   // each a decision of its own: its id (the chains' and the answer's)
+            assigned.addProperty(String.valueOf(e.getKey()), cause.decide(String.valueOf(e.getKey()), ticks, RlSpec.ACTIONS.get(e.getValue()).id).id);
         boolean noop = false;
         for (Map.Entry<Integer, Integer> e : got.entrySet())
             if (e.getValue() == 0) {   // nothing: the episode ends at once with its penalty (the world back at the next reset)
-                reward.add(String.valueOf(e.getKey()), "noop", 1);
+                pay(String.valueOf(e.getKey()), "noop", 1, null);
                 Mine mm = mine.get(e.getKey());
                 if (mm != null) mm.last = 0;
                 noop = true;
@@ -784,6 +1278,12 @@ public class RlEnv {
         replyTo = r.conn;
         state = State.RUN;
         runSince = System.nanoTime();
+    }
+
+    List<String> assignedKeys() {
+        List<String> l = new ArrayList<String>();
+        for (Map.Entry<String, JsonElement> e : assigned.entrySet()) l.add(e.getKey());
+        return l;
     }
 
     static JsonArray floats(float[] v) {
@@ -814,11 +1314,14 @@ public class RlEnv {
 
     /**
      * The raw facts of an agent: the environment's (above) and the game's policy (PolicyMind: a mind's goal as a
-     * scenario, its own memo of the last step, its time and progress) from the same code.
+     * scenario, its own memo of the last step, its time and progress) from the same code; the episode's own (the
+     * scales' measures, the achievements' target, the stall) when the environment runs.
      */
     static Map<String, Double> facts(Crew c, Agent a, WorldServer w, String scenario, Mine mm, double timeFrac, double progress) {
         Map<String, Double> r = new LinkedHashMap<String, Double>();
         put(r, "scen_" + scenario.replace(':', '_'), 1);
+        RlSpec.Scenario sco = RlSpec.scenario(scenario);
+        if (sco != null) for (String s : RlSpec.SCALES) if (sco.scale(s) > 0) put(r, "scale_" + s, 1);
         int slot = 0;
         for (Agent g : c.agents) { if (g == a) break; slot++; }
         put(r, "agent_" + Math.min(slot, RlSpec.MAX_AGENTS - 1), 1);
@@ -831,6 +1334,13 @@ public class RlEnv {
         int[] tr = tiers(a);
         put(r, "pick_tier", tr[0]);
         put(r, "weapon_tier", tr[1]);
+        put(r, "sword_tier", swordTier(a));
+        put(r, "hoe_tier", hoeTier(a));
+        put(r, "hunger_on", Agent.hungerOn ? 1 : 0);
+        put(r, "food_level", Agent.hungerOn ? a.hunger.food : 20);
+        put(r, "saturation", Agent.hungerOn ? a.hunger.saturation : 5);
+        put(r, "xp_level", a.xp.level);
+        put(r, "xp_progress", a.xp.progress);
         double baseD = c.base == null ? 32 : Math.hypot(a.posX - c.base[0] - 0.5, a.posZ - c.base[2] - 0.5);
         put(r, "at_home", baseD < 4 ? 1 : 0);
         long t = w.getWorldTime() % 24000;
@@ -840,10 +1350,13 @@ public class RlEnv {
         put(r, "dusk_in", t < 12500 ? (12500 - t) / 20.0 : 0);
         // the bag
         Map<String, Double> bag = new HashMap<String, Double>();
-        double total = 0, stack = 0, fuel = 0;
+        double total = 0, stack = 0, fuel = 0, food = 0;
         for (ItemStack s : a.bag) {
             String k = bagKey(s);
-            if (k != null) bag.put(k, (bag.containsKey(k) ? bag.get(k) : 0) + s.stackSize);
+            if (k != null) add(bag, k, s.stackSize);
+            if (MindSkills.id(s).equals("bread")) add(bag, "bread", s.stackSize);
+            if (s.getItem() instanceof ItemArmor) add(bag, "armor", s.stackSize);
+            if (RlSkills.food(s)) food += s.stackSize;
             total += s.stackSize;
             if (!(s.getItem() instanceof net.minecraft.item.ItemTool) && !(s.getItem() instanceof ItemSword)) stack += s.stackSize;
             if (net.minecraft.tileentity.TileEntityFurnace.getItemBurnTime(s) > 0) fuel += s.stackSize;
@@ -852,6 +1365,7 @@ public class RlEnv {
         put(r, "bag_total", total);
         put(r, "bag_stackables", stack);
         put(r, "fuel", fuel);
+        put(r, "food_items", food);
         Map<String, Integer> ids = MindSkills.bag(a);
         String mat = Defense.material("any", ids);
         put(r, "wall_blocks", mat == null ? 0 : Defense.count(ids, mat));
@@ -863,8 +1377,18 @@ public class RlEnv {
         seen(r, c, a, w, "stone", STONE, 32, 32);
         seen(r, c, a, w, "coal", new Block[] { Blocks.coal_ore }, 48, 48);
         seen(r, c, a, w, "iron", new Block[] { Blocks.iron_ore }, 48, 48);
+        seen(r, c, a, w, "gold", new Block[] { Blocks.gold_ore }, 48, 48);
+        seen(r, c, a, w, "redstone", new Block[] { Blocks.redstone_ore, Blocks.lit_redstone_ore }, 48, 48);
+        seen(r, c, a, w, "diamond", new Block[] { Blocks.diamond_ore }, 48, 48);
+        seen(r, c, a, w, "obsidian", new Block[] { Blocks.obsidian }, 48, 48);
+        seen(r, c, a, w, "gravel", new Block[] { Blocks.gravel }, 32, 32);
         put(r, "coal_minable", minable(c, a, w, Blocks.coal_ore));
         put(r, "iron_minable", minable(c, a, w, Blocks.iron_ore));
+        put(r, "gold_minable", minable(c, a, w, Blocks.gold_ore));
+        put(r, "redstone_minable", minable(c, a, w, Blocks.redstone_ore) + minable(c, a, w, Blocks.lit_redstone_ore));
+        put(r, "diamond_minable", minable(c, a, w, Blocks.diamond_ore));
+        put(r, "obsidian_minable", minable(c, a, w, Blocks.obsidian));
+        put(r, "gravel_minable", minable(c, a, w, Blocks.gravel));
         List<EntityLiving> an = RlSkills.animals(a, w, RlSkills.SEE);
         put(r, "animals_seen", an.size());
         put(r, "animal_dist", an.isEmpty() ? 24 : a.getDistanceToEntity(an.get(0)));
@@ -893,15 +1417,17 @@ public class RlEnv {
         List<EntityLiving> foes = Waves.enemies();
         put(r, "enemies", v.active() ? v.enemies() : foes.size());
         EntityLiving near = null;
-        int close = 0;
+        int close = 0, visible = 0;
         for (EntityLiving m : foes) {
             if (near == null || a.getDistanceToEntity(m) < a.getDistanceToEntity(near)) near = m;
             if (a.getDistanceToEntity(m) <= 8) close++;
+            if (a.getDistanceToEntity(m) <= 32 && a.canEntityBeSeen(m)) visible++;
         }
         put(r, "enemy_dist", near == null ? 32 : a.getDistanceToEntity(near));
         put(r, "enemy_dx", near == null || c.base == null ? 0 : near.posX - c.base[0] - 0.5);
         put(r, "enemy_dz", near == null || c.base == null ? 0 : near.posZ - c.base[2] - 0.5);
         put(r, "enemies_near", close);
+        put(r, "enemies_visible", visible);
         // the perimeter
         Defense.Perimeter p = DefenseWorld.ring;
         put(r, "ring_planned", p == null ? 0 : 1);
@@ -924,6 +1450,11 @@ public class RlEnv {
         put(r, "post_dist", pa == null ? 0 : Math.hypot(a.posX - pa[0] - 0.5, a.posZ - pa[2] - 0.5));
         put(r, "light_spots", bag.containsKey("torch") ? lightSpots(c, a, w) : 0);
         put(r, "can_equip", canEquip(a) ? 1 : 0);
+        // contract 3's: the mine, the gear, the farm, the primitives' targets (their skills tell their own facts)
+        MineSkills.facts(r, c, a, w);
+        GearSkills.facts(r, c, a, w);
+        FarmSkills.facts(r, c, a, w);
+        PrimSkills.facts(r, c, a, w);
         // the others
         int alive = 0, low = 0;
         double sum = 0, min = 20, nd = 32;
@@ -940,6 +1471,10 @@ public class RlEnv {
         put(r, "allies_health_min", alive == 0 ? 20 : min);
         put(r, "allies_low", low);
         put(r, "ally_dist", nd);
+        // the achievements
+        for (String x : RlAchievements.supported()) if (RlAch.has(a.who(), x)) put(r, "ach_" + x, 1);
+        put(r, "ach_count", RlAch.count(a.who()));
+        put(r, "ach_available", RlAch.available(a.who()));
         // the last step
         put(r, "last_" + mm.outcome, 1);
         put(r, "repeated", mm.repeated);
@@ -947,15 +1482,34 @@ public class RlEnv {
         if (mm.last >= 0) put(r, "last_action_" + RlSpec.ACTIONS.get(mm.last).id, 1);
         put(r, "time_frac", timeFrac);
         put(r, "goal_progress", progress);
-        // the crafts: what the bag can make now, and whether in the hands
-        for (String[] k : RlSpec.CRAFTS) {
-            Object[] it = MindSkills.item(k[0]);
-            if (it == null) continue;
-            List<Skills.Laid> rs = Skills.recipesFor((Item) it[0], (Integer) it[1]);
-            Skills.Laid l = rs.isEmpty() ? null : MindSkills.doable(a, rs);
-            put(r, "craftable_" + k[0], l == null ? 0 : 1);
-            put(r, "small_" + k[0], l != null && l.small() ? 1 : 0);
+        put(r, "novel_count", mm.novel);
+        // the episode's own measures, when the environment runs
+        RlEnv e = running();
+        if (e != null) {
+            if (!e.target.isEmpty()) put(r, "ach_target_" + e.target, 1);
+            put(r, "stall", e.stall.idle(id(a), e.ticks / 20.0));
+            put(r, "mobs_inside", e.perimeter.inside.size());
+            put(r, "breaches", e.perimeter.waveBreaches);
+            put(r, "mob_seconds", e.perimeter.mobSeconds);
+            put(r, "clean_waves", e.perimeter.clean);
+            double[] win = e.sustain.recent(e.ticks / 20.0, RlSpec.WINDOW_S);
+            put(r, "food_renew", win[0]);
+            put(r, "food_eaten", win[1]);
+            put(r, "wood_renew", win[2]);
+            put(r, "wood_used", win[3]);
+            put(r, "sources", e.sources);
+            put(r, "stock_value", e.stockValue);
         }
+        // the crafts: what the bag can make now, and whether in the hands
+        for (String[][] list : new String[][][] { RlSpec.CRAFTS, RlSpec.CRAFTS2 })
+            for (String[] k : list) {
+                Object[] it = MindSkills.item(k[0]);
+                if (it == null) continue;
+                List<Skills.Laid> rs = Skills.recipesFor((Item) it[0], (Integer) it[1]);
+                Skills.Laid l = rs.isEmpty() ? null : MindSkills.doable(a, rs);
+                put(r, "craftable_" + k[0], l == null ? 0 : 1);
+                put(r, "small_" + k[0], l != null && l.small() ? 1 : 0);
+            }
         return r;
     }
 
@@ -966,6 +1520,7 @@ public class RlEnv {
         String id = MindSkills.id(s), b = id.indexOf(':') < 0 ? id : id.substring(0, id.indexOf(':'));
         if (b.equals("log2")) return "log";
         if (b.equals("grass")) return "dirt";
+        if (b.equals("reeds")) return "sugar_cane";
         if (RlSkills.food(s)) return RlSkills.raw(s) ? "food_raw" : "food_cooked";
         for (String k : RlSpec.BAG) if (k.equals(b)) return k;
         return null;

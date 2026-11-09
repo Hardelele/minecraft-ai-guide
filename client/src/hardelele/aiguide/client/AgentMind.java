@@ -290,6 +290,7 @@ final class AgentMind {
 
     void record(Crew c, Agent a, WorldServer w, Mind.Call cl, String result, String detail, String changes, double sec) {
         Mind.Step s = mind.record(cl, result, detail, changes, sec);
+        if (skill != null && before != null) RlAch.step(a, cl.tool, before, MindSkills.bag(a));   // the agents' achievements, as the game's conditions
         if (!cl.tool.equals("how_to_make") || !result.equals("OK"))
             Events.log("mind: " + a.who() + " " + cl.tool + " -> " + result + (s.detail.isEmpty() ? "" : " (" + cut(s.detail, 240) + ")") + (changes.isEmpty() ? "" : "; " + changes));
         if (RlEnv.on()) {   // the environment's step: its reward and the next observation's outcome; no journal line (no model, no prompt)
