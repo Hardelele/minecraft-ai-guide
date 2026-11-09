@@ -406,6 +406,11 @@ final class RlSpec {
         // round itself (3.1): its six neighbour cells, the walls at its feet, shut in, sheltered at night or in a wave
         for (String d : RlNear.DIRS) add(f, "bool", 1, "nb_" + d + "_solid", "nb_" + d + "_air", "nb_" + d + "_liquid", "nb_" + d + "_mob");
         f.add(new Feature("walls_around", "div", 4)); add(f, "bool", 1, "enclosed", "shelter");
+        f.add(new Feature("trees_reachable", "div", 5));   // (3.1) trees seen near that a walk gets to
+        // (3.1) the memory of failures: by action, failures in a row since its last success and in the last FAIL_WINDOW
+        // decisions; the group of the last failure's reason
+        for (Action a : actions()) { f.add(new Feature("fail_run_" + a.id, "div", 4)); f.add(new Feature("fail_recent_" + a.id, "div", 1)); }
+        for (String g : failGroups()) f.add(new Feature("lastfail_" + g, "bool", 1));
         // the causes: kinds of cause and effect new in this episode (curiosity)
         f.add(new Feature("novel_count", "div", 20));
         // the others
@@ -460,6 +465,25 @@ final class RlSpec {
         return "fail_other";
     }
 
+    /** (3.1) the decisions the memory of failures looks back over */
+    static final int FAIL_WINDOW = 20;
+    /** (3.1) the groups of a failure's reason, for the observation's last failure */
+    static final String[] FAIL_GROUPS = failGroups();
+
+    static String[] failGroups() { return new String[] { "no_path", "no_spot", "not_visible", "no_items", "no_tool", "occupied", "other" }; }
+
+    static String failGroup(String r) {
+        if (r == null || r.isEmpty() || r.equals("OK")) return "";
+        if (in(r, "NO_PATH", "OUT_OF_REACH", "NO_WAY_BACK", "TIMEOUT")) return "no_path";
+        if (in(r, "NO_SPOT", "BLOCKED", "NOT_AT_HORIZON", "AT_BOTTOM", "ON_SURFACE")) return "no_spot";
+        if (in(r, "NOT_VISIBLE", "NOT_SEEN", "NO_TREE_SEEN", "NO_TREE_THERE", "GONE", "NO_ANIMAL", "NO_ENEMY", "NOT_RIPE")) return "not_visible";
+        if (in(r, "NO_ITEMS", "MISSING", "NO_FOOD", "NO_SEEDS", "NO_BAIT", "NO_FENCES", "NO_DOOR", "NO_SAPLING", "NO_SHELF", "NO_ARROWS", "NO_TORCHES",
+                "NO_FUEL", "NO_XP", "NOTHING_TO_ENCHANT")) return "no_items";
+        if (in(r, "NO_TOOL", "NO_HOE", "NO_TABLE", "NO_FURNACE", "NO_WEAPON", "NO_BOW", "NO_ENCHANTER")) return "no_tool";
+        if (in(r, "OCCUPIED", "BUSY", "POST_TAKEN", "ALL_TAKEN")) return "occupied";
+        return "other";
+    }
+
     static boolean in(String r, String... l) {
         for (String s : l) if (s.equals(r)) return true;
         return false;
@@ -500,6 +524,8 @@ final class RlSpec {
         w.put("stall", -0.05);
         w.put("skill_fail", -0.05);
         w.put("skill_ok", 0.02);
+        w.put("retry_fail", -0.03);   // (3.1) the same action failing again: (k - 1) for its k-th failure in a row
+        w.put("switch_ok", 0.05);     // (3.1) a success by another action than the one that failed last
         w.put("damage", -0.01);
         w.put("death", -1.0);
         w.put("accident", -1.5);

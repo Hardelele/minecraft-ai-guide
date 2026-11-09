@@ -37,7 +37,7 @@ def main():
     check(a3["version"] == o3["version"] == r3["version"] == 3 and a3["hash"] == "553dfd026d9d" and o3["hash"] == "7821a391980f", "rl/v3 is contract 3 as it was")
     check([(a["id"], a["tool"], a["args"], a["mask"]) for a in act["actions"][:124]] == [(a["id"], a["tool"], a["args"], a["mask"]) for a in a3["actions"]],
           "the first 124 are contract 3's, rules and all")
-    check({k: v for k, v in rew["weights"].items() if k != "safety.shelter"} == r3["weights"] and rew["weights"]["safety.shelter"] == 0,
+    check({k: v for k, v in rew["weights"].items() if k not in ("safety.shelter", "retry_fail", "switch_ok")} == r3["weights"] and rew["weights"]["safety.shelter"] == 0,
           "the weights are contract 3's, the shelter measured at 0")
     check(a1["version"] == o1["version"] == 1, "rl/v1 is contract 1")
     ids = [a["id"] for a in act["actions"]]
@@ -45,7 +45,7 @@ def main():
     check(ids[:38] == [a["id"] for a in a1["actions"]] and act["v1_prefix"] == 38, "the first 38 are contract 1's, in its order")
     check(all(a["args"] == b["args"] and a["tool"] == b["tool"] for a, b in zip(act["actions"], a1["actions"])), "with the same tools and arguments")
     check(all("mask" in a for a in act["actions"]), "every action of contract 2 carries its rule")
-    check(obs["dim"] == len(obs["features"]) == 441, "441 features")
+    check(obs["dim"] == len(obs["features"]) == 721, "721 features")
     names = [f["name"] for f in obs["features"]]
     check(all(n in names for n in [f["name"] for f in o1["features"] if f["name"] != "scen_siege"]), "contract 1's features are among contract 2's")
 

@@ -14,7 +14,7 @@ final class RlNear {
     private RlNear() { }
 
     /** a cell's kind: what the agent meets there */
-    static final int AIR = 0, SOLID = 1, WATER = 2, LAVA = 3, BEDROCK = 4, HARD = 5;   // HARD: solid, but no tool of its bag takes it
+    static final int AIR = 0, SOLID = 1, WATER = 2, LAVA = 3, BEDROCK = 4, HARD = 5, LEAVES = 6;   // HARD: solid, but no tool of its bag takes it; LEAVES: a wall, nothing to put a block against
 
     interface Grid {
         int at(int x, int y, int z);
@@ -25,7 +25,7 @@ final class RlNear {
     static final String[] DIG = { "below", "front", "front_down", "left", "right", "back", "above" };
     static final String[] PUT = { "left", "right", "back", "above" };
 
-    static boolean solid(int k) { return k == SOLID || k == HARD || k == BEDROCK; }
+    static boolean solid(int k) { return k == SOLID || k == HARD || k == BEDROCK || k == LEAVES; }
 
     /** a direction's offset for a facing (dx, dz the front): { dx, dy, dz } of the cell (the feet's level for the sides) */
     static int[] off(String d, int fx, int fz) {
@@ -54,7 +54,8 @@ final class RlNear {
         for (int[] d : n) {
             int nx = c[0] + d[0], ny = c[1] + d[1], nz = c[2] + d[2];
             if (nx == x && nz == z && (ny == y || ny == y + 1)) continue;
-            if (solid(g.at(nx, ny, nz))) return true;
+            int k = g.at(nx, ny, nz);
+            if (solid(k) && k != LEAVES) return true;
         }
         return false;
     }
@@ -74,7 +75,7 @@ final class RlNear {
             boolean any = false, ok = true;
             for (int[] c : digCells(d, x, y, z, fx, fz)) {
                 int k = g.at(c[0], c[1], c[2]);
-                if (k == SOLID) any = true;
+                if (k == SOLID || k == LEAVES) any = true;
                 if (k == HARD || k == BEDROCK) ok = false;
             }
             if (d.equals("below") && any) {   // under itself: not over lava, not over a drop of three or more

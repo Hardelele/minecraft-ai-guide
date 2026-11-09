@@ -343,9 +343,68 @@ final class MindSkills {
         return l;
     }
 
+    /** a cache of the path finder's answers: agent and trunk -> { tick, 1 reached / 0 not } (10 s) */
+    static final Map<Long, long[]> reachCache = new java.util.HashMap<Long, long[]>();
+    /** trunks no agent of the crew got to (its key -> until when it is not tried): shared, so four do not go to one */
+    static final Map<Long, Long> crewUnreached = new java.util.HashMap<Long, Long>();
+    static final int UNREACHED_TICKS = 20 * 120;
+    /** a hanging top climbed by the skill itself: off (no detours inside the skills; the net may pillar up: pillar:up, dig@, place@) */
+    static final boolean PILLAR_TOPS = Boolean.getBoolean("aiguide.chop.pillar");
+
+    static void unreached(int[] t, long now) {
+        if (crewUnreached.size() > 1024) crewUnreached.clear();
+        crewUnreached.put(Crew.key(t[0], t[1], t[2]), now + UNREACHED_TICKS);
+    }
+
+    static boolean mayTryTrunk(Agent a, int[] t, long now) {
+        Long until = crewUnreached.get(Crew.key(t[0], t[1], t[2]));
+        return (until == null || until <= now) && a.walks.mayTry(Crew.key(t[0], t[1], t[2]), now);
+    }
+
+    /** the trunk's foot (its lowest log, the column down while logs) */
+    static int footY(WorldServer w, int[] t) {
+        int y = t[1];
+        while (y > t[1] - 12 && (w.getBlock(t[0], y - 1, t[2]) == Blocks.log || w.getBlock(t[0], y - 1, t[2]) == Blocks.log2)) y--;
+        return y;
+    }
+
+    /** chop it from the ground, up a pillar (a hanging top: blocks in the bag), or skip it (Reach.trunkPlan) */
+    static String trunkPlan(Agent a, WorldServer w, int[] t) {
+        int y = footY(w, t);
+        int[][] around = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 }, { 2, 0 }, { -2, 0 }, { 0, 2 }, { 0, -2 } };
+        int[] g = new int[around.length];
+        for (int i = 0; i < around.length; i++) g[i] = Crew.ground(w, t[0] + around[i][0], y, t[2] + around[i][1]);
+        return Reach.trunkPlan(y, g, PILLAR_TOPS && Skills.Scaffold.block(a, null) != null);
+    }
+
+    /** a walk gets there: the game's path finder ends within 2 of it */
+    static boolean reached(Agent a, WorldServer w, int[] p) {
+        long now = w.getTotalWorldTime(), key = Crew.key(p[0], p[1], p[2]) * 31 + a.skin();
+        long[] c = reachCache.get(key);
+        if (c != null && now - c[0] < 200 && now >= c[0]) return c[1] == 1;
+        net.minecraft.pathfinding.PathEntity path = a.getNavigator().getPathToXYZ(p[0] + 0.5, p[1], p[2] + 0.5);
+        net.minecraft.pathfinding.PathPoint end = path == null ? null : path.getFinalPathPoint();
+        boolean ok = end != null && Math.abs(end.xCoord - p[0]) + Math.abs(end.zCoord - p[2]) <= 2 && Math.abs(end.yCoord - p[1]) <= 3;
+        if (reachCache.size() > 4096) reachCache.clear();
+        reachCache.put(key, new long[] { now, ok ? 1 : 0 });
+        return ok;
+    }
+
+    /**
+     * The free trunks seen near that a walk gets to, nearest first (the five nearest looked at): one not reached is
+     * remembered as a failed walk's goal (Walks: tried again after a while), so chop never takes it again and again.
+     */
+    static List<int[]> reachableTrunks(Crew c, final Agent a, final WorldServer w, double r) {
+        final long now = w.getTotalWorldTime();
+        List<int[]> unreached = new ArrayList<int[]>();
+        List<int[]> ok = Reach.reachable(trunks(c, a, w, r, false), p -> mayTryTrunk(a, p, now), p -> !trunkPlan(a, w, p).equals("skip") && reached(a, w, p), 5, unreached);
+        for (int[] p : unreached) { a.walks.failed(Crew.key(p[0], p[1], p[2]), Crew.key((int) Math.floor(a.posX), (int) Math.floor(a.posY), (int) Math.floor(a.posZ)), now); unreached(p, now); }
+        return ok;
+    }
+
     static Skill chop(final Crew c, Agent a, WorldServer w, String at) {
         int[] want = coords(at);
-        List<int[]> l = trunks(c, a, w, 48, false);
+        List<int[]> l = want == null ? reachableTrunks(c, a, w, 48) : trunks(c, a, w, 48, false);
         int[] t = null;
         if (want != null) {
             double bd = 3.5;
@@ -355,13 +414,31 @@ final class MindSkills {
             }
             if (t == null) return failed("NO_TREE_THERE", "no tree the crew has seen at " + want[0] + " " + want[1] + " " + want[2] + " (or another agent has it)");
         } else if (!l.isEmpty()) t = l.get(0);
-        if (t == null) return failed("NO_TREE_SEEN", "no tree in the crew's memory near here (or all are taken by others): look_around, or go_to somewhere else");
+        if (t == null) return failed("NO_TREE_SEEN", "no tree in the crew's memory near here that a walk gets to (or all are taken by others): look_around, or go_to somewhere else");
         int y = t[1];   // down to the trunk's foot (it stands on what the eyes see there)
         while (y > t[1] - 12 && (w.getBlock(t[0], y - 1, t[2]) == Blocks.log || w.getBlock(t[0], y - 1, t[2]) == Blocks.log2)) y--;
         final int[] base = { t[0], y, t[2] };
         c.board.reserve(a, base[0], base[1], base[2]);
-        Skill s = wrap(new TaskBoard.Seq(new Crew.Chop(base[0], base[1], base[2]), new Crew.Collect(base[0] + 0.5, base[1], base[2] + 0.5, 5)),
-                r -> r == Result.NO_PATH ? new String[] { "NO_PATH", "no spot beside the tree at " + base[0] + " " + base[1] + " " + base[2] + " to chop it from" } : null);
+        final int[] trunk = t;
+        if (PILLAR_TOPS && want == null && trunkPlan(a, w, t).equals("pillar")) {   // a top hanging in the air: the whole tree felled, up a pillar of its blocks (taken down after)
+            List<int[]> logs = Fell.tree(w, base[0], base[1], base[2]);
+            if (!logs.isEmpty()) {
+                Skill f = wrap(new TaskBoard.Seq(new Fell(logs), new Crew.Collect(base[0] + 0.5, base[1], base[2] + 0.5, 6)), r -> {
+                    if (r != Result.NO_PATH && r != Result.BLOCKED) return null;
+                    unreached(trunk, w.getTotalWorldTime());
+                    return new String[] { "NO_PATH", "could not get at the logs hanging at " + base[0] + " " + base[1] + " " + base[2] + " even up a pillar" };
+                });
+                f.lease = Budget.ticks(Crew.dist(a, base[0], base[1], base[2]) * 1.5 + 20, logs.size() * 2, 6, 0, 0, 60);
+                f.detail = "a hanging top: up a pillar";
+                return f;
+            }
+        }
+        Skill s = wrap(new TaskBoard.Seq(new Crew.Chop(base[0], base[1], base[2]), new Crew.Collect(base[0] + 0.5, base[1], base[2] + 0.5, 5)), r -> {
+            if (r != Result.NO_PATH) return null;
+            a.walks.failed(Crew.key(trunk[0], trunk[1], trunk[2]), Crew.key((int) Math.floor(a.posX), (int) Math.floor(a.posY), (int) Math.floor(a.posZ)), w.getTotalWorldTime());   // not this one again soon
+            unreached(trunk, w.getTotalWorldTime());   // nor by the others
+            return new String[] { "NO_PATH", "no spot beside the tree at " + base[0] + " " + base[1] + " " + base[2] + " to chop it from" };
+        });
         s.lease = Budget.ticks(Crew.dist(a, base[0], base[1], base[2]) * 1.5 + 8, 7, 0, 0, 0, 40);
         return s;
     }

@@ -372,6 +372,7 @@ public class RlEnv {
         String dangerKind = "";
         List<RlCause.Link> water;
         boolean decided;
+        final RlScore.Fails fails = new RlScore.Fails();
     }
 
     Mine mine(Agent a) {
@@ -500,6 +501,8 @@ public class RlEnv {
         Ground.anchorCell = null;
         Ground.passages.clear();
         Ground.mineWay.clear();
+        MindSkills.crewUnreached.clear();
+        MindSkills.reachCache.clear();
         FogMap.explored.clear();
         DefenseWorld.ring = null;
         DefenseWorld.moat = null;
@@ -682,7 +685,7 @@ public class RlEnv {
                 Map<String, Double> nb = new HashMap<String, Double>();
                 int[] fc = PrimSkills.facing(a);
                 long tm = w.getWorldTime() % 24000;
-                RlNear.facts(nb, PrimSkills.grid(a, w), MathHelper.floor_double(a.posX), fy, MathHelper.floor_double(a.posZ), fc[0], fc[1],
+                RlNear.facts(nb, PrimSkills.grid(a, w), MathHelper.floor_double(a.posX), MathHelper.floor_double(a.boundingBox.minY + 0.1), MathHelper.floor_double(a.posZ), fc[0], fc[1],
                         tm >= 13000 && tm < 23000 || Waves.state().phase == WaveCycle.Phase.WAVE);
                 if (RlSpec.g(nb, "shelter") > 0.5) reward.add(k, "safety.shelter", 1);
             }
@@ -968,6 +971,10 @@ public class RlEnv {
         mm.repeated = m.mind.repeated();
         mm.lastTool = tool;
         String k = id(a);
+        if (mm.last >= 0) {   // (3.1) the memory of failures; the retry's penalty and the change of approach's bonus in a 3.1 episode
+            double[] fr = mm.fails.step(mm.last, "OK".equals(result), result);
+            if (e.space == RlSpec.V2) { e.pay(k, "retry_fail", fr[0], null); e.pay(k, "switch_ok", fr[1], null); }
+        }
         if (!"OK".equals(result)) e.pay(k, "skill_fail", 1, null);
         else if (effect(tool, before, after)) e.pay(k, "skill_ok", 1, null);   // an OK with nothing measurable to show pays nothing (wait, look_around)
         if (before != null && after != null && (tool.equals("craft") || tool.equals("smelt"))) {
@@ -1367,7 +1374,7 @@ public class RlEnv {
 
     /** the facts contract 3.1 added (round the agent: RlNear) */
     static boolean only31(String k) {
-        return k.startsWith("nb_") || k.equals("walls_around") || k.equals("enclosed") || k.equals("shelter") || k.equals("pillar_ok");
+        return k.startsWith("nb_") || k.startsWith("fail_run_") || k.startsWith("fail_recent_") || k.startsWith("lastfail_") || k.equals("trees_reachable") || k.equals("walls_around") || k.equals("enclosed") || k.equals("shelter") || k.equals("pillar_ok");
     }
 
     /**
@@ -1431,7 +1438,9 @@ public class RlEnv {
         List<int[]> trees = MindSkills.trunks(c, a, w, 40, true);
         put(r, "trees_seen", trees.size());
         put(r, "tree_dist", trees.isEmpty() ? 48 : Crew.dist(a, trees.get(0)[0] + 0.5, trees.get(0)[1], trees.get(0)[2] + 0.5));
-        put(r, "trees_free", MindSkills.trunks(c, a, w, 48, false).size());
+        int reach = MindSkills.reachableTrunks(c, a, w, 48).size();   // free, and a walk gets there (not given up)
+        put(r, "trees_free", reach);
+        put(r, "trees_reachable", reach);
         seen(r, c, a, w, "stone", STONE, 32, 32);
         seen(r, c, a, w, "coal", new Block[] { Blocks.coal_ore }, 48, 48);
         seen(r, c, a, w, "iron", new Block[] { Blocks.iron_ore }, 48, 48);
@@ -1543,6 +1552,13 @@ public class RlEnv {
         put(r, "goal_progress", progress);
         put(r, "novel_count", mm.novel);
         put(r, "trip_ores", mm.trip.ores);
+        for (int i = 0; i < RlSpec.ACTIONS.size(); i++) {   // (3.1) the memory of failures
+            int run = mm.fails.run(i);
+            if (run > 0) put(r, "fail_run_" + RlSpec.ACTIONS.get(i).id, run);
+            double rec = mm.fails.recent(i);
+            if (rec > 0) put(r, "fail_recent_" + RlSpec.ACTIONS.get(i).id, rec);
+        }
+        if (!mm.fails.group.isEmpty() && mm.fails.lastFailed >= 0) put(r, "lastfail_" + mm.fails.group, 1);
         // the episode's own measures, when the environment runs
         RlEnv e = running();
         if (e != null) {

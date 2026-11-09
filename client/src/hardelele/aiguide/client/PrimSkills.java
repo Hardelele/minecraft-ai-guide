@@ -30,7 +30,7 @@ final class PrimSkills {
 
     /** a target slot: its cell, or null when there is none now */
     static int[] target(Crew c, Agent a, WorldServer w, String t) {
-        int fx = MathHelper.floor_double(a.posX), fy = MathHelper.floor_double(a.boundingBox.minY), fz = MathHelper.floor_double(a.posZ);
+        int fx = MathHelper.floor_double(a.posX), fy = MathHelper.floor_double(a.boundingBox.minY + 0.1), fz = MathHelper.floor_double(a.posZ);
         double yaw = Math.toRadians(a.rotationYawHead);
         double lx = -Math.sin(yaw), lz = Math.cos(yaw);
         int dx = Math.abs(lx) >= Math.abs(lz) ? (lx > 0 ? 1 : -1) : 0, dz = dx == 0 ? (lz > 0 ? 1 : -1) : 0;
@@ -104,6 +104,7 @@ final class PrimSkills {
                 if (m == Material.water) return RlNear.WATER;
                 if (b == Blocks.bedrock) return RlNear.BEDROCK;
                 if (door(b)) return RlNear.SOLID;
+                if (m == Material.leaves) return RlNear.LEAVES;
                 if (Crew.soft(w, x, y, z) || !m.isSolid()) return RlNear.AIR;
                 return MindSkills.canHarvest(a, b) || b.getBlockHardness(w, x, y, z) >= 0 && m.isToolNotRequired() ? RlNear.SOLID : RlNear.HARD;
             }
@@ -121,7 +122,7 @@ final class PrimSkills {
         int[] fc = facing(a);
         WaveCycle.View wv = Waves.state();
         long time = w.getWorldTime() % 24000;
-        RlNear.facts(r, grid(a, w), MathHelper.floor_double(a.posX), MathHelper.floor_double(a.boundingBox.minY + 0.01), MathHelper.floor_double(a.posZ), fc[0], fc[1],
+        RlNear.facts(r, grid(a, w), MathHelper.floor_double(a.posX), MathHelper.floor_double(a.boundingBox.minY + 0.1), MathHelper.floor_double(a.posZ), fc[0], fc[1],
                 time >= 13000 && time < 23000 || wv.phase == WaveCycle.Phase.WAVE);
         for (String t : RlSpec.TARGETS) {
             int[] p = target(c, a, w, t);
@@ -297,7 +298,7 @@ final class PrimSkills {
     static MindSkills.Skill dig(Crew c, Agent a, WorldServer w, final String d) {
         java.util.Map<String, Double> f = new java.util.HashMap<String, Double>();
         int[] fc = facing(a);
-        final int x = MathHelper.floor_double(a.posX), y = MathHelper.floor_double(a.boundingBox.minY + 0.01), z = MathHelper.floor_double(a.posZ);
+        final int x = MathHelper.floor_double(a.posX), y = MathHelper.floor_double(a.boundingBox.minY + 0.1), z = MathHelper.floor_double(a.posZ);
         RlNear.facts(f, grid(a, w), x, y, z, fc[0], fc[1], false);
         if (f.get("nb_" + d + "_dig") == null || f.get("nb_" + d + "_dig") < 0.5) return MindSkills.failed("NO_SPOT", "nothing to dig at " + d + " (air, bedrock, no tool for it, or over lava or a drop)");
         final java.util.List<int[]> cells = new java.util.ArrayList<int[]>();
@@ -325,7 +326,7 @@ final class PrimSkills {
 
     /** up one block: a jump, a block of the bag put under its feet at the top of it (as a player builds under itself) */
     static MindSkills.Skill pillar(Crew c, Agent a, WorldServer w) {
-        final int x = MathHelper.floor_double(a.posX), y = MathHelper.floor_double(a.boundingBox.minY + 0.01), z = MathHelper.floor_double(a.posZ);
+        final int x = MathHelper.floor_double(a.posX), y = MathHelper.floor_double(a.boundingBox.minY + 0.1), z = MathHelper.floor_double(a.posZ);
         if (!Crew.soft(w, x, y + 2, z)) return MindSkills.failed("BLOCKED", "no room over its head");
         if (Skills.Scaffold.block(a, null) == null) return MindSkills.failed("NO_ITEMS", "no block in the bag to stand on");
         MindSkills.Skill s = new MindSkills.Skill() {

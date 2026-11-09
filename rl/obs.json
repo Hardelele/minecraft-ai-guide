@@ -1,8 +1,8 @@
 {
   "version": 4,
   "contract": "3.1",
-  "hash": "67a26ca97558",
-  "dim": 441,
+  "hash": "962ae7c4c441",
+  "dim": 721,
   "note": "Generated from RlSpec.java (docs/rl/CONTRACT-v2.md). The server sends the scaled vector in this order. div: clip(x/scale, -1, 2); log: log1p(max(x,0))/log1p(scale); bool: 1 if x > 0.5 else 0. A distance to nothing seen is scale (1 scaled).",
   "features": [
     {
@@ -1247,6 +1247,1406 @@
     },
     {
       "name": "shelter",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "trees_reachable",
+      "kind": "div",
+      "scale": 5.0
+    },
+    {
+      "name": "fail_run_noop",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_noop",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_look_around",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_look_around",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_go_to:frontier",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_go_to:frontier",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_chop_tree:near",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_chop_tree:near",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_mine:stone",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_mine:stone",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_mine:coal_ore",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_mine:coal_ore",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_mine:iron_ore",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_mine:iron_ore",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:planks",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:planks",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:stick",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:stick",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:crafting_table",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:crafting_table",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:wooden_pickaxe",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:wooden_pickaxe",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:stone_pickaxe",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:stone_pickaxe",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:iron_pickaxe",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:iron_pickaxe",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:wooden_sword",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:wooden_sword",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:stone_sword",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:stone_sword",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:iron_sword",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:iron_sword",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:furnace",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:furnace",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:torch",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:torch",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:chest",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:chest",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_smelt:iron_ingot",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_smelt:iron_ingot",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_smelt:food",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_smelt:food",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:crafting_table",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:crafting_table",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:furnace",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:furnace",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:chest",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:chest",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_build_wall:ring",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_build_wall:ring",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_repair_wall:nearest",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_repair_wall:nearest",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_dig_moat:ring",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_dig_moat:ring",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_light_area:base",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_light_area:base",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_equip:best",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_equip:best",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_take_post:auto",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_take_post:auto",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_hold_line:post",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_hold_line:post",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_retreat:home",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_retreat:home",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_eat:best",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_eat:best",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_hunt:near",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_hunt:near",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_put:chest_all",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_put:chest_all",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_take:chest_food",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_take:chest_food",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_go_to:base",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_go_to:base",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_wait:5",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_wait:5",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_descend:mine",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_descend:mine",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_ascend:surface",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_ascend:surface",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_tunnel:branch",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_tunnel:branch",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_mine:gold_ore",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_mine:gold_ore",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_mine:redstone_ore",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_mine:redstone_ore",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_mine:diamond_ore",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_mine:diamond_ore",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_mine:obsidian",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_mine:obsidian",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_mine:gravel",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_mine:gravel",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_smelt:gold_ingot",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_smelt:gold_ingot",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:diamond_pickaxe",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:diamond_pickaxe",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:diamond_sword",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:diamond_sword",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:bow",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:bow",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:arrow",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:arrow",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:bucket",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:bucket",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:flint_and_steel",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:flint_and_steel",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft_armor:leather",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft_armor:leather",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft_armor:golden",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft_armor:golden",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft_armor:iron",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft_armor:iron",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft_armor:diamond",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft_armor:diamond",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_shoot:post",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_shoot:post",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_build_gate:door",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_build_gate:door",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_close:gate",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_close:gate",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:wooden_hoe",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:wooden_hoe",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:stone_hoe",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:stone_hoe",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:bread",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:bread",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:wooden_door",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:wooden_door",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:fence",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:fence",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:fence_gate",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:fence_gate",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_till:farm",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_till:farm",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_plant:wheat",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_plant:wheat",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_harvest:farm",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_harvest:farm",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_gather:seeds",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_gather:seeds",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_gather:saplings",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_gather:saplings",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_gather:sugar_cane",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_gather:sugar_cane",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_plant:sapling",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_plant:sapling",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_build_pen:pasture",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_build_pen:pasture",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_lure:pen",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_lure:pen",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_breed:pen",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_breed:pen",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_slaughter:pen",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_slaughter:pen",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:paper",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:paper",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:book",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:book",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:bookshelf",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:bookshelf",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_craft:enchanting_table",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_craft:enchanting_table",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:enchanting_table",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:enchanting_table",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:bookshelf",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:bookshelf",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_enchant:best",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_enchant:best",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:block@front",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:block@front",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:block@below",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:block@below",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:block@front_down",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:block@front_down",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:block@hole",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:block@hole",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:block@moat",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:block@moat",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:block@mob",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:block@mob",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:water@front",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:water@front",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:water@below",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:water@below",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:water@front_down",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:water@front_down",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:water@hole",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:water@hole",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:water@moat",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:water@moat",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:water@mob",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:water@mob",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:lava@front",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:lava@front",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:lava@below",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:lava@below",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:lava@front_down",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:lava@front_down",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:lava@hole",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:lava@hole",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:lava@moat",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:lava@moat",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:lava@mob",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:lava@mob",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:torch@front",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:torch@front",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:torch@below",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:torch@below",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:torch@front_down",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:torch@front_down",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:torch@hole",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:torch@hole",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:torch@moat",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:torch@moat",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:torch@mob",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:torch@mob",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_use:bucket@front",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_use:bucket@front",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_use:bucket@below",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_use:bucket@below",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_use:bucket@front_down",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_use:bucket@front_down",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_use:bucket@hole",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_use:bucket@hole",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_use:bucket@moat",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_use:bucket@moat",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_use:bucket@mob",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_use:bucket@mob",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_use:fire@front",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_use:fire@front",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_use:fire@below",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_use:fire@below",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_use:fire@front_down",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_use:fire@front_down",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_use:fire@hole",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_use:fire@hole",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_use:fire@moat",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_use:fire@moat",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_use:fire@mob",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_use:fire@mob",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_attack@mob",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_attack@mob",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_attack@animal",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_attack@animal",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_open@front",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_open@front",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_open@gate",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_open@gate",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_dig@below",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_dig@below",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_dig@front",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_dig@front",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_dig@front_down",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_dig@front_down",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_dig@left",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_dig@left",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_dig@right",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_dig@right",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_dig@back",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_dig@back",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_dig@above",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_dig@above",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:block@left",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:block@left",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:block@right",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:block@right",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:block@back",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:block@back",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_place:block@above",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_place:block@above",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "fail_run_pillar:up",
+      "kind": "div",
+      "scale": 4.0
+    },
+    {
+      "name": "fail_recent_pillar:up",
+      "kind": "div",
+      "scale": 1.0
+    },
+    {
+      "name": "lastfail_no_path",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "lastfail_no_spot",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "lastfail_not_visible",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "lastfail_no_items",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "lastfail_no_tool",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "lastfail_occupied",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "lastfail_other",
       "kind": "bool",
       "scale": 1.0
     },

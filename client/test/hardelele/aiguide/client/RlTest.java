@@ -42,6 +42,8 @@ public final class RlTest {
         causes();
         body();
         near();
+        reach();
+        fails();
         System.out.println("RlTest " + (bad == 0 ? "PASS" : "FAIL") + " (" + passed + " checks, " + bad + " failed)");
         if (bad > 0) System.exit(1);
     }
@@ -289,6 +291,60 @@ public final class RlTest {
         sl.progress("1", 100);
         check(!sl.check("1", 150) && sl.check("1", 160), "progress starts the window again");
         check(RlScore.progress("mine") && RlScore.progress("goal") && !RlScore.progress("time") && !RlScore.progress("skill_fail"), "what counts as progress");
+    }
+
+    /** the choices by what is reached: trees a walk gets to (the others remembered), a cell to fall back to, a stuck walk */
+    static void reach() {
+        java.util.List<int[]> trees = new java.util.ArrayList<int[]>();
+        for (int i = 0; i < 8; i++) trees.add(new int[] { i, 64, 0 });
+        final java.util.Set<Integer> walled = new java.util.HashSet<Integer>(java.util.Arrays.asList(0, 1, 2));   // the three nearest: behind a ravine
+        final java.util.Set<Integer> given = new java.util.HashSet<Integer>();
+        java.util.List<int[]> un = new java.util.ArrayList<int[]>();
+        java.util.List<int[]> ok = Reach.reachable(trees, p -> !given.contains(p[0]), p -> !walled.contains(p[0]), 5, un);
+        check(ok.size() == 2 && ok.get(0)[0] == 3 && un.size() == 3, "the trees a walk gets to, the nearest first; the walled ones noted: " + ok.size() + " " + un.size());
+        for (int[] p : un) given.add(p[0]);   // remembered as given up (Walks)
+        ok = Reach.reachable(trees, p -> !given.contains(p[0]), p -> !walled.contains(p[0]), 5, null);
+        check(ok.size() == 5 && ok.get(0)[0] == 3, "the next time the unreached are not looked at: five others checked");
+        check(Reach.reachable(trees, p -> true, p -> false, 5, null).isEmpty(), "none reached: no tree (the mask says so, chop is not chosen)");
+        // falling back from a mob at x 0: the house first if reached, else away; nowhere: null (hit back)
+        java.util.List<int[]> house = new java.util.ArrayList<int[]>();
+        house.add(new int[] { 20, 64, 0 });
+        check(Reach.fallBack(5, 64, 0, 0, 0, house, p -> true)[0] == 20, "the house when a path goes there");
+        int[] away = Reach.fallBack(5, 64, 0, 0, 0, house, p -> p[0] != 20);
+        check(away != null && away[0] >= 10, "else straight away from the mob: " + (away == null ? null : away[0]));
+        int[] side = Reach.fallBack(5, 64, 0, 0, 0, house, p -> p[0] < 10 && Math.abs(p[2]) >= 3);
+        check(side != null && Math.abs(side[2]) >= 3, "a wall behind: aside");
+        check(Reach.fallBack(5, 64, 0, 0, 0, house, p -> false) == null, "nowhere reached: null (it hits back, not stands 10 s under the blows)");
+        Reach.Progress pr = new Reach.Progress(40);
+        boolean stuck = false;
+        for (int t = 0; t < 30; t++) stuck |= pr.stuck(10 - t * 0.2);
+        check(!stuck, "a walk that gets nearer is not stuck");
+        for (int t = 0; t < 45; t++) stuck |= pr.stuck(4.0);
+        check(stuck, "40 ticks without getting nearer: stuck, the walk ends");
+        // a hanging top: its lowest log at y 66, the ground round it at 63 (stand height 64): no spot beside it
+        int[] round = { 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, -1 };
+        check(Reach.trunkPlan(66, round, true).equals("pillar") && Reach.trunkPlan(66, round, false).equals("skip"), "a hanging top: up a pillar with blocks, else skipped");
+        check(Reach.trunkPlan(64, round, false).equals("chop") && Reach.trunkPlan(65, round, false).equals("chop"), "a trunk on the ground (or one up): chopped from beside it");
+    }
+
+    /** (3.1) the memory of failures: a run of the same action, the window, the reason's group; the retry's penalty grows, another way pays */
+    static void fails() {
+        RlScore.Fails f = new RlScore.Fails();
+        int chop = RlSpec.index("chop_tree:near"), dig = RlSpec.index("dig@front");
+        double[] s1 = f.step(chop, false, "NO_PATH"), s2 = f.step(chop, false, "NO_PATH"), s3 = f.step(chop, false, "NO_PATH");
+        check(s1[0] == 0 && s2[0] == 1 && s3[0] == 2 && f.run(chop) == 3, "the retry's penalty grows: 0, 1, 2 (the first failure is skill_fail only)");
+        check(f.group.equals("no_path") && Math.abs(f.recent(chop) - 3.0 / RlSpec.FAIL_WINDOW) < 1e-9, "the last failure's group, the window's share");
+        double[] s4 = f.step(dig, true, "OK");
+        check(s4[1] == 1 && f.run(chop) == 3, "a success by another action: a change of approach (the other's run stays)");
+        check(f.step(dig, true, "OK")[1] == 0, "no bonus without a failure before");
+        f.step(chop, false, "NO_PATH");
+        check(f.step(chop, true, "OK")[1] == 0 && f.run(chop) == 0, "the same action succeeding at last: no change of approach, its run over");
+        for (int i = 0; i < 30; i++) f.step(dig, true, "OK");
+        check(f.recent(chop) == 0, "the window forgets");
+        check(RlSpec.failGroup("NO_TOOL").equals("no_tool") && RlSpec.failGroup("OCCUPIED").equals("occupied") && RlSpec.failGroup("NOT_VISIBLE").equals("not_visible")
+                && RlSpec.failGroup("NO_SPOT").equals("no_spot") && RlSpec.failGroup("MISSING").equals("no_items") && RlSpec.failGroup("OK").isEmpty(), "the reasons' groups");
+        RlReward rw = new RlReward(RlSpec.rewardDefaults(), RlSpec.scenario("wood"));
+        check(Math.abs(rw.add("1", "retry_fail", 2) + 0.06) < 1e-9 && Math.abs(rw.add("1", "switch_ok", 1) - 0.05) < 1e-9, "their weights, components of their own");
     }
 
     /** a world of cells for RlNear: solid at the cells given, else air (a mob where asked) */
