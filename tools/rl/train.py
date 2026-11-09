@@ -402,7 +402,8 @@ def main():
                     if ev.get("type") == "reward" and ev.get("chain"):
                         ev_by[int(ev["agent"])].append({"key": ev["key"], "points": float(ev["points"]),
                                                         "t": ev.get("ticks", inf0.get("ticks", 0)) / 20.0,
-                                                        "causes": [int(c["decision_id"]) for c in ev["chain"] if "decision_id" in c]})
+                                                        "causes": [int(c["decision_id"]) for c in ev["chain"]
+                                                                   if "decision_id" in c and c.get("via") != "step"]})   # step: no cause traced
                     elif ev.get("type") == "novel_effect" and ev.get("first_ever"):
                         stats["discoveries"] += 1
                 for ag, evl in ev_by.items():   # to the transition the event happened in: the agent's running one
