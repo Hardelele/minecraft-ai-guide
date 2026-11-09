@@ -1221,7 +1221,7 @@ class SimEnv:
                         take = min(p, left)
                         left -= take
                         self.ledger("food_renew", take)
-                        causes.append(did)
+                        causes.append({"decision_id": did, "agent": ag, "tick": 0, "kind": "plant:wheat", "via": "item:wheat"})
                         if p - take <= 1e-9:
                             self.ren_food.pop(0)
                         else:
