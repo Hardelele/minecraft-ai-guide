@@ -47,6 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import achievements as ACH  # noqa: E402
+import sim_near as NEAR  # noqa: E402
 import spec  # noqa: E402
 from spec import ACTIONS, IDX, RECIPES, SCEN, WEIGHTS  # noqa: E402
 
@@ -54,6 +55,7 @@ RING, MOAT, POSTS = 64, 80, 4      # a ring of radius 8, height 2 (cells), its m
 CAL = json.loads((spec.ROOT / "rl" / "sim-calibration.json").read_text(encoding="utf-8"))
 SK = CAL["skills"]
 V2 = spec.VERSION >= 2
+V31 = "pillar:up" in IDX   # contract 3.1: digging and building round itself, the memory of failures (sim_near)
 _C = json.loads((spec.RL / "reward.json").read_text(encoding="utf-8")).get("constants", {})
 STALL_S = float(_C.get("stall_s", 60))
 GROW = float(_C.get("grow", 1))             # the environment grows the crew's crops, saplings and young this much faster
@@ -124,6 +126,12 @@ SIM_SCEN = {
                          health=20, time=1000, waves=None, weights={**_ZERO, "mine.diamond": 1.0}, pass_diamonds=2, pond=True,
                          lava_risk=0.08, rich=True),
 }
+if V31:
+    # a night out with no wall and no weapon, mobs about: hurt outside, safe shut in (walls at the feet and the head,
+    # a roof: dug down two and a block over the head, or blocks round and one down); alive with health >= 10 passes
+    SIM_SCEN["night:shelter"] = dict(goal="none", item="", per=1, seconds=240, kit={"cobblestone": 8}, health=20, time=14000,
+                                     waves=None, weights={**_ZERO, "damage": -0.03, "skill_fail": -0.01, "retry_fail": -0.03,
+                                                          "switch_ok": 0.05}, night=3, pass_alive=10)
 for _s in SIM_SCEN.values():
     _s.setdefault("hunger", False)
     _s.setdefault("xp", 0)
@@ -132,8 +140,32 @@ for _s in SIM_SCEN.values():
 ALL_SCEN = {**SCEN, **SIM_SCEN}
 
 
+SK31 = {"dig": {"fail_fresh": 0.05, "sticky": 0.0, "dur_ok": 1.5, "dur_fail": 1.0},
+        "put": {"fail_fresh": 0.08, "sticky": 0.0, "dur_ok": 0.8, "dur_fail": 0.8},
+        "pillar": {"fail_fresh": 0.1, "sticky": 0.0, "dur_ok": 1.2, "dur_fail": 1.0}}
+PUT31 = ("place:block@left", "place:block@right", "place:block@back", "place:block@above")
+# what keeps the agent where it is (its cells round it stay); any other skill takes it elsewhere
+LOCAL = ("look_around", "wait:5", "pillar:up", "attack@mob", "equip:best", "eat:best") + PUT31
+LOCAL_PRE = ("dig@", "craft:", "craft_armor:", "place:block@front", "place:block@below", "place:torch@front", "place:torch@below",
+             "place:water@front", "place:water@below", "place:lava@front", "place:lava@below", "use:bucket@front", "use:bucket@below",
+             "use:fire@front", "use:fire@below")
+# the scenarios where a hanging tree may be the only wood near the start (3.1: "not reachable this way")
+HANG_SCEN = ("wood", "pickaxe", "sword", "food", "armor", "bow", "fortify", "farm", "pasture", "achievements")
+DITCH_SCEN = ("farm", "pasture", "mine_trip", "iron", "diamond", "fortify", "waves:easy", "waves:normal", "waves:long", "achievements", "food")
+
+
+def local(name: str) -> bool:
+    return name in LOCAL or name.startswith(LOCAL_PRE)
+
+
 def sk(name: str) -> dict:
     """the calibration's entry of a skill (rl/sim-calibration.json)"""
+    if name.startswith("dig@"):
+        return SK31["dig"]
+    if name in PUT31:
+        return SK31["put"]
+    if name == "pillar:up":
+        return SK31["pillar"]
     if "@" in name and not name.startswith("attack"):
         return SK["place_at"]
     if name.startswith("mine:"):
@@ -192,6 +224,11 @@ class Agent:
         self.phi = 0.0
         self.track: dict[str, float] = {}
         self.progress_t = 0.0
+        self.near: NEAR.Near | None = None   # 3.1: the cells round it while it stays (None: made when asked)
+        self.fails = NEAR.Fails()
+        self.ditch = False       # 3.1: a ditch with no way over between it and the base (go home: NO_PATH)
+        self.lava_front = False  # 3.1: lava in the tunnel's floor before the ore (mine an ore: NO_PATH)
+        self.pit_fails = 0       # walks out of a pit two deep that failed (the escape reflex after three)
 
     def n(self, k):
         return self.bag.get(k, 0)
@@ -243,7 +280,7 @@ class SimEnv:
     _did = 0   # decision ids: unique in a process
 
     def __init__(self, seed: int = 0, shaping: float = 0.0, weights: dict | None = None, noise: bool = True,
-                 curiosity: float = -1.0):
+                 curiosity: float = -1.0, obstacles: float = 1.0, force: str | None = None):
         """noise=False: the calibration's failures off (no fresh or sticky failures, no tables out of reach, no empty
         chops): the mechanics alone, for the tests; curiosity: curiosity.novel's weight (-1: the contract's)"""
         self.noise = noise
@@ -253,6 +290,9 @@ class SimEnv:
         self.curiosity = curiosity
         self.journal: set[str] = set()   # the kinds of link x effect ever met (the discoveries' journal)
         self.scenario = "wood"
+        self.changed = True
+        self.obstacles = obstacles   # 3.1: the chances of the situations "not reachable this way" times this
+        self.force = force           # 3.1: one of them always: "hang", "ditch", "lava" (play.py's checks)
 
     # ---- the episode ------------------------------------------------------------------------------------
     def reset(self, scenario: str = "wood", seed: int | None = None, crew: int = 1, target: str | None = None):
@@ -353,6 +393,16 @@ class SimEnv:
         self.lava_pool = bool(self.sc.get("lava_pool"))
         self.moat_liquid: tuple[str, dict] | None = None             # water or lava in the moat, and who poured it
         self.chains: dict[tuple, list] = {}   # (agent, cause decision, what it was) -> [time, effect counts]
+        # 3.1: a hanging tree by the start (its lowest log 2-3 over the ground, no cell beside it to stand: chop_tree
+        # does not take it): its logs' heights; the way to its wood is to pillar up and dig at it, or to go further
+        self.hang: dict | None = None
+        p_hang = 1.0 if self.force == "hang" else 0.35 * self.obstacles
+        if V31 and self.noise and scenario in HANG_SCEN and r.random() < p_hang:
+            h = r.choice([2, 3])
+            self.hang = {"cells": set(range(h, h + r.randint(4, 6))), "got": 0}
+            self.trees_hidden = r.randint(4, 10)   # the forest further off: from the frontier
+        self.ob = {"hang_logs": 0, "ditch_met": 0, "ditch_bridged": 0, "lava_met": 0, "lava_passed": 0, "shelter_s": 0.0,
+                   "switch_ok": 0, "retry_fail": 0, "pit_stuck": 0}
         self.done = False
         self.reason = ""
         # the renewable's ledger (RlScore.Sustain): food points and logs from the farm, the pen, planted trees
@@ -554,10 +604,68 @@ class SimEnv:
             x["small_" + item] = int(ok and small)
         for m in ARMOR_MAT:
             x["armor_craftable_" + m] = int(a.armor_piece(m) is not None)
+        if V31:
+            self.raw31(a, x)
         for n, _, sc in DISTS:   # the contract: the distance to what is not there is its scale
             if n not in x:
                 x[n] = sc
         return x
+
+    # ---- 3.1: the cells round the agent, the memory of failures ---------------------------------------------
+    def near(self, a: Agent) -> NEAR.Near:
+        """its cells round it (made when it came here): the ground or a tunnel, the hanging tree at the start, lava
+        before the ore, a ditch on the way home"""
+        if a.near is not None:
+            a.near.pick = a.tier("pickaxe")
+            return a.near
+        r = self.rng
+        nr = NEAR.Near("tunnel" if a.depth else "surface", a.tier("pickaxe"))
+        if a.depth:
+            if a.lava_front:
+                nr.set((0, -1, 1), NEAR.LAVA)
+                nr.set((0, -1, 2), NEAR.LAVA)
+        elif self.hang and self.hang["cells"] and a.dist < 6:
+            for y in self.hang["cells"]:
+                nr.set((0, y, 1), NEAR.SOLID, "log")
+        elif a.ditch:
+            for y in (-1, -2):
+                nr.set((0, y, 1), NEAR.AIR)
+        elif r.random() < 0.3:   # a block in front (a hill's side, a stone)
+            nr.set((0, 0, 1), NEAR.SOLID, "dirt")
+        a.near = nr
+        return nr
+
+    def night_or_wave(self) -> bool:
+        return 13000 <= self.sc["time"] < 23000 or self.phase == "wave"
+
+    def sheltered(self, a: Agent) -> bool:
+        return V31 and a.near is not None and a.depth == 0 and a.near.enclosed()
+
+    def raw31(self, a: Agent, x: dict):
+        nr = self.near(a)
+        nr.mobs.clear()
+        e = (self.enemies if self.phase == "wave" else 0) + (self.sc.get("night", 0) + self.t / 60 if self.sc.get("night") else 0)
+        out = not (self.ring and a.dist < 8) and a.depth == 0
+        if e > 0 and out and self.rng.random() < min(0.6, 0.1 * e):   # a mob at its side
+            d = self.rng.choice(NEAR.SIDES)
+            c = nr.cell(d)
+            if nr.at(c) == NEAR.AIR:
+                nr.mobs.add(c)
+        nr.facts(x, self.night_or_wave())
+        x["trees_reachable"] = x.get("trees_free", 0)
+        if self.hang and self.hang["cells"] and a.dist < 12 and a.depth == 0:
+            x["trees_seen"] = x.get("trees_seen", 0) + 1   # seen, not free: no cell beside it to stand
+            if x.get("trees_free", 0) <= 0:
+                x["tree_dist"] = 1.5
+        # the primitives' front slots as the cells are
+        for tg in ("front", "below", "front_down"):
+            c = nr.cell(tg)
+            k = nr.at(c)
+            x["tgt_%s_free" % tg] = int(k == NEAR.AIR)
+            x["tgt_%s_lava" % tg] = int(k == NEAR.LAVA)
+            if k == NEAR.LAVA:
+                x["tgt_%s_lava_src" % tg] = 1
+        a.fails.facts(x, ACTIONS)
 
     def next_ach(self, a: Agent) -> str | None:
         """the achievement track's target: the shallowest available one the environment gives"""
@@ -626,6 +734,8 @@ class SimEnv:
         """the policy side's success: the goal, or for a waves run WAVES_PASS waves cleared"""
         if "pass_kills" in self.sc:
             return self.kills >= self.sc["pass_kills"] * len(self.agents)
+        if "pass_alive" in self.sc:
+            return self.reason != "noop" and self.t >= self.sc["seconds"] - 1 and all(a.alive and a.health >= self.sc["pass_alive"] for a in self.agents)
         if "pass_diamonds" in self.sc:
             return self.crew("diamond") >= self.sc["pass_diamonds"] * len(self.agents)
         if self.sc["goal"] == "none":
@@ -835,6 +945,8 @@ class SimEnv:
             ok, reason = False, {"chop_tree": "NO_PATH", "hunt": "TIMEOUT"}.get(kind, "BLOCKED" if kind.startswith("mine") else "NO_PATH")
             if r.random() < c.get("sticky", 0.0):
                 a.stuck[kind] = True
+        if V31 and ok:
+            ok, reason = self.blocked31(a, name)
         far = a.dist
         dur = self.dur(name, ok)
         if ok:   # the skill's own time where the calibration's mean hides a dependence
@@ -880,6 +992,23 @@ class SimEnv:
         a.pending = (act, ok, reason, self.t)
         a.free_at = self.t + dur
 
+    def blocked31(self, a: Agent, name: str) -> tuple[bool, str]:
+        """3.1: a skill that cannot get there this way: out of a pit two deep (the escape reflex frees it after three
+        tries), home over a ditch with no way across, an ore behind lava in the tunnel's floor"""
+        nr = a.near
+        if nr is not None and not local(name) and nr.pit() >= 2:
+            a.pit_fails += 1
+            self.ob["pit_stuck"] += 1
+            if a.pit_fails >= 3:   # Reflexes' escape: it digs steps out (its time)
+                a.pit_fails = 0
+                a.near = None
+            return False, "NO_PATH"
+        if a.ditch and name in ("go_to:base", "retreat:home", "take_post:auto", "hold_line:post"):
+            return False, "NO_PATH"
+        if a.lava_front and name.startswith("mine:") and name not in ("mine:stone", "mine:gravel"):
+            return False, "NO_PATH"
+        return True, ""
+
     def finish(self, a: Agent):
         act, ok, reason, began = a.pending
         a.pending = None
@@ -892,10 +1021,45 @@ class SimEnv:
                 ok, reason = False, res
         if name in MOVES or name.startswith("place:"):
             a.stuck.clear()
+        if V31 and not local(name) and (ok or name in MOVES):
+            self.moved31(a, name, ok)
         result = "OK" if ok else reason
         self.ended(a, act, result, self.t - began, name)
 
+    def moved31(self, a: Agent, name: str, ok: bool):
+        """it went elsewhere: new cells round it (off a pillar: a fall); a ditch on the way home, lava in a tunnel"""
+        r = self.rng
+        nr = a.near
+        if nr is not None and nr.y >= 4 and a.alive:   # down from a pillar of four or more: a fall
+            hp = float(nr.y - 3)
+            a.health -= hp
+            self.give(a, "damage", hp)
+        a.near = None
+        a.pit_fails = 0
+        if not ok:
+            return
+        p_ditch = 1.0 if self.force == "ditch" else 0.2 * self.obstacles
+        if name == "go_to:frontier" and self.noise and self.scenario in DITCH_SCEN and not a.ditch and r.random() < p_ditch:
+            a.ditch = True
+            self.ob["ditch_met"] += 1
+        elif name in ("go_to:base", "retreat:home"):
+            a.ditch = False
+        p_lava = 1.0 if self.force == "lava" else 0.25 * self.obstacles
+        if name in ("descend:mine", "tunnel:branch") and self.noise and not a.lava_front and r.random() < p_lava:
+            a.lava_front = True
+            self.ob["lava_met"] += 1
+        elif name == "ascend:surface":
+            a.lava_front = False
+
     def ended(self, a: Agent, act: int, result: str, secs: float, name: str = ""):
+        if V31:   # the memory of failures; retry_fail for the k-th failure in a row, switch_ok for another way that worked
+            rf, so = a.fails.step(act, result == "OK", result)
+            if rf:
+                self.give(a, "retry_fail", rf)
+                self.ob["retry_fail"] += 1
+            if so:
+                self.give(a, "switch_ok", so)
+                self.ob["switch_ok"] += 1
         out = spec.outcome(result)
         if out != "ok" and a.last == act and a.outcome == out:
             a.repeated += 1
@@ -945,9 +1109,68 @@ class SimEnv:
         elif self.wall >= RING - self.bad - 2 and self.wall > 0:
             self.wall -= 1
 
+    def effect31(self, a: Agent, name: str) -> str | None:
+        """3.1's primitives on the cells round it; None: not one of them (the v3 effect follows)"""
+        nr = self.near(a)
+        if name.startswith("dig@"):
+            d = name[4:]
+            lava_side = a.lava_front and d in ("left", "right")
+            got = nr.dig(d)
+            if got is None:
+                return "NOT_VISIBLE"
+            if not got:
+                self.changed = False
+            for it in got:
+                if it == "log":
+                    self.got(a, "log", 1, "gathered.log")
+                    self.achieve(a, "mineWood")
+                    self.ob["hang_logs"] += 1
+                    if self.hang:
+                        self.hang["got"] += 1
+                elif it == "cobblestone":
+                    self.got(a, "cobblestone", 1, "gathered.cobblestone")
+                else:
+                    self.got(a, it, 1)
+            if self.hang and a.depth == 0 and a.dist < 6:   # the hanging tree's logs left
+                self.hang["cells"] = {y for y in self.hang["cells"] if nr.at((0, y, 1)) == NEAR.SOLID}
+            if lava_side and got:   # a way round the lava dug: the ore is reached from the side
+                a.lava_front = False
+                self.ob["lava_passed"] += 1
+            return ""
+        if name in PUT31 or name == "pillar:up" or name in ("place:block@front", "place:block@front_down", "place:block@below"):
+            mat = max(("cobblestone", "planks", "dirt"), key=a.n)
+            if a.n(mat) < 1:
+                return "NO_ITEMS"
+            if name == "pillar:up":
+                ok = nr.pillar()
+            else:
+                ok = nr.put(name[name.index("@") + 1:])
+            if not ok:
+                return "NO_SPOT"
+            a.add(mat, -1)
+            if name == "place:block@front_down" and a.ditch:   # a way over the ditch
+                a.ditch = False
+                self.ob["ditch_bridged"] += 1
+            return ""
+        if name == "use:bucket@front_down" and a.lava_front and nr.at(nr.cell("front_down")) == NEAR.LAVA:
+            if a.n("bucket") < 1:
+                return "NO_ITEMS"
+            nr.set(nr.cell("front_down"), NEAR.AIR)
+            a.add("bucket", -1)
+            self.got(a, "lava_bucket", 1)
+            self.made(a, "lava_bucket")
+            a.lava_front = False
+            self.ob["lava_passed"] += 1
+            return ""
+        return None
+
     def effect(self, a: Agent, name: str, r: random.Random) -> str:
         """the skill's effects at its end; "" when it went well, else the reason it failed"""
         self.changed = True
+        if V31:
+            res = self.effect31(a, name)
+            if res is not None:
+                return res
         if name == "look_around":
             self.changed = False
             if a.depth:
@@ -1674,6 +1897,17 @@ class SimEnv:
                 if a.health <= 0:
                     self.die(a, out=False)
                 continue
+            if self.sheltered(a) and self.night_or_wave():   # 3.1: shut in, the mobs do not reach it
+                self.ob["shelter_s"] += dt
+                continue
+            if self.sc.get("night") and a.alive:   # the night scenario: mobs about, more with the time
+                m = self.sc["night"] + self.t / 60
+                self.hurt(a, 0.035 * m, dt)
+                if a.held and self.poisson(0.01 * a.held * dt):
+                    self.kills += 1
+                if a.health <= 0:
+                    self.die(a, out=True)
+                continue
             if not wave:
                 continue
             e = max(0.0, self.enemies)
@@ -1813,6 +2047,9 @@ class SimEnv:
                        "clean_waves": self.clean, "novel": self.novel, "repeat_fail": self.repeat_fail, "discoveries": self.discoveries, "kills": self.kills,
                        "spawned": self.spawned, "assigned": dict(self.assigned), "events": self.events,
                        "sustain": [round(self.sus["food_renew"], 2), round(self.sus["food_eaten"], 2)]}
+        if V31:
+            out["info"]["obstacles"] = {k: (round(v, 1) if isinstance(v, float) else v) for k, v in self.ob.items()}
+            out["info"]["obstacles"]["hang"] = int(self.hang is not None)
         self.assigned, self.events = {}, []
         if self.done:
             got = set()

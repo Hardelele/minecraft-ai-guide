@@ -40,8 +40,9 @@ STAGES = [s for s in ORDER if s in spec.SCENARIOS] + [s for s in spec.SCENARIOS 
 # the crew of a scenario's episode: drawn from these sizes
 CREW = {"wood": (1, 2), "pickaxe": (1, 2), "sword": (1, 2), "iron": (1, 2), "food": (1, 2), "fortify": (1, 3),
         "waves:easy": (2, 4), "waves:normal": (2, 4), "waves:long": (2, 4), "armor": (1, 2), "bow": (1, 2), "mine_trip": (1, 2),
-        "diamond": (1, 2), "farm": (1, 2), "pasture": (1, 2), "enchant": (1, 2), "achievements": (1, 3)}
+        "diamond": (1, 2), "farm": (1, 2), "pasture": (1, 2), "enchant": (1, 2), "achievements": (1, 3), "night:shelter": (1, 2)}
 COMPONENTS = sorted({k.split(".")[0] for k in spec.WEIGHTS} | {"shaping", "novel_effect"})
+OB_KEYS = ("hang", "hang_logs", "ditch_met", "ditch_bridged", "lava_met", "lava_passed", "shelter_s", "switch_ok", "retry_fail", "pit_stuck")
 SNAP = {1, 2, 3, 5, 10, 15, 20, 30, 50, 75, 100, 150, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000}
 
 
@@ -338,6 +339,9 @@ def main():
         ent_coef = a.ent + (a.ent_end - a.ent) * frac
         n_done = 0
         stats = collections.Counter()
+        if a.env == "sim" and "pillar:up" in spec.IDX:   # 3.1: the same columns every epoch
+            for k_ in OB_KEYS:
+                stats["ob_" + k_] += 0
         eps = []
         infer_s = 0.0
         sim_s = 0.0
@@ -470,6 +474,8 @@ def main():
                     stats["novel"] += int(inf.get("novel", 0))
                     stats["kills"] += int(inf.get("kills", 0))
                     stats["repeat_fail"] += int(inf.get("repeat_fail", 0))
+                    for k_, v_ in (inf.get("obstacles") or {}).items():   # 3.1: the ways round, the shelter, the memory of failures
+                        stats["ob_" + k_] += v_
                     stats["spawned"] += int(inf.get("spawned", 0))
                     if inf.get("chains") and stats["chains"] < 20:   # for the film: what a thing made did later
                         stats["chains"] += 1
@@ -612,6 +618,7 @@ def main():
                "novel": stats["novel"], "novel_total": novel_total, "discoveries": stats["discoveries"],
                "kills": stats["kills"], "spawned": stats["spawned"],
                "repeat_fail_per_ep": round(stats["repeat_fail"] / max(1, len(eps)), 2),
+               **{k_: round(v_ / max(1, len(eps)), 3) for k_, v_ in sorted(stats.items()) if k_.startswith("ob_")},
                "credit_linked": cst.get("linked", ""), "credit_moved": round(cst.get("moved", 0.0), 3) if cst else "",
                "credit_lag_s": round(cst.get("lag_s", 0.0), 1) if cst else "",
                "rudder_loss": round(rud.loss, 4) if rud is not None else ""}

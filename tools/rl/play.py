@@ -21,15 +21,16 @@ from policy import Policy  # noqa: E402
 from sim_env import SimEnv  # noqa: E402
 
 
-def run(pol, scenario, n, seed=100, greedy=False, trace=False, rand=False, crew=0, url=None):
+def run(pol, scenario, n, seed=100, greedy=False, trace=False, rand=False, crew=0, url=None, force=None, temperature=0.0):
     if url:   # rl/env's real environment (one server)
         from real_env import RealEnv
         env = RealEnv(url)
     else:
-        env = SimEnv(seed)
+        env = SimEnv(seed, force=force)
     rng = np.random.default_rng(seed)
     out = collections.Counter()
     t_succ, rets, chosen, reasons = [], [], collections.Counter(), collections.Counter()
+    ob = collections.Counter()   # 3.1: the situations "not reachable this way" met and got round, the shelter, the memory of failures
     for ep in range(n):
         o = env.reset(scenario, seed * 1000 + ep, crew=crew or 1 + ep % (4 if scenario.startswith("waves") else 2))
         ret, nd = 0.0, 0
@@ -40,6 +41,10 @@ def run(pol, scenario, n, seed=100, greedy=False, trace=False, rand=False, crew=
             m = torch.tensor(np.asarray(o["mask"], bool))
             if rand:
                 a = [int(rng.choice(np.flatnonzero(mm[1:]) + 1)) for mm in o["mask"]]
+            elif temperature > 0:   # as the game chooses (PolicyMind: softmax(logits / T))
+                with torch.no_grad():
+                    lg = Policy.masked(pol.logits(obs) / temperature, m)
+                    a = torch.distributions.Categorical(logits=lg).sample().tolist()
             else:
                 with torch.no_grad():
                     a = pol.act(obs, m, greedy=greedy)[0].tolist()
@@ -61,6 +66,9 @@ def run(pol, scenario, n, seed=100, greedy=False, trace=False, rand=False, crew=
         if o["info"]["success"]:
             t_succ.append(o["info"]["t"])
         out["game_s"] += o["info"]["t"]
+        for k, v in (o["info"].get("obstacles") or {}).items():
+            ob[k] += v
+        out["repeat_fail"] += o["info"].get("repeat_fail", 0)
         rets.append(ret)
         if trace:
             print("done:", o["info"])
@@ -69,6 +77,9 @@ def run(pol, scenario, n, seed=100, greedy=False, trace=False, rand=False, crew=
     return {"scenario": scenario, "episodes": n, "success": out["success"] / n, "noop_end": out["noop_end"] / n,
             "return": float(np.mean(rets)), "cleared": out["cleared"] / n, "game_s": out["game_s"] / n,
             "done_reasons": dict(reasons), "game_s_to_success": float(np.mean(t_succ)) if t_succ else None,
+            "repeat_fail": out["repeat_fail"] / n, "obstacles": {k: round(v / n, 3) for k, v in ob.items()},
+            "new_actions": {k: v for k, v in chosen.items() if k.startswith(("dig@", "pillar:", "place:block@left", "place:block@right",
+                                                                                "place:block@back", "place:block@above"))},
             "top_actions": chosen.most_common(8)}
 
 
@@ -88,7 +99,10 @@ if __name__ == "__main__":
     ap.add_argument("--crew", type=int, default=0)
     ap.add_argument("--url", help="host:port of an rl/env server instead of the simulator")
     ap.add_argument("--seed", type=int, default=100)
+    ap.add_argument("--force", choices=["hang", "ditch", "lava"], help="3.1: this situation in every episode")
+    ap.add_argument("--temperature", type=float, default=0.0, help="draw from softmax(logits / T) as the game does (0: the policy's own sampling)")
     a = ap.parse_args()
     pol = None if a.random else load(a.weights)
     for sc in (list(spec.SCEN) if a.scenario == "all" else a.scenario.split(",")):
-        print(json.dumps(run(pol, sc, 1 if a.trace else a.n, greedy=a.greedy, trace=a.trace, rand=a.random, crew=a.crew, url=a.url, seed=a.seed), ensure_ascii=False), flush=True)
+        print(json.dumps(run(pol, sc, 1 if a.trace else a.n, greedy=a.greedy, trace=a.trace, rand=a.random, crew=a.crew, url=a.url, seed=a.seed,
+                             force=a.force, temperature=a.temperature), ensure_ascii=False), flush=True)
