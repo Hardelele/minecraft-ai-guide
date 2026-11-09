@@ -1,20 +1,22 @@
-# Контракт среды и обучения v2
+# Контракт среды и обучения v2 (версия файлов 3)
 
-Версия контракта **2**. Несовместима с v1: число и смысл признаков, число выходов политики и награда меняются
-вместе. Источник истины — код: `client/src/hardelele/aiguide/client/RlSpec.java` (действия, правила маски, признаки,
-веса, шкалы, сценарии) и `RlAchievements.java` (дерево достижений). Файлы `rl/actions.json`, `rl/obs.json`,
+ТЗ «развитие v2». Версия контракта **3**: 2 — первая редакция этого документа (коммит 10ab7f0, 82 действия, 322
+признака); 3 — она же с причинной разметкой, отложенной наградой, примитивами и любопытством (раздел 2.1, 3.1).
+Несовместима с v1: число и смысл признаков, число выходов политики и награда меняются вместе. Источник истины — код:
+`client/src/hardelele/aiguide/client/RlSpec.java` (действия, правила маски, признаки, веса, шкалы, сценарии),
+`RlAchievements.java` (дерево достижений), `RlCause.java` (причины). Файлы `rl/actions.json`, `rl/obs.json`,
 `rl/reward.json`, `rl/achievements.json` генерируются из кода (`python tools/rl/gen_spec.py`) и проверяются
-(`gen_spec.py --check`, тест `tools/tests/test_rl_env.py`). Контракт 1 заморожен: `RlSpec1.java` → `rl/v1/*.json`
-(байт в байт прежние файлы, [`CONTRACT.md`](CONTRACT.md)).
+(`gen_spec.py --check`, тесты `tools/tests/test_rl_env.py`, `test_rl_spec2.py`). Контракт 1 заморожен:
+`RlSpec1.java` → `rl/v1/*.json` (байт в байт прежние файлы, [`CONTRACT.md`](CONTRACT.md)).
 
 | файл | версия | хеш | размер |
 |---|---|---|---|
-| `rl/actions.json` | 2 | `c757991e534a` | 82 действия (первые 38 — v1 в том же порядке) |
-| `rl/obs.json` | 2 | `1809e9ced85f` | 322 признака |
-| `rl/reward.json` | 2 | `766b9461e818` (веса + `scenarioScales`) | 44 веса, 8 шкал, 17 сценариев |
-| `rl/achievements.json` | 2 | — | 33 достижения 1.7.10, 18 поддержаны |
+| `rl/actions.json` | 3 | `d0bdaadf0eb3` | 124 действия (первые 38 — v1 в том же порядке) |
+| `rl/obs.json` | 3 | `7821a391980f` | 402 признака |
+| `rl/reward.json` | 3 | `c5c25ba77c8a` (веса + `scenarioScales`) | 45 весов, 9 шкал, 17 сценариев |
+| `rl/achievements.json` | 3 | — | 33 достижения 1.7.10, 18 поддержаны |
 
-Хеш действий v2 считается по id, навыку, аргументам **и правилу маски** (поменять правило — поменять хеш). Хеши
+Хеш действий считается по id, навыку, аргументам **и правилу маски** (поменять правило — поменять хеш). Хеши
 печатает `gen_spec.py`; среда отдаёт их в `info`.
 
 Мозг экипажа — своя RL-политика; DeepSeek остаётся только у гида. Базовый протокол (TCP, JSON-строки, `info`/`reset`/
@@ -23,21 +25,61 @@
 
 ## 1. Версия весов: без молчаливого смешения
 
-`policy.bin` несёт версию в заголовке (`RLP1`, int32 version): 1 — пространства v1 (137 → 38), 2 — v2 (322 → 82).
-`RlSpec.space(net)` принимает сеть, только если версия и размеры совпадают с одним из контрактов; иначе мозг пишет
-`no policy: …` и не решает (ни молча, ни «как получится»). Сеть v1 в игре работает по-прежнему (вектор и маска
-`RlSpec1` из тех же сырых фактов; её действие k — действие k v2). Среда (`-Daiguide.rl=<порт>`) отдаёт только v2.
+`policy.bin` несёт версию в заголовке (`RLP1`, int32 version): 1 — пространства v1 (137 → 38), 3 — эти (402 → 124);
+2 — пространства первой редакции (322 → 82), в игре не принимаются. `RlSpec.space(net)` принимает сеть, только если
+версия и размеры совпадают с одним из контрактов; иначе мозг пишет `no policy: …` и не решает. Сеть v1 в игре
+работает по-прежнему (вектор и маска `RlSpec1` из тех же сырых фактов; её действие k — действие k здесь). Среда
+(`-Daiguide.rl=<порт>`) отдаёт только версию 3.
 
 ## 2. Протокол: что добавилось
 
-- `info` → `{"contract":2, "actions":{"version":2,"hash","n":82}, "obs":{"version":2,"hash","dim":322},
-  "reward":{"version":2,"hash"}, "achievements":{"version":2,"n":33,"supported":18}, "scenarios":[…], …}`.
+- `info` → `{"contract":3, "actions":{"version":3,"hash","n":124}, "obs":{"version":3,"hash","dim":402},
+  "reward":{"version":3,"hash"}, "achievements":{"version":3,"n":33,"supported":18}, "scenarios":[…], …}`.
 - `reset` принимает ещё `"target":"<id достижения>"` — цель учебной программы по дереву достижений (признак
   `ach_target_<id>`; на награду не влияет). Без него — нет цели.
-- `step` → в `info` ещё: `events` — список `{"type":"achievement","agent":"1","id":"mineWood","name":"Нарубить дров","ticks":…}`
-  за шаг; при `done` — `measured` (сырые суммы всех ключей награды за эпизод, оплаченных и нет: метрики) и
-  `achievements` (`{агент: [id…]}`).
+- `step` → в `info` ещё: `assigned` — `{агент: decision_id}` решений, принятых по присланным в этом `step`
+  действиям; `events` — события за шаг (раздел 2.1); при `done` — `measured` (сырые суммы всех ключей награды за
+  эпизод, оплаченных и нет: метрики) и `achievements` (`{агент: [id…]}`).
 - Остальное как в v1: игра стоит, пока политика думает; награда агента копится до его следующего решения.
+
+### 2.1. Причины и отложенная награда
+
+Каждое решение агента получает **`decision_id`** — целое, растущее за жизнь сервера (не повторяется между
+эпизодами). Решения политики, рефлексы тела (вода под себя) и начало эпизода (`kind:"spawn"`) — тоже решения.
+Ссылка-причина: `{"decision_id", "agent", "tick", "kind", "via"}`: `kind` — id действия (`craft:stone_sword`,
+`place:lava@moat`, `reflex:water`), `via` — чем решение действовало на следствие: `hit` (удар/выстрел самого
+решения), `block:<id>` (блок, поставленный этим решением, или растёкшийся/разгоревшийся от него: лава, вода, огонь
+наследуют метку источника), `item:<id>` (вещь, сделанная этим решением: скрафченная, переплавленная, наполненное
+ведро — метка в NBT вещи, только у нештабелируемых: инструменты, оружие, броня, вёдра), `step` (шедшее в тот момент
+решение, когда причина не прослежена дальше).
+
+Движок размечает: поставленные и сломанные агентом блоки, жидкости и огонь с наследованием при растекании,
+скрафченные и переплавленные вещи, урон и смерть сущностей (`DamageSource` → атакующий агент / его стрела →
+решение-удар и оружие в руке → его метка; `lava`, `inFire`, `onFire`, утопление → метка блока у сущности, горение
+помнит последнюю метку огня/лавы). Хранилище — в памяти сервера (карта позиция → ссылка, сущность → ссылка),
+очищается при сбросе арены; не более 200 000 меток блоков (старейшие уходят). Взрывы, падение блоков и урон от
+падения не прослеживаются (цепочка — пустая или `step`).
+
+`info.events` — список событий шага:
+
+- `{"type":"reward","agent","key","points","chain":[ссылки…]}` — каждое начисление, кроме `time`, сгруппированное
+  по (агент, ключ, первая ссылка) за шаг. Для событий тела (убийство, урон, смерть, спасение) цепочка — прослеженные
+  причины, ближняя первой (удар → меч, которым ударили → решение, скрафтившее меч); для измеренных изменений шкал —
+  решение, шедшее у агента, и решения, менявшие блоки в эту секунду. Отложенная награда: обучение может отнести
+  `points` к решению `decision_id` из цепочки, а не только к текущему шагу.
+- `{"type":"achievement","agent","id","name","ticks"}`.
+- `{"type":"novel_effect","agent","cause","effect","first_ever","chain","ticks"}` — впервые в эпизоде (и
+  `first_ever` — впервые за жизнь журнала) встретилась связь вида «причина × следствие», например
+  `block:lava` → `mob_killed`, `item:stone_sword` → `mob_killed`, `block:water` → `agent_saved`. Виды следствий:
+  `mob_hurt`, `mob_killed`, `animal_killed`, `agent_hurt`, `agent_killed`, `agent_saved` (агент был в лаве или падал
+  с высоты ≥ 5 и через 3 с жив и не горит). Каждая новая за эпизод связь со следствием не на экипаже (моб, животное,
+  спасение) платит `curiosity.novel` (шкала `curiosity`, включена во всех сценариях).
+- Журнал открытий `discoveries.jsonl` (папка мира `aiguide-rl/`, или `-Daiguide.rl.discoveries=<файл>`): строка на
+  каждую связь, новую за жизнь журнала: `{"what":"block:lava → mob_killed","who","chain","episode","scenario","ticks",
+  "time"}` — для ролика.
+
+`decision_id` в цепочке может принадлежать решению, ответ на которое уже прошёл; `assigned` связывает id с
+действием, которое политика выбрала.
 
 ## 3. Действия — `rl/actions.json`
 
@@ -61,23 +103,23 @@
 | 5 | `mine:coal_ore` | mine (block=coal_ore, count=3) | pick_tier >= 1 и coal_minable > 0 |
 | 6 | `mine:iron_ore` | mine (block=iron_ore, count=3) | pick_tier >= 2 и iron_minable > 0 |
 | 7 | `craft:planks` | craft (item=planks, count=4) | craftable_planks > 0 и (small_planks > 0 или СТОЛ) и bag_planks < 64 |
-| 8 | `craft:stick` | craft (item=stick, count=4) | craftable, 2×2 или СТОЛ, bag_stick < 32 |
-| 9 | `craft:crafting_table` | craft (item=crafting_table) | craftable, 2×2 или СТОЛ, bag_crafting_table <= 0 |
-| 10 | `craft:wooden_pickaxe` | craft (item=wooden_pickaxe) | craftable, СТОЛ, pick_tier < 1 |
-| 11 | `craft:stone_pickaxe` | craft (item=stone_pickaxe) | craftable, СТОЛ, pick_tier < 2 |
-| 12 | `craft:iron_pickaxe` | craft (item=iron_pickaxe) | craftable, СТОЛ, pick_tier < 3 |
-| 13 | `craft:wooden_sword` | craft (item=wooden_sword) | craftable, СТОЛ, sword_tier < 1 |
-| 14 | `craft:stone_sword` | craft (item=stone_sword) | craftable, СТОЛ, sword_tier < 2 |
-| 15 | `craft:iron_sword` | craft (item=iron_sword) | craftable, СТОЛ, sword_tier < 3 |
-| 16 | `craft:furnace` | craft (item=furnace) | craftable, СТОЛ, bag_furnace <= 0 |
-| 17 | `craft:torch` | craft (item=torch, count=4) | craftable, 2×2 или СТОЛ, bag_torch < 32 |
-| 18 | `craft:chest` | craft (item=chest) | craftable, СТОЛ, bag_chest <= 0 и chest_known < 0.5 |
+| 8 | `craft:stick` | craft (item=stick, count=4) | craftable_stick > 0 и (small_stick > 0 или СТОЛ) и bag_stick < 32 |
+| 9 | `craft:crafting_table` | craft (item=crafting_table, count=1) | craftable_crafting_table > 0 и (small_crafting_table > 0 или СТОЛ) и bag_crafting_table <= 0 |
+| 10 | `craft:wooden_pickaxe` | craft (item=wooden_pickaxe, count=1) | craftable_wooden_pickaxe > 0 и (small_wooden_pickaxe > 0 или СТОЛ) и pick_tier < 1 |
+| 11 | `craft:stone_pickaxe` | craft (item=stone_pickaxe, count=1) | craftable_stone_pickaxe > 0 и (small_stone_pickaxe > 0 или СТОЛ) и pick_tier < 2 |
+| 12 | `craft:iron_pickaxe` | craft (item=iron_pickaxe, count=1) | craftable_iron_pickaxe > 0 и (small_iron_pickaxe > 0 или СТОЛ) и pick_tier < 3 |
+| 13 | `craft:wooden_sword` | craft (item=wooden_sword, count=1) | craftable_wooden_sword > 0 и (small_wooden_sword > 0 или СТОЛ) и sword_tier < 1 |
+| 14 | `craft:stone_sword` | craft (item=stone_sword, count=1) | craftable_stone_sword > 0 и (small_stone_sword > 0 или СТОЛ) и sword_tier < 2 |
+| 15 | `craft:iron_sword` | craft (item=iron_sword, count=1) | craftable_iron_sword > 0 и (small_iron_sword > 0 или СТОЛ) и sword_tier < 3 |
+| 16 | `craft:furnace` | craft (item=furnace, count=1) | craftable_furnace > 0 и (small_furnace > 0 или СТОЛ) и bag_furnace <= 0 |
+| 17 | `craft:torch` | craft (item=torch, count=4) | craftable_torch > 0 и (small_torch > 0 или СТОЛ) и bag_torch < 32 |
+| 18 | `craft:chest` | craft (item=chest, count=1) | craftable_chest > 0 и (small_chest > 0 или СТОЛ) и bag_chest <= 0 и chest_known < 0.5 |
 | 19 | `smelt:iron_ingot` | smelt (item=iron_ingot, count=3) | bag_iron_ore > 0 и fuel > 0 и ПЕЧЬ |
 | 20 | `smelt:food` | smelt (item=food, count=4) | bag_food_raw > 0 и fuel > 0 и ПЕЧЬ |
 | 21 | `place:crafting_table` | place (item=crafting_table, at=near) | bag_crafting_table > 0 и (table_known < 0.5 или table_dist > 6) |
 | 22 | `place:furnace` | place (item=furnace, at=near) | bag_furnace > 0 и (furnace_known < 0.5 или furnace_dist > 6) |
 | 23 | `place:chest` | place (item=chest, at=near) | bag_chest > 0 и chest_known < 0.5 |
-| 24 | `build_wall:ring` | build_wall (around base, height 2, any) | base_known > 0.5 и underground < 0.5 и wall_blocks > 0 и (ring_planned < 0.5 или wall_frac < 1) |
+| 24 | `build_wall:ring` | build_wall (shape=around base, height=2, material=any) | base_known > 0.5 и underground < 0.5 и wall_blocks > 0 и (ring_planned < 0.5 или wall_frac < 1) |
 | 25 | `repair_wall:nearest` | repair_wall | underground < 0.5 и ring_planned > 0.5 и holes > 0 и wall_blocks > 0 |
 | 26 | `dig_moat:ring` | dig_moat (depth=1) | underground < 0.5 и ring_planned > 0.5 и moat_frac < 1 |
 | 27 | `light_area:base` | light_area (radius=12) | bag_torch > 0 и light_spots > 0 |
@@ -87,7 +129,7 @@
 | 31 | `retreat:home` | retreat (where=home) | base_known > 0.5 и base_dist > 3 |
 | 32 | `eat:best` | eat | food_items > 0 и (health < max_health или (hunger_on > 0.5 и food_level < 20)) |
 | 33 | `hunt:near` | hunt (at=near) | animals_seen > 0 |
-| 34 | `put:chest_all` | put (chest=crew, item=all) | chest_known > 0.5 и bag_stackables > 0 |
+| 34 | `put:chest_all` | put (chest=crew, item=all, count=1728) | chest_known > 0.5 и bag_stackables > 0 |
 | 35 | `take:chest_food` | take (chest=crew, item=food, count=8) | chest_known > 0.5 и chest_food > 0 |
 | 36 | `go_to:base` | go_to (target=base) | base_known > 0.5 и base_dist > 4 |
 | 37 | `wait:5` | wait (seconds=5) | всегда |
@@ -100,44 +142,83 @@
 | 44 | `mine:obsidian` | mine (block=obsidian, count=4) | pick_tier >= 4 и obsidian_minable > 0 |
 | 45 | `mine:gravel` | mine (block=gravel, count=4) | gravel_minable > 0 |
 | 46 | `smelt:gold_ingot` | smelt (item=gold_ingot, count=3) | bag_gold_ore > 0 и fuel > 0 и ПЕЧЬ |
-| 47 | `craft:diamond_pickaxe` | craft (item=diamond_pickaxe) | craftable, СТОЛ, pick_tier < 4 |
-| 48 | `craft:diamond_sword` | craft (item=diamond_sword) | craftable, СТОЛ, sword_tier < 4 |
-| 49 | `craft:bow` | craft (item=bow) | craftable, СТОЛ, bag_bow <= 0 |
-| 50 | `craft:arrow` | craft (item=arrow, count=4) | craftable, СТОЛ, bag_arrow < 64 |
-| 51 | `craft_armor:leather` | craft_armor (material=leather) | armor_craftable_leather > 0 и СТОЛ |
-| 52 | `craft_armor:golden` | craft_armor (material=golden) | armor_craftable_golden > 0 и СТОЛ |
-| 53 | `craft_armor:iron` | craft_armor (material=iron) | armor_craftable_iron > 0 и СТОЛ |
-| 54 | `craft_armor:diamond` | craft_armor (material=diamond) | armor_craftable_diamond > 0 и СТОЛ |
-| 55 | `shoot:post` | shoot (seconds=30) | bag_bow > 0 и bag_arrow > 0 и enemies_visible > 0 |
-| 56 | `build_gate:door` | build_gate | underground < 0.5 и ring_planned > 0.5 и bag_wooden_door > 0 и door_placed < 0.5 |
-| 57 | `close:gate` | close_gate | door_placed > 0.5 и gate_open > 0.5 |
-| 58 | `craft:wooden_hoe` | craft (item=wooden_hoe) | craftable, СТОЛ, hoes <= 0 |
-| 59 | `craft:stone_hoe` | craft (item=stone_hoe) | craftable, СТОЛ, hoe_tier < 2 |
-| 60 | `craft:bread` | craft (item=bread) | craftable, СТОЛ, bag_bread < 64 |
-| 61 | `craft:wooden_door` | craft (item=wooden_door) | craftable, СТОЛ, bag_wooden_door <= 0 и door_placed < 0.5 |
-| 62 | `craft:fence` | craft (item=fence, count=2) | craftable, СТОЛ, bag_fence < 32 и pen_built < 0.5 |
-| 63 | `craft:fence_gate` | craft (item=fence_gate) | craftable, СТОЛ, bag_fence_gate <= 0 и pen_built < 0.5 |
-| 64 | `till:farm` | till (count=8) | base_known > 0.5 и underground < 0.5 и hoes > 0 и farm_plots < 16 и till_spots > 0 |
-| 65 | `plant:wheat` | plant (what=wheat, count=8) | bag_wheat_seeds > 0 и farm_empty > 0 |
-| 66 | `harvest:farm` | harvest (count=16, replant=yes) | farm_ripe > 0 |
-| 67 | `gather:seeds` | gather (what=seeds, count=8) | underground < 0.5 и grass_seen > 0 |
-| 68 | `gather:saplings` | gather (what=saplings, count=16) | underground < 0.5 и leaves_seen > 0 |
-| 69 | `gather:sugar_cane` | gather (what=sugar_cane, count=6) | underground < 0.5 и cane_seen > 0 |
-| 70 | `plant:sapling` | plant (what=sapling, count=4) | underground < 0.5 и bag_sapling > 0 и sapling_spots > 0 |
-| 71 | `build_pen:pasture` | build_pen | base_known > 0.5 и underground < 0.5 и bag_fence >= 15 и bag_fence_gate > 0 и pen_built < 0.5 |
-| 72 | `lure:pen` | lure | pen_built > 0.5 и lure_food > 0 и animals_seen > 0 и pen_animals < 8 |
-| 73 | `breed:pen` | breed | pen_pairs > 0 |
-| 74 | `slaughter:pen` | slaughter | pen_adults >= 3 |
-| 75 | `craft:paper` | craft (item=paper, count=3) | craftable, СТОЛ, bag_paper < 32 |
-| 76 | `craft:book` | craft (item=book) | craftable, 2×2 или СТОЛ, bag_book < 16 |
-| 77 | `craft:bookshelf` | craft (item=bookshelf) | craftable, СТОЛ, shelves_total < 15 |
-| 78 | `craft:enchanting_table` | craft (item=enchanting_table) | craftable, СТОЛ, bag_enchanting_table <= 0 и ench_table_known < 0.5 |
-| 79 | `place:enchanting_table` | place (item=enchanting_table, at=base) | base_known > 0.5 и underground < 0.5 и bag_enchanting_table > 0 и ench_table_known < 0.5 |
-| 80 | `place:bookshelf` | place_shelf | bag_bookshelf > 0 и ench_table_known > 0.5 и ench_table_dist <= 16 и shelf_spots > 0 |
-| 81 | `enchant:best` | enchant | ench_table_known > 0.5 и ench_table_dist <= 24 и xp_level >= 1 и enchantable > 0 |
+| 47 | `craft:diamond_pickaxe` | craft (item=diamond_pickaxe, count=1) | craftable_diamond_pickaxe > 0 и (small_diamond_pickaxe > 0 или СТОЛ) и pick_tier < 4 |
+| 48 | `craft:diamond_sword` | craft (item=diamond_sword, count=1) | craftable_diamond_sword > 0 и (small_diamond_sword > 0 или СТОЛ) и sword_tier < 4 |
+| 49 | `craft:bow` | craft (item=bow, count=1) | craftable_bow > 0 и (small_bow > 0 или СТОЛ) и bag_bow <= 0 |
+| 50 | `craft:arrow` | craft (item=arrow, count=4) | craftable_arrow > 0 и (small_arrow > 0 или СТОЛ) и bag_arrow < 64 |
+| 51 | `craft:bucket` | craft (item=bucket, count=1) | craftable_bucket > 0 и (small_bucket > 0 или СТОЛ) и buckets < 2 |
+| 52 | `craft:flint_and_steel` | craft (item=flint_and_steel, count=1) | craftable_flint_and_steel > 0 и (small_flint_and_steel > 0 или СТОЛ) и bag_flint_and_steel <= 0 |
+| 53 | `craft_armor:leather` | craft_armor (material=leather) | armor_craftable_leather > 0 и СТОЛ |
+| 54 | `craft_armor:golden` | craft_armor (material=golden) | armor_craftable_golden > 0 и СТОЛ |
+| 55 | `craft_armor:iron` | craft_armor (material=iron) | armor_craftable_iron > 0 и СТОЛ |
+| 56 | `craft_armor:diamond` | craft_armor (material=diamond) | armor_craftable_diamond > 0 и СТОЛ |
+| 57 | `shoot:post` | shoot (seconds=30) | bag_bow > 0 и bag_arrow > 0 и enemies_visible > 0 |
+| 58 | `build_gate:door` | build_gate | underground < 0.5 и ring_planned > 0.5 и bag_wooden_door > 0 и door_placed < 0.5 |
+| 59 | `close:gate` | close_gate | door_placed > 0.5 и gate_open > 0.5 |
+| 60 | `craft:wooden_hoe` | craft (item=wooden_hoe, count=1) | craftable_wooden_hoe > 0 и (small_wooden_hoe > 0 или СТОЛ) и hoes <= 0 |
+| 61 | `craft:stone_hoe` | craft (item=stone_hoe, count=1) | craftable_stone_hoe > 0 и (small_stone_hoe > 0 или СТОЛ) и hoe_tier < 2 |
+| 62 | `craft:bread` | craft (item=bread, count=1) | craftable_bread > 0 и (small_bread > 0 или СТОЛ) и bag_bread < 64 |
+| 63 | `craft:wooden_door` | craft (item=wooden_door, count=1) | craftable_wooden_door > 0 и (small_wooden_door > 0 или СТОЛ) и bag_wooden_door <= 0 и door_placed < 0.5 |
+| 64 | `craft:fence` | craft (item=fence, count=2) | craftable_fence > 0 и (small_fence > 0 или СТОЛ) и bag_fence < 32 и pen_built < 0.5 |
+| 65 | `craft:fence_gate` | craft (item=fence_gate, count=1) | craftable_fence_gate > 0 и (small_fence_gate > 0 или СТОЛ) и bag_fence_gate <= 0 и pen_built < 0.5 |
+| 66 | `till:farm` | till (count=8) | base_known > 0.5 и underground < 0.5 и hoes > 0 и farm_plots < 16 и till_spots > 0 |
+| 67 | `plant:wheat` | plant (what=wheat, count=8) | bag_wheat_seeds > 0 и farm_empty > 0 |
+| 68 | `harvest:farm` | harvest (count=16, replant=yes) | farm_ripe > 0 |
+| 69 | `gather:seeds` | gather (what=seeds, count=8) | underground < 0.5 и grass_seen > 0 |
+| 70 | `gather:saplings` | gather (what=saplings, count=16) | underground < 0.5 и leaves_seen > 0 |
+| 71 | `gather:sugar_cane` | gather (what=sugar_cane, count=6) | underground < 0.5 и cane_seen > 0 |
+| 72 | `plant:sapling` | plant (what=sapling, count=4) | underground < 0.5 и bag_sapling > 0 и sapling_spots > 0 |
+| 73 | `build_pen:pasture` | build_pen | base_known > 0.5 и underground < 0.5 и bag_fence >= 15 и bag_fence_gate > 0 и pen_built < 0.5 |
+| 74 | `lure:pen` | lure | pen_built > 0.5 и lure_food > 0 и animals_seen > 0 и pen_animals < 8 |
+| 75 | `breed:pen` | breed | pen_pairs > 0 |
+| 76 | `slaughter:pen` | slaughter | pen_adults >= 3 |
+| 77 | `craft:paper` | craft (item=paper, count=3) | craftable_paper > 0 и (small_paper > 0 или СТОЛ) и bag_paper < 32 |
+| 78 | `craft:book` | craft (item=book, count=1) | craftable_book > 0 и (small_book > 0 или СТОЛ) и bag_book < 16 |
+| 79 | `craft:bookshelf` | craft (item=bookshelf, count=1) | craftable_bookshelf > 0 и (small_bookshelf > 0 или СТОЛ) и shelves_total < 15 |
+| 80 | `craft:enchanting_table` | craft (item=enchanting_table, count=1) | craftable_enchanting_table > 0 и (small_enchanting_table > 0 или СТОЛ) и bag_enchanting_table <= 0 и ench_table_known < 0.5 |
+| 81 | `place:enchanting_table` | place (item=enchanting_table, at=base) | base_known > 0.5 и underground < 0.5 и bag_enchanting_table > 0 и ench_table_known < 0.5 |
+| 82 | `place:bookshelf` | place_shelf | bag_bookshelf > 0 и ench_table_known > 0.5 и ench_table_dist <= 16 и shelf_spots > 0 |
+| 83 | `enchant:best` | enchant | ench_table_known > 0.5 и ench_table_dist <= 24 и xp_level >= 1 и enchantable > 0 |
+| 84–89 | 84 `place:block@front`, 85 `place:block@below`, 86 `place:block@front_down`, 87 `place:block@hole`, 88 `place:block@moat`, 89 `place:block@mob` | place_at (slot=block, target=<t>) | slot_block > 0 и tgt_<t> > 0.5 и tgt_<t>_free > 0.5 |
+| 90–95 | 90 `place:water@front`, 91 `place:water@below`, 92 `place:water@front_down`, 93 `place:water@hole`, 94 `place:water@moat`, 95 `place:water@mob` | place_at (slot=water, target=<t>) | bag_water_bucket > 0 и tgt_<t> > 0.5 и tgt_<t>_free > 0.5 |
+| 96–101 | 96 `place:lava@front`, 97 `place:lava@below`, 98 `place:lava@front_down`, 99 `place:lava@hole`, 100 `place:lava@moat`, 101 `place:lava@mob` | place_at (slot=lava, target=<t>) | bag_lava_bucket > 0 и tgt_<t> > 0.5 и tgt_<t>_free > 0.5 |
+| 102–107 | 102 `place:torch@front`, 103 `place:torch@below`, 104 `place:torch@front_down`, 105 `place:torch@hole`, 106 `place:torch@moat`, 107 `place:torch@mob` | place_at (slot=torch, target=<t>) | bag_torch > 0 и tgt_<t> > 0.5 и tgt_<t>_free > 0.5 |
+| 108–113 | 108 `use:bucket@front`, 109 `use:bucket@below`, 110 `use:bucket@front_down`, 111 `use:bucket@hole`, 112 `use:bucket@moat`, 113 `use:bucket@mob` | use_at (slot=bucket, target=<t>) | bag_bucket > 0 и tgt_<t> > 0.5 и (tgt_<t>_water_src > 0.5 или tgt_<t>_lava_src > 0.5) |
+| 114–119 | 114 `use:fire@front`, 115 `use:fire@below`, 116 `use:fire@front_down`, 117 `use:fire@hole`, 118 `use:fire@moat`, 119 `use:fire@mob` | use_at (slot=fire, target=<t>) | bag_flint_and_steel > 0 и tgt_<t> > 0.5 и tgt_<t>_free > 0.5 |
+| 120 | `attack@mob` | attack (target=mob) | tgt_mob > 0.5 |
+| 121 | `attack@animal` | attack (target=animal) | animals_seen > 0 |
+| 122 | `open@front` | open (target=front) | tgt_front_door > 0.5 |
+| 123 | `open@gate` | open (target=gate) | door_placed > 0.5 |
 
 СТОЛ = `(table_known > 0.5 и table_dist <= 24) или bag_crafting_table > 0`; ПЕЧЬ — то же для печи. «craftable»
 у крафта — `craftable_<item> > 0 и (small_<item> > 0 или СТОЛ)`; точная формула каждого — в `actions.json`.
+
+### 3.1. Примитивы второго уровня
+
+Кроме навыков-макросов — примитивы: вещь из **слота руки** — в одну из **целей-слотов**. Пространство остаётся
+дискретным: цели — фиксированный набор, каждая в наблюдении (`tgt_<цель>` есть, `_dist`, `_free` — можно поставить:
+воздух, трава, текучая жидкость; `_water`, `_lava` — там вода/лава; в фактах маски `_water_src`, `_lava_src` —
+источник).
+
+| цель | клетка |
+|---|---|
+| `front` | перед агентом на уровне ног (по взгляду, 1 блок) |
+| `below` | своя клетка (ноги) |
+| `front_down` | перед агентом на блок ниже ног (яма, склон) |
+| `hole` | ближайшая дыра кольцевой стены (в 24) |
+| `moat` | ближайшая клетка рва (в 24) |
+| `mob` | клетка ног ближайшего видимого врага (в 16) |
+
+Слоты руки для `place`: `block` (строительный блок сумки: булыжник, доски, земля…; факт `slot_block`), `water`
+(ведро воды), `lava` (ведро лавы), `torch`. Для `use`: `bucket` — пустым ведром набрать источник воды или лавы в
+цели; `fire` — огниво: поджечь цель. `attack@mob` — ударить ближайшего видимого врага (подойти и бить до 10 с или
+смерти), `attack@animal` — животное. `open@front` — открыть/закрыть дверь или калитку перед собой, `open@gate` —
+дверь ворот. Агент подходит к цели, ставит как игрок (рука, взгляд на грань, досягаемость); ведро после выливания
+становится пустым, наполненное — ведром воды/лавы с меткой решения.
+
+Рефлекс тела (без политики, кроме решения): агент с ведром воды, упавший в лаву или падающий с высоты ≥ 5 (за 2
+блока до земли), ставит воду под себя (`reflex:water`, отдельное решение с `decision_id`); вода остаётся, ведро —
+пустое.
 
 Что делают новые навыки (честно, телом агента, как игрок):
 
@@ -174,13 +255,13 @@
 
 Группы признаков (имена — в `obs.json`):
 
-- сценарий one-hot (17), включённые шкалы `scale_<шкала>` (8), номер агента (4), размер экипажа;
+- сценарий one-hot (17), включённые шкалы `scale_<шкала>` (9), номер агента (4), размер экипажа;
 - тело: здоровье, броня, тиры (в руке, оружие, кирка), «дома»; **голод**: `hunger_on`, `food_level` (0–20),
   `saturation`; **опыт**: `xp_level`, `xp_progress`;
 - время суток (sin/cos, ночь, до сумерек);
-- сумка: 49 счётчиков (`log` до 64) — v1 + руды, слитки, алмаз, редстоун, обсидиан, гравий, кремень, нить, перо, кожа,
+- сумка: 53 счётчика (`log` до 64) — v1 + руды, слитки, алмаз, редстоун, обсидиан, гравий, кремень, нить, перо, кожа,
   лук, стрелы, алмазные инструменты, `bag_armor` (ненадетая броня), мотыги, семена, пшеница, хлеб, саженцы, тростник,
-  бумага, книги, полки, стол зачарований, дверь, забор, калитка; всего предметов;
+  бумага, книги, полки, стол зачарований, дверь, забор, калитка, ведро (пустое, с водой, с лавой), огниво; всего предметов;
 - увиденное (память экипажа): деревья, камень, уголь, железо, золото, редстоун, алмаз (сколько и ближайшее),
   обсидиан, гравий, трава, листва, тростник, животные;
 - станции: верстак, печь, сундук, база, еда в сундуке; стол зачарований (есть, расстояние), полки у стола, свободные
@@ -194,10 +275,13 @@
 - волны (v1) + `enemies_visible` (видимые враги в 32);
 - периметр (v1) + `mobs_inside`, `breaches` (прорывов в этой волне), `mob_seconds` (за эпизод), `clean_waves`;
 - восполняемость за окно 120 с: `food_renew`, `food_eaten`, `wood_renew`, `wood_used`; `sources` (0–3); `stock_value`;
+- цели примитивов (раздел 3.1): по 6 целям `tgt_<цель>`, `_dist`, `_free`, `_water`, `_lava`; дверь перед собой
+  `tgt_front_door`; строительных блоков в руке `slot_block`;
+- причины: `novel_count` — новых за эпизод связей «причина × следствие»;
 - союзники (v1);
 - достижения: `ach_<id>` (получено этим агентом) и `ach_target_<id>` (цель из `reset.target`) для 18 поддержанных,
   `ach_count`, `ach_available` (сколько можно получить следующими по дереву);
-- прошлый шаг: итог по группам, повторы, длительность, one-hot действия (82);
+- прошлый шаг: итог по группам, повторы, длительность, one-hot действия (124);
 - эпизод: доля времени, прогресс цели, `stall` (секунд без измеренного прогресса).
 
 Факты только для маски (в `info.raw`, не в векторе): `frontier`, `trees_free`, `<руда>_minable` (coal, iron, gold,
@@ -205,7 +289,8 @@ redstone, diamond, obsidian, gravel: увиденное в 32 по горизо�
 `craftable_<item>`, `small_<item>`, `armor_craftable_<материал>`, `fuel`, `wall_blocks`, `light_spots`, `can_equip`
 (лучшее оружие не в руке или броня лучше надетой), `post_dist`, `low_health`, `max_health`, `food_items` (съедобное в
 сумке), `bag_stackables`, `sword_tier`, `hoe_tier`, `shelves_total` (полки у стола + в сумке), `lure_food`
-(пшеница + семена), `enchantable` (вещь без чар, которую можно зачаровать).
+(пшеница + семена), `enchantable` (вещь без чар, которую можно зачаровать), `buckets` (вёдер всех видов),
+`tgt_<цель>_water_src`, `tgt_<цель>_lava_src` (источник жидкости в цели).
 
 Тиры (`pick_tier`, `sword_tier`, `hoe_tier`): дерево 1, камень 2, железо 3, алмаз 4; золотая кирка — 1 (её уровень
 добычи деревянный: железо она не берёт).
@@ -247,8 +332,9 @@ redstone, diamond, obsidian, gravel: увиденное в 32 по горизо�
 | `sustain` | `sustain.food` 0.05, `sustain.wood` 0.05, `sustain.source` 0.5 | **восполняемость**: R — очки еды из возобновляемого (пшеница с грядок экипажа: хлеб 5 очков на 3 пшеницы; мясо животных, рождённых в загоне), E — очки съеденной еды (любой); платится рост min(R, E): ферма кормит — платится, урожай, который никто не ест, — нет; то же для брёвен с посаженных экипажем деревьев против использованных брёвен; `source` — изменение числа источников: засеянные грядки (из 16) + пара взрослых в загоне + растущие посаженные деревья (из 4), 0..3 (вытоптал и не пересадил — минус) |
 | `stock` | `stock.value` 0.5 | Σ min(n, cap)/cap · ценность по запасу экипажа (сумки + сундук): брёвна 32·1, булыжник 128·1, уголь 32·1, железо 24·2, еда (очки) 60·2, факелы 32·0.5, стрелы 32·0.5, семена 16·0.3, пшеница 32·0.5. С потолком: копить сверх — ноль |
 | `achievement` | `achievement.new` 0.3, `achievement.depth` 0.05 | новое достижение агента: 0.3 + 0.05 × глубина в дереве |
+| `curiosity` | `curiosity.novel` 0.2 | связь «причина × следствие», новая в эпизоде, со следствием на мобе, животном или спасением агента (раздел 2.1) |
 
-`scenarioScales` в `reward.json` — множители по сценарию: шкала, не названная у сценария, = 0. Ключ вида
+`scenarioScales` в `reward.json` — множители по сценарию: шкала, не названная у сценария, = 0; `curiosity` включена у всех (1). Ключ вида
 `equipment.pickaxe` у сценария — множитель только этой части (`pickaxe` платит за кирку, но не за меч и броню; `sword` —
 за меч). Так `wood` не платит за ров и стену, `pickaxe` — за стену и деревянный меч.
 
@@ -338,6 +424,9 @@ redstone, diamond, obsidian, gravel: увиденное в 32 по горизо�
   действий переставлены — обязан разойтись; версия, порядок, первые 38 действий — v1, хеши;
 - `RlTest`: маска, шкалы на числах — `wait` без прибыли не платит, `pickaxe` не платит за ров и стену, ферма без
   съеденного урожая не платит, прорыв моба — штраф, чистая волна — бонус, поход в шахту без руды не засчитан;
+- `RlTest`: причины на синтетических событиях — лава агента растеклась и убила зомби (цепочка до `place:lava@moat`),
+  меч, скрафченный решением, → удар → убийство (цепочка удар → крафт), ведро воды → рефлекс → спасение; новизна
+  связи — один раз за эпизод;
 - в игре — живой прогон сценариев (`tools/rl/rl_smoke.py`).
 
 Симулятор v2 калибруется по логам реальной среды v1 и затем v2; в отчёте — число эпизодов, причины отказа,
@@ -350,10 +439,16 @@ redstone, diamond, obsidian, gravel: увиденное в 32 по горизо�
   увиденного.
 - Агенты не игроки: опыт, достижения, приманивание кормом и голод повторены у себя по коду 1.7.10 (выше).
 - Рост растений и детёнышей экипажа ускорен (раздел 8).
+- Причины не прослеживаются через взрывы, падающие блоки, урон от падения и предметы, переложенные из штабелей
+  (метка — только у нештабелируемых вещей).
 
 ## Журнал изменений
 
 - 1 — исходные 38 действий, 137 признаков, общая награда за навыки.
+- 3 — причинная разметка движка и цепочки причин у событий награды (`decision_id`, `assigned`, `events`),
+  примитивы второго уровня (`place:<слот>@<цель>`, `use:bucket|fire@<цель>`, `attack@`, `open@`; крафт ведра и огнива),
+  42 + 2 действия (124), признаки целей и `novel_count` (402), шкала `curiosity`, журнал открытий, рефлекс «вода под
+  себя».
 - 2 — 82 действия (шахта по горизонтам с возвратом, руды, броня, лук и стрельба, ворота, ферма, саженцы, загон,
   зачарование), маска данными в `actions.json`, 322 признака (голод, опыт, шахта, ферма, загон, периметр,
   восполняемость, достижения), награда шкалами по сценариям (изменение измеренного; `skill_ok` только со следом;

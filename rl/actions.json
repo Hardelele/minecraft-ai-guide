@@ -1,7 +1,7 @@
 {
-  "version": 2,
-  "hash": "c757991e534a",
-  "n": 82,
+  "version": 3,
+  "hash": "d0bdaadf0eb3",
+  "n": 124,
   "v1_prefix": 38,
   "note": "Generated from RlSpec.java (docs/rl/CONTRACT-v2.md). The index is the action's number; noop (0) is always allowed and ends the episode with -1. The first 38 are contract 1's in its order. 'mask': the rule of the action's mask over the raw facts (a fact missing is 0): {\"all\":[...]}, {\"any\":[...]}, [fact, op, number or another fact], op one of > >= < <= == !=.",
   "actions": [
@@ -1794,6 +1794,122 @@
       }
     },
     {
+      "id": "craft:bucket",
+      "tool": "craft",
+      "args": {
+        "item": "bucket",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_bucket",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_bucket",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      [
+                        "bag_crafting_table",
+                        ">",
+                        0.0
+                      ]
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "buckets",
+            "<",
+            2.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "craft:flint_and_steel",
+      "tool": "craft",
+      "args": {
+        "item": "flint_and_steel",
+        "count": "1"
+      },
+      "mask": {
+        "all": [
+          {
+            "all": [
+              [
+                "craftable_flint_and_steel",
+                ">",
+                0.0
+              ],
+              {
+                "any": [
+                  [
+                    "small_flint_and_steel",
+                    ">",
+                    0.0
+                  ],
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          [
+                            "table_known",
+                            ">",
+                            0.5
+                          ],
+                          [
+                            "table_dist",
+                            "<=",
+                            24.0
+                          ]
+                        ]
+                      },
+                      [
+                        "bag_crafting_table",
+                        ">",
+                        0.0
+                      ]
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          [
+            "bag_flint_and_steel",
+            "<=",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
       "id": "craft_armor:leather",
       "tool": "craft_armor",
       "args": {
@@ -2975,6 +3091,1080 @@
           ]
         ]
       }
+    },
+    {
+      "id": "place:block@front",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "front"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:block@below",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "below"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_below",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_below_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:block@front_down",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "front_down"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front_down",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_down_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:block@hole",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "hole"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_hole",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_hole_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:block@moat",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "moat"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_moat",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_moat_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:block@mob",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "mob"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_mob",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_mob_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:water@front",
+      "tool": "place_at",
+      "args": {
+        "slot": "water",
+        "target": "front"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_water_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:water@below",
+      "tool": "place_at",
+      "args": {
+        "slot": "water",
+        "target": "below"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_water_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_below",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_below_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:water@front_down",
+      "tool": "place_at",
+      "args": {
+        "slot": "water",
+        "target": "front_down"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_water_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front_down",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_down_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:water@hole",
+      "tool": "place_at",
+      "args": {
+        "slot": "water",
+        "target": "hole"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_water_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_hole",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_hole_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:water@moat",
+      "tool": "place_at",
+      "args": {
+        "slot": "water",
+        "target": "moat"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_water_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_moat",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_moat_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:water@mob",
+      "tool": "place_at",
+      "args": {
+        "slot": "water",
+        "target": "mob"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_water_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_mob",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_mob_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:lava@front",
+      "tool": "place_at",
+      "args": {
+        "slot": "lava",
+        "target": "front"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_lava_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:lava@below",
+      "tool": "place_at",
+      "args": {
+        "slot": "lava",
+        "target": "below"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_lava_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_below",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_below_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:lava@front_down",
+      "tool": "place_at",
+      "args": {
+        "slot": "lava",
+        "target": "front_down"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_lava_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front_down",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_down_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:lava@hole",
+      "tool": "place_at",
+      "args": {
+        "slot": "lava",
+        "target": "hole"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_lava_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_hole",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_hole_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:lava@moat",
+      "tool": "place_at",
+      "args": {
+        "slot": "lava",
+        "target": "moat"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_lava_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_moat",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_moat_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:lava@mob",
+      "tool": "place_at",
+      "args": {
+        "slot": "lava",
+        "target": "mob"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_lava_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_mob",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_mob_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:torch@front",
+      "tool": "place_at",
+      "args": {
+        "slot": "torch",
+        "target": "front"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_torch",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:torch@below",
+      "tool": "place_at",
+      "args": {
+        "slot": "torch",
+        "target": "below"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_torch",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_below",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_below_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:torch@front_down",
+      "tool": "place_at",
+      "args": {
+        "slot": "torch",
+        "target": "front_down"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_torch",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front_down",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_down_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:torch@hole",
+      "tool": "place_at",
+      "args": {
+        "slot": "torch",
+        "target": "hole"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_torch",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_hole",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_hole_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:torch@moat",
+      "tool": "place_at",
+      "args": {
+        "slot": "torch",
+        "target": "moat"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_torch",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_moat",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_moat_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:torch@mob",
+      "tool": "place_at",
+      "args": {
+        "slot": "torch",
+        "target": "mob"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_torch",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_mob",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_mob_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "use:bucket@front",
+      "tool": "use_at",
+      "args": {
+        "slot": "bucket",
+        "target": "front"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              [
+                "tgt_front_water_src",
+                ">",
+                0.5
+              ],
+              [
+                "tgt_front_lava_src",
+                ">",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "use:bucket@below",
+      "tool": "use_at",
+      "args": {
+        "slot": "bucket",
+        "target": "below"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_below",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              [
+                "tgt_below_water_src",
+                ">",
+                0.5
+              ],
+              [
+                "tgt_below_lava_src",
+                ">",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "use:bucket@front_down",
+      "tool": "use_at",
+      "args": {
+        "slot": "bucket",
+        "target": "front_down"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front_down",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              [
+                "tgt_front_down_water_src",
+                ">",
+                0.5
+              ],
+              [
+                "tgt_front_down_lava_src",
+                ">",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "use:bucket@hole",
+      "tool": "use_at",
+      "args": {
+        "slot": "bucket",
+        "target": "hole"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_hole",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              [
+                "tgt_hole_water_src",
+                ">",
+                0.5
+              ],
+              [
+                "tgt_hole_lava_src",
+                ">",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "use:bucket@moat",
+      "tool": "use_at",
+      "args": {
+        "slot": "bucket",
+        "target": "moat"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_moat",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              [
+                "tgt_moat_water_src",
+                ">",
+                0.5
+              ],
+              [
+                "tgt_moat_lava_src",
+                ">",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "use:bucket@mob",
+      "tool": "use_at",
+      "args": {
+        "slot": "bucket",
+        "target": "mob"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_bucket",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_mob",
+            ">",
+            0.5
+          ],
+          {
+            "any": [
+              [
+                "tgt_mob_water_src",
+                ">",
+                0.5
+              ],
+              [
+                "tgt_mob_lava_src",
+                ">",
+                0.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "use:fire@front",
+      "tool": "use_at",
+      "args": {
+        "slot": "fire",
+        "target": "front"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_flint_and_steel",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "use:fire@below",
+      "tool": "use_at",
+      "args": {
+        "slot": "fire",
+        "target": "below"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_flint_and_steel",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_below",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_below_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "use:fire@front_down",
+      "tool": "use_at",
+      "args": {
+        "slot": "fire",
+        "target": "front_down"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_flint_and_steel",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_front_down",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_front_down_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "use:fire@hole",
+      "tool": "use_at",
+      "args": {
+        "slot": "fire",
+        "target": "hole"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_flint_and_steel",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_hole",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_hole_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "use:fire@moat",
+      "tool": "use_at",
+      "args": {
+        "slot": "fire",
+        "target": "moat"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_flint_and_steel",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_moat",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_moat_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "use:fire@mob",
+      "tool": "use_at",
+      "args": {
+        "slot": "fire",
+        "target": "mob"
+      },
+      "mask": {
+        "all": [
+          [
+            "bag_flint_and_steel",
+            ">",
+            0.0
+          ],
+          [
+            "tgt_mob",
+            ">",
+            0.5
+          ],
+          [
+            "tgt_mob_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "attack@mob",
+      "tool": "attack",
+      "args": {
+        "target": "mob"
+      },
+      "mask": [
+        "tgt_mob",
+        ">",
+        0.5
+      ]
+    },
+    {
+      "id": "attack@animal",
+      "tool": "attack",
+      "args": {
+        "target": "animal"
+      },
+      "mask": [
+        "animals_seen",
+        ">",
+        0.0
+      ]
+    },
+    {
+      "id": "open@front",
+      "tool": "open",
+      "args": {
+        "target": "front"
+      },
+      "mask": [
+        "tgt_front_door",
+        ">",
+        0.5
+      ]
+    },
+    {
+      "id": "open@gate",
+      "tool": "open",
+      "args": {
+        "target": "gate"
+      },
+      "mask": [
+        "door_placed",
+        ">",
+        0.5
+      ]
     }
   ]
 }

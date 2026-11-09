@@ -5,6 +5,7 @@ import com.google.gson.JsonParser;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -38,6 +39,7 @@ public final class RlTest {
         scenarios();
         achievements();
         score();
+        causes();
         System.out.println("RlTest " + (bad == 0 ? "PASS" : "FAIL") + " (" + passed + " checks, " + bad + " failed)");
         if (bad > 0) System.exit(1);
     }
@@ -52,7 +54,7 @@ public final class RlTest {
             check(ids.add(a.id), "action id unique: " + a.id);
             if (!a.id.equals("noop")) check(skills.contains(a.tool), "a skill of the minds or the environment: " + a.tool);
         }
-        check(RlSpec.ACTIONS.size() == 82, "82 actions: " + RlSpec.ACTIONS.size());
+        check(RlSpec.ACTIONS.size() == 124, "124 actions: " + RlSpec.ACTIONS.size());
         // contract 1's actions are the first 38, the same (a v1 net's action k is k here)
         check(RlSpec1.ACTIONS.size() == RlSpec.V1_ACTIONS, "contract 1 had 38");
         boolean same = true;
@@ -69,8 +71,8 @@ public final class RlTest {
         check(RlSpec.call(RlSpec.index("craft_armor:iron")).arg("material").equals("iron"), "craft_armor's material");
         check(RlSpec.hash().length() == 12 && !RlSpec.hash().equals(RlSpec1.hash()), "the actions' hash (its rules in it)");
         // the spaces of a net by its version and size: none silently
-        check(RlSpec.space(fake(1, 137, 38)) == RlSpec.V1 && RlSpec.space(fake(2, RlSpec.FEATURES.size(), 82)) == RlSpec.V2, "a net's spaces by its version and size");
-        check(RlSpec.space(fake(2, 137, 38)) == null && RlSpec.space(fake(1, RlSpec.FEATURES.size(), 82)) == null && RlSpec.space(fake(2, 137, 82)) == null,
+        check(RlSpec.space(fake(1, 137, 38)) == RlSpec.V1 && RlSpec.space(fake(3, RlSpec.FEATURES.size(), 124)) == RlSpec.V2, "a net's spaces by its version and size");
+        check(RlSpec.space(fake(3, 137, 38)) == null && RlSpec.space(fake(1, RlSpec.FEATURES.size(), 124)) == null && RlSpec.space(fake(2, RlSpec.FEATURES.size(), 124)) == null,
                 "a net whose version and size disagree is refused");
         check(RlSpec.V1.index("wait:5") == 37 && RlSpec.V1.index("descend:mine") == -1 && RlSpec.V2.index("descend:mine") == 38, "the actions a net of each contract has");
     }
@@ -271,6 +273,50 @@ public final class RlTest {
         sl.progress("1", 100);
         check(!sl.check("1", 150) && sl.check("1", 160), "progress starts the window again");
         check(RlScore.progress("mine") && RlScore.progress("goal") && !RlScore.progress("time") && !RlScore.progress("skill_fail"), "what counts as progress");
+    }
+
+    /** the causes on synthetic events: a lava trap, a sword made then used, a water bucket that saves; the novelty once */
+    static void causes() {
+        RlCause c = new RlCause();
+        // a lava trap: agent 1 pours lava in the moat (decision A), it flows two cells on; a zombie dies in the flow
+        RlCause.Link a = c.decide("1", 100, "place:lava@moat");
+        long src = RlCause.key(10, 63, 5), f1 = RlCause.key(11, 63, 5), f2 = RlCause.key(12, 63, 5), far = RlCause.key(30, 63, 5);
+        c.placed(src, "minecraft:lava", a);
+        c.decide("1", 120, "wait:5");   // its next decision: the lava's mark is still A's
+        c.changed(f1, "minecraft:flowing_lava", new long[] { src, far });
+        c.changed(f2, "minecraft:flowing_lava", new long[] { f1 });
+        c.changed(far, "minecraft:flowing_lava", new long[] { RlCause.key(31, 63, 5) });
+        check(c.at(f2) != null && c.at(f2).id == a.id && c.at(f2).via.equals("block:lava"), "the flow keeps its source's decision: " + (c.at(f2) == null ? null : c.at(f2).json()));
+        check(c.at(far) == null, "lava with no marked neighbour has no cause");
+        List<RlCause.Link> lava = RlCause.chain(c.at(f2));
+        List<Object[]> n1 = c.novel(lava, "mob_killed");
+        check(lava.size() == 1 && lava.get(0).kind.equals("place:lava@moat") && n1.size() == 1 && n1.get(0)[0].equals("block:lava → mob_killed") && (Boolean) n1.get(0)[2],
+                "a zombie dead in the flow: the chain to the pouring, a discovery");
+        check(c.novel(lava, "mob_killed").isEmpty(), "the same link and effect again: nothing new");
+        c.changed(f2, "minecraft:cobblestone", new long[] { f1 });   // lava met water: cobblestone, not the agent's
+        check(c.at(f2) == null, "the block the world made of it has no mark");
+        // a sword: crafted by decision B, used by decision D: the kill's chain is the hit, then the craft
+        RlCause.Link b = c.decide("2", 200, "craft:stone_sword");
+        RlCause.Link d = c.decide("2", 900, "attack@mob");
+        List<RlCause.Link> kill = RlCause.chain(c.now("2").via("hit"), c.item(b.id, "stone_sword"));
+        check(kill.size() == 2 && kill.get(0).id == d.id && kill.get(1).id == b.id && kill.get(1).via.equals("item:stone_sword"), "the kill: the hit, the sword's craft");
+        List<Object[]> n2 = c.novel(kill, "mob_killed");
+        check(n2.size() == 2 && n2.get(0)[1].equals("hit") && n2.get(1)[1].equals("item:stone_sword"), "two kinds of cause new for a kill");
+        // a bucket: filled by decision E; the reflex (F) puts its water under the falling agent: saved
+        RlCause.Link e = c.decide("3", 300, "use:bucket@front");
+        RlCause.Link r = c.decide("3", 950, "reflex:water");
+        long under = RlCause.key(0, 40, 0);
+        c.placed(under, "minecraft:water", r);
+        List<RlCause.Link> saved = RlCause.chain(c.at(under), c.item(e.id, "water_bucket"));
+        check(saved.size() == 2 && saved.get(0).kind.equals("reflex:water") && saved.get(1).kind.equals("use:bucket@front"), "saved: the water put, the bucket filled");
+        check(c.novel(saved, "agent_saved").size() == 2 && RlCause.curious("agent_saved") && !RlCause.curious("agent_killed"), "a save is a discovery that pays curiosity");
+        // a new episode: the marks go, the decisions' ids go on, a discovery is new in it again but not ever
+        long last = c.next;
+        c.reset();
+        check(c.at(src) == null && c.current.isEmpty() && c.next == last, "a reset: no marks, the ids go on");
+        List<Object[]> again = c.novel(lava, "mob_killed");
+        check(again.size() == 1 && !(Boolean) again.get(0)[2], "new in the episode, not ever");
+        check(RlCause.chain(null, null).isEmpty() && RlCause.family("flowing_water").equals("water") && RlCause.family("stone") == null, "the families");
     }
 
     static int idx(String name) {

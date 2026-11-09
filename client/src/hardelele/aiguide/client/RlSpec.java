@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The learning environment's spaces of contract 2 (docs/rl/CONTRACT-v2.md), with no game in them: the discrete
+ * The learning environment's spaces of contract 3 (docs/rl/CONTRACT-v2.md: the development v2 and its causes), with no game in them: the discrete
  * actions (a mind's skill with its arguments fixed) each with the rule of its mask (a condition over the raw facts,
  * written into actions.json so that Python reads the very rule instead of a port of it), the observation's features
  * (a name, a kind of scaling, a scale), the reward's weights and scales, the scenarios with the scales each turns on.
@@ -27,7 +27,7 @@ import java.util.Map;
 final class RlSpec {
     private RlSpec() { }
 
-    static final int CONTRACT = 2, ACTIONS_VERSION = 2, OBS_VERSION = 2, REWARD_VERSION = 2, ACHIEVEMENTS_VERSION = 2;
+    static final int CONTRACT = 3, ACTIONS_VERSION = 3, OBS_VERSION = 3, REWARD_VERSION = 3, ACHIEVEMENTS_VERSION = 3;
     static final int MAX_AGENTS = 4;
     /** the first actions are contract 1's, in its order (a v1 net's action k is this k) */
     static final int V1_ACTIONS = 38;
@@ -110,13 +110,17 @@ final class RlSpec {
     /** the crafts: the item, how many wanted a call (contract 1's twelve first) */
     static final String[][] CRAFTS = { { "planks", "4" }, { "stick", "4" }, { "crafting_table", "1" }, { "wooden_pickaxe", "1" }, { "stone_pickaxe", "1" },
             { "iron_pickaxe", "1" }, { "wooden_sword", "1" }, { "stone_sword", "1" }, { "iron_sword", "1" }, { "furnace", "1" }, { "torch", "4" }, { "chest", "1" } };
-    static final String[][] CRAFTS2 = { { "diamond_pickaxe", "1" }, { "diamond_sword", "1" }, { "bow", "1" }, { "arrow", "4" }, { "wooden_hoe", "1" }, { "stone_hoe", "1" },
+    static final String[][] CRAFTS2 = { { "diamond_pickaxe", "1" }, { "diamond_sword", "1" }, { "bow", "1" }, { "arrow", "4" }, { "bucket", "1" }, { "flint_and_steel", "1" }, { "wooden_hoe", "1" }, { "stone_hoe", "1" },
             { "bread", "1" }, { "wooden_door", "1" }, { "fence", "2" }, { "fence_gate", "1" }, { "paper", "3" }, { "book", "1" }, { "bookshelf", "1" },
             { "enchanting_table", "1" } };
     /** the armour's materials (craft_armor: the piece of it that adds most to what the agent wears) */
     static final String[] ARMOR = { "leather", "golden", "iron", "diamond" };
     /** the ores a pickaxe of a tier gets: { block, the tier needed (harvest level + 1), count a call } */
-    static final String[][] ORES2 = { { "gold_ore", "3", "3" }, { "redstone_ore", "3", "4" }, { "diamond_ore", "3", "2" }, { "obsidian", "4", "4" } };
+    /** the primitives' target slots: in front (the feet's level), its own cell, in front one down, the wall's nearest hole, the nearest moat cell, at the nearest enemy */
+    static final String[] TARGETS = { "front", "below", "front_down", "hole", "moat", "mob" };
+    /** the hand slots a place takes from: { slot, the fact of its count } */
+    static final String[][] PLACE_SLOTS = { { "block", "slot_block" }, { "water", "bag_water_bucket" }, { "lava", "bag_lava_bucket" }, { "torch", "bag_torch" } };
+    static final String[][] ORES2 ={ { "gold_ore", "3", "3" }, { "redstone_ore", "3", "4" }, { "diamond_ore", "3", "2" }, { "obsidian", "4", "4" } };
 
     static final List<Action> ACTIONS = Collections.unmodifiableList(actions());
 
@@ -195,6 +199,19 @@ final class RlSpec {
         l.add(new Action("place:enchanting_table", "place", all(BASE, SURFACE, has("bag_enchanting_table"), off("ench_table_known")), "item", "enchanting_table", "at", "base"));
         l.add(new Action("place:bookshelf", "place_shelf", all(has("bag_bookshelf"), on("ench_table_known"), is("ench_table_dist", "<=", 16), has("shelf_spots"))));
         l.add(new Action("enchant:best", "enchant", all(on("ench_table_known"), is("ench_table_dist", "<=", 24), is("xp_level", ">=", 1), has("enchantable"))));
+        // the primitives: a thing of a hand slot put or used at one of the fixed target slots, a hit, a door
+        for (String[] sl : PLACE_SLOTS)
+            for (String t : TARGETS)
+                l.add(new Action("place:" + sl[0] + "@" + t, "place_at", all(has(sl[1]), on("tgt_" + t), on("tgt_" + t + "_free")), "slot", sl[0], "target", t));
+        for (String t : TARGETS)
+            l.add(new Action("use:bucket@" + t, "use_at", all(has("bag_bucket"), on("tgt_" + t), any(on("tgt_" + t + "_water_src"), on("tgt_" + t + "_lava_src"))),
+                    "slot", "bucket", "target", t));
+        for (String t : TARGETS)
+            l.add(new Action("use:fire@" + t, "use_at", all(has("bag_flint_and_steel"), on("tgt_" + t), on("tgt_" + t + "_free")), "slot", "fire", "target", t));
+        l.add(new Action("attack@mob", "attack", on("tgt_mob"), "target", "mob"));
+        l.add(new Action("attack@animal", "attack", has("animals_seen"), "target", "animal"));
+        l.add(new Action("open@front", "open", on("tgt_front_door"), "target", "front"));
+        l.add(new Action("open@gate", "open", on("door_placed"), "target", "gate"));
         return l;
     }
 
@@ -211,6 +228,8 @@ final class RlSpec {
             case "furnace": lim = none("bag_furnace"); break;
             case "chest": lim = all(none("bag_chest"), off("chest_known")); break;
             case "bow": lim = none("bag_bow"); break;
+            case "bucket": lim = is("buckets", "<", 2); break;
+            case "flint_and_steel": lim = none("bag_flint_and_steel"); break;
             case "wooden_hoe": lim = none("hoes"); break;
             case "stone_hoe": lim = is("hoe_tier", "<", 2); break;
             case "bread": lim = is("bag_bread", "<", 64); break;
@@ -236,7 +255,7 @@ final class RlSpec {
 
     /** the tools of the actions that are not the minds' own (Mind.skills): the environment's skills */
     static final String[] ENV_TOOLS = { "hunt", "descend", "ascend", "tunnel", "craft_armor", "shoot", "build_gate", "close_gate", "till", "plant", "harvest",
-            "gather", "build_pen", "lure", "breed", "slaughter", "place_shelf", "enchant" };
+            "gather", "build_pen", "lure", "breed", "slaughter", "place_shelf", "enchant", "place_at", "use_at", "attack", "open" };
 
     /** the action as a mind's call (its tool and arguments), the why saying it was the policy's */
     static Mind.Call call(int k) {
@@ -268,7 +287,7 @@ final class RlSpec {
     /** the spaces of the net's size and version, null when it fits neither (it is refused: no silent mismatch) */
     static Space space(PolicyNet n) {
         if (n == null) return null;
-        if (n.version == 2 && n.d == FEATURES.size() && n.a == ACTIONS.size()) return V2;
+        if (n.version == ACTIONS_VERSION && n.d == FEATURES.size() && n.a == ACTIONS.size()) return V2;
         if (n.version == 1 && n.d == RlSpec1.FEATURES.size() && n.a == RlSpec1.ACTIONS.size()) return V1;
         return null;
     }
@@ -284,13 +303,13 @@ final class RlSpec {
     static final String[] SCENARIOS = { "wood", "pickaxe", "sword", "armor", "iron", "bow", "mine_trip", "diamond", "farm", "pasture", "enchant", "fortify", "food",
             "waves:easy", "waves:normal", "waves:long", "achievements" };
     /** the reward's scales: each the change of a measured value, on in the scenarios that name it */
-    static final String[] SCALES = { "safety", "perimeter", "equipment", "mine", "enchant", "sustain", "stock", "achievement" };
+    static final String[] SCALES = { "safety", "perimeter", "equipment", "mine", "enchant", "sustain", "stock", "achievement", "curiosity" };
     static final String[] BAG = { "log", "planks", "stick", "crafting_table", "cobblestone", "coal", "iron_ore", "iron_ingot", "furnace", "chest", "torch",
             "wooden_pickaxe", "stone_pickaxe", "iron_pickaxe", "wooden_sword", "stone_sword", "iron_sword", "food_raw", "food_cooked", "dirt",
             // contract 2's
             "gold_ore", "gold_ingot", "diamond", "redstone", "obsidian", "gravel", "flint", "string", "feather", "leather", "bow", "arrow",
             "diamond_pickaxe", "diamond_sword", "armor", "wooden_hoe", "stone_hoe", "wheat_seeds", "wheat", "bread", "sapling", "sugar_cane", "paper",
-            "book", "bookshelf", "enchanting_table", "wooden_door", "fence", "fence_gate" };
+            "book", "bookshelf", "enchanting_table", "wooden_door", "fence", "fence_gate", "bucket", "water_bucket", "lava_bucket", "flint_and_steel" };
     /** the groups of a step's end (its reason code): the last action's one-hot */
     static final String[] OUTCOMES = { "none", "ok", "fail_path", "fail_items", "fail_target", "fail_danger", "fail_other" };
 
@@ -363,6 +382,14 @@ final class RlSpec {
         // the renewable and the stock
         add(f, "log", 64, "food_renew", "food_eaten", "wood_renew", "wood_used");
         f.add(new Feature("sources", "div", 3)); f.add(new Feature("stock_value", "div", 10));
+        // the primitives' target slots: there, how far, free to put into, water, lava (a source or flowing); a door in front
+        for (String t : TARGETS) {
+            f.add(new Feature("tgt_" + t, "bool", 1)); f.add(new Feature("tgt_" + t + "_dist", "div", 16));
+            add(f, "bool", 1, "tgt_" + t + "_free", "tgt_" + t + "_water", "tgt_" + t + "_lava");
+        }
+        f.add(new Feature("tgt_front_door", "bool", 1)); f.add(new Feature("slot_block", "log", 64));
+        // the causes: kinds of cause and effect new in this episode (curiosity)
+        f.add(new Feature("novel_count", "div", 20));
         // the others
         f.add(new Feature("allies_alive", "div", 3)); add(f, "div", 20, "allies_health_mean", "allies_health_min");
         f.add(new Feature("allies_low", "div", 3)); f.add(new Feature("ally_dist", "div", 32));
@@ -502,6 +529,8 @@ final class RlSpec {
         // achievement: a new one of the agent's (and more for a deeper one)
         w.put("achievement.new", 0.3);
         w.put("achievement.depth", 0.05);
+        // curiosity: a kind of cause and effect new in the episode (on a mob, an animal, a block, or the agent saved)
+        w.put("curiosity.novel", 0.2);
         return w;
     }
 
@@ -583,6 +612,7 @@ final class RlSpec {
             case "achievements": s.goal = "achievements"; s.perAgent = 8; s.seconds = 1800; s.hunger = true; s.on("achievement"); s.scales.put("achievement", 2.0); break;
             default: return null;   // the unknown: not there
         }
+        if (!s.scales.containsKey("curiosity")) s.scales.put("curiosity", 1.0);   // everywhere: a new effect found is worth a little
         return s;
     }
 

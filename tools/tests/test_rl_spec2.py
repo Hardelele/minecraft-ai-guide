@@ -32,14 +32,14 @@ def load(name, sub=""):
 def main():
     act, obs, rew, ach = load("actions.json"), load("obs.json"), load("reward.json"), load("achievements.json")
     a1, o1 = load("actions.json", "v1"), load("obs.json", "v1")
-    check(act["version"] == obs["version"] == rew["version"] == ach["version"] == 2, "the files are of contract 2")
+    check(act["version"] == obs["version"] == rew["version"] == ach["version"] == 3, "the files are of contract 3")
     check(a1["version"] == o1["version"] == 1, "rl/v1 is contract 1")
     ids = [a["id"] for a in act["actions"]]
-    check(ids[0] == "noop" and len(ids) == act["n"] == len(set(ids)) == 82, "82 actions, noop first, unique")
+    check(ids[0] == "noop" and len(ids) == act["n"] == len(set(ids)) == 124, "124 actions, noop first, unique")
     check(ids[:38] == [a["id"] for a in a1["actions"]] and act["v1_prefix"] == 38, "the first 38 are contract 1's, in its order")
     check(all(a["args"] == b["args"] and a["tool"] == b["tool"] for a, b in zip(act["actions"], a1["actions"])), "with the same tools and arguments")
     check(all("mask" in a for a in act["actions"]), "every action of contract 2 carries its rule")
-    check(obs["dim"] == len(obs["features"]) == 322, "322 features")
+    check(obs["dim"] == len(obs["features"]) == 402, "402 features")
     names = [f["name"] for f in obs["features"]]
     check(all(n in names for n in [f["name"] for f in o1["features"] if f["name"] != "scen_siege"]), "contract 1's features are among contract 2's")
 

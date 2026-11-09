@@ -1,7 +1,7 @@
 {
-  "version": 2,
-  "hash": "1809e9ced85f",
-  "dim": 322,
+  "version": 3,
+  "hash": "7821a391980f",
+  "dim": 402,
   "note": "Generated from RlSpec.java (docs/rl/CONTRACT-v2.md). The server sends the scaled vector in this order. div: clip(x/scale, -1, 2); log: log1p(max(x,0))/log1p(scale); bool: 1 if x > 0.5 else 0. A distance to nothing seen is scale (1 scaled).",
   "features": [
     {
@@ -126,6 +126,11 @@
     },
     {
       "name": "scale_achievement",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "scale_curiosity",
       "kind": "bool",
       "scale": 1.0
     },
@@ -471,6 +476,26 @@
     },
     {
       "name": "bag_fence_gate",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_bucket",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_water_bucket",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_lava_bucket",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "bag_flint_and_steel",
       "kind": "log",
       "scale": 64.0
     },
@@ -928,6 +953,171 @@
       "name": "stock_value",
       "kind": "div",
       "scale": 10.0
+    },
+    {
+      "name": "tgt_front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_dist",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "tgt_front_free",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_water",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_lava",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_below_dist",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "tgt_below_free",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_below_water",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_below_lava",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_down_dist",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "tgt_front_down_free",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_down_water",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_down_lava",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_hole",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_hole_dist",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "tgt_hole_free",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_hole_water",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_hole_lava",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_moat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_moat_dist",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "tgt_moat_free",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_moat_water",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_moat_lava",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_mob_dist",
+      "kind": "div",
+      "scale": 16.0
+    },
+    {
+      "name": "tgt_mob_free",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_mob_water",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_mob_lava",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "tgt_front_door",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "slot_block",
+      "kind": "log",
+      "scale": 64.0
+    },
+    {
+      "name": "novel_count",
+      "kind": "div",
+      "scale": 20.0
     },
     {
       "name": "allies_alive",
@@ -1445,6 +1635,16 @@
       "scale": 1.0
     },
     {
+      "name": "last_action_craft:bucket",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_craft:flint_and_steel",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
       "name": "last_action_craft_armor:leather",
       "kind": "bool",
       "scale": 1.0
@@ -1596,6 +1796,206 @@
     },
     {
       "name": "last_action_enchant:best",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@hole",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@moat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:block@mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:water@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:water@below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:water@front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:water@hole",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:water@moat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:water@mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:lava@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:lava@below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:lava@front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:lava@hole",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:lava@moat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:lava@mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:torch@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:torch@below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:torch@front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:torch@hole",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:torch@moat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_place:torch@mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:bucket@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:bucket@below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:bucket@front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:bucket@hole",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:bucket@moat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:bucket@mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:fire@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:fire@below",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:fire@front_down",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:fire@hole",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:fire@moat",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_use:fire@mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_attack@mob",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_attack@animal",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_open@front",
+      "kind": "bool",
+      "scale": 1.0
+    },
+    {
+      "name": "last_action_open@gate",
       "kind": "bool",
       "scale": 1.0
     },

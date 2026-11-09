@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "note": "Generated from RlSpec.java (docs/rl/CONTRACT-v2.md): the weights the server uses unless -Daiguide.rl.reward=<file> gives others (same keys). A key 'a.b' is part b of the component a in info.components. The components named in 'scales' are paid only in the scenarios whose scenarioScales name them (times the factor); the others always.",
   "weights": {
     "noop": -1.0,
@@ -45,7 +45,8 @@
     "sustain.source": 0.5,
     "stock.value": 0.5,
     "achievement.new": 0.3,
-    "achievement.depth": 0.05
+    "achievement.depth": 0.05,
+    "curiosity.novel": 0.2
   },
   "scales": [
     "safety",
@@ -55,86 +56,104 @@
     "enchant",
     "sustain",
     "stock",
-    "achievement"
+    "achievement",
+    "curiosity"
   ],
   "scenarioScales": {
     "wood": {
       "stock": 1.0,
-      "achievement": 1.0
+      "achievement": 1.0,
+      "curiosity": 1.0
     },
     "pickaxe": {
       "achievement": 1.0,
       "equipment": 0.0,
-      "equipment.pickaxe": 1.0
+      "equipment.pickaxe": 1.0,
+      "curiosity": 1.0
     },
     "sword": {
       "achievement": 1.0,
       "equipment": 0.0,
-      "equipment.weapon": 1.0
+      "equipment.weapon": 1.0,
+      "curiosity": 1.0
     },
     "armor": {
       "achievement": 1.0,
       "equipment": 0.0,
-      "equipment.armor": 1.0
+      "equipment.armor": 1.0,
+      "curiosity": 1.0
     },
     "iron": {
       "mine": 1.0,
       "achievement": 1.0,
       "equipment": 0.0,
-      "equipment.pickaxe": 1.0
+      "equipment.pickaxe": 1.0,
+      "curiosity": 1.0
     },
     "bow": {
       "achievement": 1.0,
       "equipment": 0.0,
-      "equipment.ranged": 1.0
+      "equipment.ranged": 1.0,
+      "curiosity": 1.0
     },
     "mine_trip": {
       "mine": 1.0,
-      "achievement": 1.0
+      "achievement": 1.0,
+      "curiosity": 1.0
     },
     "diamond": {
       "mine": 1.0,
       "equipment": 1.0,
-      "achievement": 1.0
+      "achievement": 1.0,
+      "curiosity": 1.0
     },
     "farm": {
       "sustain": 1.0,
       "stock": 1.0,
-      "achievement": 1.0
+      "achievement": 1.0,
+      "curiosity": 1.0
     },
     "pasture": {
       "sustain": 1.0,
       "stock": 1.0,
-      "achievement": 1.0
+      "achievement": 1.0,
+      "curiosity": 1.0
     },
     "enchant": {
       "enchant": 1.0,
       "equipment": 1.0,
-      "achievement": 1.0
+      "achievement": 1.0,
+      "curiosity": 1.0
     },
     "fortify": {
-      "safety": 1.0
+      "safety": 1.0,
+      "curiosity": 1.0
     },
     "food": {
       "stock": 1.0,
-      "sustain": 1.0
+      "sustain": 1.0,
+      "curiosity": 1.0
     },
     "waves:easy": {
       "safety": 1.0,
-      "perimeter": 1.0
+      "perimeter": 1.0,
+      "curiosity": 1.0
     },
     "waves:normal": {
       "safety": 1.0,
-      "perimeter": 1.0
+      "perimeter": 1.0,
+      "curiosity": 1.0
     },
     "waves:long": {
       "safety": 1.0,
       "perimeter": 1.0,
       "sustain": 1.0,
-      "equipment": 1.0
+      "equipment": 1.0,
+      "curiosity": 1.0
     },
     "achievements": {
-      "achievement": 2.0
+      "achievement": 2.0,
+      "curiosity": 1.0
     }
   },
   "scenarios": [

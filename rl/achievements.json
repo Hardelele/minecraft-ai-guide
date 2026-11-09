@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "note": "Generated from RlAchievements.java: Minecraft 1.7.10's achievements (AchievementList) with their parents and the game's ru_RU names. An agent gets one only with its parent; 'supported': the environment gives it to agents (its condition as here), the others never (the curriculum must not set them).",
   "achievements": [
     {
