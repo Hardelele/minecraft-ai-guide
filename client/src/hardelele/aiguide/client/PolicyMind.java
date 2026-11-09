@@ -17,7 +17,9 @@ import net.minecraft.world.WorldServer;
  * with an item is done when the item is there. No thread, no wait: a decision takes well under a millisecond.
  *
  * -Daiguide.policy.weights=<file> (else the jar's /assets/aiguide/rl/policy.bin), -Daiguide.policy.sample=true (draw
- * by the net's probabilities instead of the best: more varied, as in training).
+ * by the net's probabilities instead of the best: more varied, as in training), -Daiguide.policy.temperature=T (a draw
+ * from softmax(logits / T): 0 the best action, 1 as sample=true, 0.3-0.5 mostly the best with a little chance, so a
+ * failure is not repeated forever as argmax repeats it).
  */
 final class PolicyMind {
     private PolicyMind() { }
@@ -46,6 +48,17 @@ final class PolicyMind {
 
     static boolean sample() {
         return Boolean.parseBoolean(System.getProperty("aiguide.policy.sample", "false"));
+    }
+
+    /** the choice's temperature: -Daiguide.policy.temperature, else 1 with sample=true, else 0 (the best action) */
+    static float temperature() {
+        try {
+            String t = System.getProperty("aiguide.policy.temperature", "");
+            if (!t.trim().isEmpty()) return Math.max(0f, Float.parseFloat(t.trim()));
+        } catch (NumberFormatException e) {
+            // a bad value: as if none
+        }
+        return sample() ? 1f : 0f;
     }
 
     /** the net, loaded once (null and error set when there is none or it does not fit RlSpec) */
@@ -149,7 +162,7 @@ final class PolicyMind {
         float[] probs = new float[n.a];
         int k;
         synchronized (PolicyMind.class) {
-            k = work.act(obs, mask, sample() ? rnd : null, probs);
+            k = work.act(obs, mask, rnd, probs, temperature());
         }
         double ms = (System.nanoTime() - t0) / 1e6;
         if (k < 0) k = sp.index("wait:5");

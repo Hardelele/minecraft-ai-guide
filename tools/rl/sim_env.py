@@ -343,6 +343,7 @@ class SimEnv:
         self.items_seen: set[str] = set()
         self.comp: dict[str, float] = {}
         self.novel = 0
+        self.repeat_fail = 0
         self.discoveries = 0
         self.links_ep: set[str] = set()
         self.events: list[dict] = []
@@ -898,6 +899,7 @@ class SimEnv:
         out = spec.outcome(result)
         if out != "ok" and a.last == act and a.outcome == out:
             a.repeated += 1
+            self.repeat_fail += 1   # the same action failed again the same way (a failure repeated, not a new way tried)
         else:
             a.repeated = 0 if out == "ok" else 1
         a.last, a.outcome, a.last_s = act, out, secs
@@ -1808,7 +1810,7 @@ class SimEnv:
                        "success": self.success() if self.done else False, "cleared": self.cleared,
                        "goal_progress": self.progress(), "episode_components": dict(self.comp) if self.done else {},
                        "achievements": self.crew_ach(), "breaches": self.breaches, "mob_seconds": round(self.mob_s, 1),
-                       "clean_waves": self.clean, "novel": self.novel, "discoveries": self.discoveries, "kills": self.kills,
+                       "clean_waves": self.clean, "novel": self.novel, "repeat_fail": self.repeat_fail, "discoveries": self.discoveries, "kills": self.kills,
                        "spawned": self.spawned, "assigned": dict(self.assigned), "events": self.events,
                        "sustain": [round(self.sus["food_renew"], 2), round(self.sus["food_eaten"], 2)]}
         self.assigned, self.events = {}, []

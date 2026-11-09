@@ -469,6 +469,7 @@ def main():
                     novel_total += int(inf.get("novel", 0))
                     stats["novel"] += int(inf.get("novel", 0))
                     stats["kills"] += int(inf.get("kills", 0))
+                    stats["repeat_fail"] += int(inf.get("repeat_fail", 0))
                     stats["spawned"] += int(inf.get("spawned", 0))
                     if inf.get("chains") and stats["chains"] < 20:   # for the film: what a thing made did later
                         stats["chains"] += 1
@@ -610,6 +611,7 @@ def main():
                "ent_coef": round(ent_coef, 4),
                "novel": stats["novel"], "novel_total": novel_total, "discoveries": stats["discoveries"],
                "kills": stats["kills"], "spawned": stats["spawned"],
+               "repeat_fail_per_ep": round(stats["repeat_fail"] / max(1, len(eps)), 2),
                "credit_linked": cst.get("linked", ""), "credit_moved": round(cst.get("moved", 0.0), 3) if cst else "",
                "credit_lag_s": round(cst.get("lag_s", 0.0), 1) if cst else "",
                "rudder_loss": round(rud.loss, 4) if rud is not None else ""}

@@ -117,6 +117,15 @@ final class PolicyNet {
             forward(obs);
             return choose(logits, mask, rnd, probs);
         }
+
+        /** with a temperature: 0 the best action; t > 0 a draw from softmax(logits / t) (1: the net's own probabilities) */
+        int act(float[] obs, int[] mask, Random rnd, float[] probs, float temperature) {
+            forward(obs);
+            if (temperature <= 0 || rnd == null) return choose(logits, mask, null, probs);
+            float[] lg = new float[logits.length];
+            for (int k = 0; k < lg.length; k++) lg[k] = logits[k] / temperature;
+            return choose(lg, mask, rnd, probs);
+        }
     }
 
     Work work() { return new Work(); }
