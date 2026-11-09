@@ -72,7 +72,7 @@ final class MineSkills {
     /** to the mouth, down the stairs dug, then steps on to the next horizon */
     static final class Descend extends MindSkills.Skill {
         final Crew c;
-        int state, i, fails, dug;
+        int state, i, fails, dug, turns;
         Crew.GoTo walk;
         Day1.Steps steps;
         int[] seg;   // the segment being dug: x0 y0 z0 dx dz n
@@ -126,6 +126,12 @@ final class MineSkills {
             steps = null;
             reached(m, a);
             if (r == Result.NO_TOOL) { reason = "NO_TOOL"; detail = "the stairs need a pickaxe for the stone (dug " + dug + ")"; return r; }
+            if (done == 0 && turns++ < 3) {   // a cave, water or no floor ahead: the stairs turn (clockwise) and go on from their bottom
+                int x = m.dx; m.dx = -m.dz; m.dz = x;
+                Events.log("mine: " + a.who() + " turns the stairs at " + b[0] + " " + b[1] + " " + b[2] + " (" + r + ")");
+                return Result.RUNNING;
+            }
+            if (done > 0) turns = 0;
             if (done == 0) {
                 reason = dug > 0 ? "OK" : "BLOCKED";
                 detail = "the stairs end at y " + bottom(m)[1] + " (no floor to put: no cobblestone in the bag, or nothing to stand on)";
@@ -181,8 +187,9 @@ final class MineSkills {
 
     /** up the stairs, three at a time, the mouth last */
     static final class Ascend extends MindSkills.Skill {
-        int i, fails;
+        int i, fails, climbs;
         Crew.GoTo walk;
+        StepsUp up;
         Ascend(int from) { i = from; }
 
         Result run(Agent a, WorldServer w) {
@@ -193,17 +200,67 @@ final class MineSkills {
             if (i >= way.size()) i = way.size() - 1;
             int j = Math.max(0, i - 3);
             int[] p = way.get(j);
+            if (up != null) {   // off the stairs below them (a cave, a fall): steps dug up towards them first
+                Result r = up.step(a, w);
+                if (r == Result.RUNNING) return r;
+                up = null;
+                fails = 0;
+            }
             if (walk == null) walk = new Crew.GoTo(p[0] + 0.5, p[1], p[2] + 0.5, j == 0 ? 1.2 : 0.8);
             Result r = walk.step(a, w);
             if (r == Result.RUNNING) return r;
             walk = null;
             if (r != Result.OK && Crew.dist(a, p[0] + 0.5, p[1], p[2] + 0.5) > 1.8) {
-                if (++fails > 3) { reason = "NO_PATH"; detail = "no way up the stairs at " + p[0] + " " + p[1] + " " + p[2]; return Result.NO_PATH; }
+                if (++fails > 3) {
+                    int[] near = way.get(nearestAny(m, a) - 1 < 0 ? 0 : Math.min(way.size() - 1, nearestAny(m, a)));
+                    if (climbs++ < 3 && near[1] > Math.floor(a.boundingBox.minY) + 1) { up = new StepsUp(near, 24); return Result.RUNNING; }
+                    reason = "NO_PATH"; detail = "no way up the stairs at " + p[0] + " " + p[1] + " " + p[2]; return Result.NO_PATH;
+                }
                 return Result.RUNNING;
             }
             fails = 0;
             i = j;
             if (j == 0) { detail = "at the mouth " + p[0] + " " + p[1] + " " + p[2]; return Result.OK; }
+            return Result.RUNNING;
+        }
+    }
+
+    /**
+     * Steps dug up towards a cell above (a player out of a cave): each step the column ahead (towards it) cleared two
+     * high over a floor (put from the bag where there is none), the head's room over its own cell, then a step up onto
+     * it; until its feet are a block under the cell's or the steps are spent. Lava ahead stops it.
+     */
+    static final class StepsUp implements Crew.Task {
+        final int[] to;
+        int left, tries;
+        Crew.Break br;
+        Skills.PlaceFrom put;
+        Crew.GoTo walk;
+        StepsUp(int[] to, int n) { this.to = to; this.left = n; }
+
+        public Result step(Agent a, WorldServer w) {
+            if (br != null) { Result r = br.step(a, w); if (r == Result.RUNNING) return r; br = null; if (r == Result.NO_TOOL) return r; if (r.failed() && ++tries > 6) return Result.BLOCKED; return Result.RUNNING; }
+            if (put != null) { Result r = put.step(a, w); if (r == Result.RUNNING) return r; put = null; if (r.failed() && ++tries > 6) return Result.BLOCKED; return Result.RUNNING; }
+            if (walk != null) { Result r = walk.step(a, w); if (r == Result.RUNNING) return r; walk = null; left--; tries = 0; return Result.RUNNING; }
+            int fx = net.minecraft.util.MathHelper.floor_double(a.posX), fy = net.minecraft.util.MathHelper.floor_double(a.boundingBox.minY), fz = net.minecraft.util.MathHelper.floor_double(a.posZ);
+            if (fy >= to[1] - 1 || left <= 0) return Result.OK;
+            int ddx = to[0] - fx, ddz = to[2] - fz;
+            int dx = Math.abs(ddx) >= Math.abs(ddz) ? Integer.signum(ddx) : 0, dz = dx == 0 ? Integer.signum(ddz) : 0;
+            if (dx == 0 && dz == 0) dx = 1;   // right under it: up beside it
+            int cx = fx + dx, cz = fz + dz;
+            int[][] clear = { { fx, fy + 2, fz }, { cx, fy + 1, cz }, { cx, fy + 2, cz }, { cx, fy + 3, cz } };
+            for (int[] q : clear) {
+                net.minecraft.block.Block b = w.getBlock(q[0], q[1], q[2]);
+                if (b.getMaterial() == net.minecraft.block.material.Material.lava) return Result.BLOCKED;
+                if (!Crew.soft(w, q[0], q[1], q[2]) && !b.getMaterial().isLiquid()) { br = new Crew.Break(q[0], q[1], q[2], 0); return Result.RUNNING; }
+            }
+            if (Crew.soft(w, cx, fy, cz)) {   // no floor ahead: one from the bag
+                net.minecraft.item.ItemStack s = Skills.Scaffold.block(a, null);
+                if (s == null) return Result.NO_ITEMS;
+                put = new Skills.PlaceFrom(cx, fy, cz, s.getItem(), s.getMetadata());
+                return Result.RUNNING;
+            }
+            walk = new Crew.GoTo(cx + 0.5, fy + 1, cz + 0.5, 0.5);
             return Result.RUNNING;
         }
     }
@@ -214,11 +271,16 @@ final class MineSkills {
         RlWorld m = RlWorld.now;
         if (m.mouth == null || m.stairs.isEmpty()) return MindSkills.failed("NO_MINE", "the crew has no stairs down: descend first");
         int[] b = bottom(m);
-        if (!RlScore.atHorizon(b[1])) return MindSkills.failed("NOT_AT_HORIZON", "the stairs' bottom (y " + b[1] + ") is at no horizon: descend first");
-        if (Math.abs(feetY(a) - b[1]) > RlSpec.HORIZON_NEAR) return MindSkills.failed("NOT_AT_HORIZON", "not down at the stairs' bottom (y " + b[1] + "): descend first");
+        if (!RlScore.atHorizon(feetY(a))) return MindSkills.failed("NOT_AT_HORIZON", "at y " + feetY(a) + ": no horizon here (y 40, 12): descend first");
         int[] d = dir(m, Math.max(0, m.stairs.size() - 1));
         int t = m.tunnels.size() % 3;   // left, right, ahead of the stairs' last direction
         int dx = t == 0 ? d[1] : t == 1 ? -d[1] : d[0], dz = t == 0 ? -d[0] : t == 1 ? d[0] : d[1];
+        if (Math.abs(feetY(a) - b[1]) > RlSpec.HORIZON_NEAR || Crew.dist(a, b[0] + 0.5, b[1], b[2] + 0.5) > 12) {   // off the stairs (a cave): from where it stands, the way it looks
+            double yaw = Math.toRadians(a.rotationYawHead), lx = -Math.sin(yaw), lz = Math.cos(yaw);
+            dx = Math.abs(lx) >= Math.abs(lz) ? (lx > 0 ? 1 : -1) : 0;
+            dz = dx == 0 ? (lz > 0 ? 1 : -1) : 0;
+            b = new int[] { (int) Math.floor(a.posX), feetY(a), (int) Math.floor(a.posZ) };
+        }
         Tunnel k = new Tunnel(c, b, dx, dz, len);
         k.lease = Budget.ticks(Crew.dist(a, b[0] + 0.5, b[1], b[2] + 0.5) * 1.5 + len, len * 4, 2, 0, 0, 60);
         return k;

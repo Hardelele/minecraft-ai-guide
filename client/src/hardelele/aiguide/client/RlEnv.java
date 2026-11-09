@@ -321,7 +321,7 @@ public class RlEnv {
     long seed;
     int crewSize, episode;
     boolean raw, done;
-    String doneReason = "", target = "";
+    String doneReason = "", target = "", extraKit = "";
     long ticks, resetMs, startNs;
     final Set<Agent> waiting = new LinkedHashSet<Agent>();     // at a decision point this tick
     final Set<Integer> asked = new HashSet<Integer>();          // sent to the policy, its answer awaited
@@ -372,6 +372,7 @@ public class RlEnv {
         RlSpec.Scenario s = RlSpec.scenario(name);
         if (s == null) throw new IllegalArgumentException("unknown scenario '" + name + "': " + RlSpec.available());
         String tg = msg.has("target") ? msg.get("target").getAsString() : "";
+        extraKit = msg.has("extra_kit") ? msg.get("extra_kit").getAsString() : "";   // (a test's: more in each agent's kit)
         if (!tg.isEmpty() && (!RlAchievements.ALL.containsKey(tg) || !RlAchievements.ALL.get(tg).supported))
             throw new IllegalArgumentException("unknown or unsupported achievement '" + tg + "': " + RlAchievements.supported());
         long t0 = System.nanoTime();
@@ -414,6 +415,7 @@ public class RlEnv {
         java.util.Random rnd = new java.util.Random(seed);
         for (int i = 0; i < crewSize; i++) spawn(c, w, i, rnd);
         if (!s.chest.isEmpty()) chest(c, w, s.chest);
+        if (!s.animals.isEmpty()) animals(w, s.animals, rnd);
         Mind.Goal g = new Mind.Goal("rl " + s.name + (s.defense ? ": защищай базу" : ""), null, 0);
         for (Agent a : c.agents) g.members.add(a.who());
         Mind.Limits lim = new Mind.Limits();
@@ -502,7 +504,7 @@ public class RlEnv {
         w.spawnEntityInWorld(a);
         a.setHealth(sc.health);
         a.xp.setLevels(sc.xpLevels);
-        for (String[] k : RlSpec.kit(sc.kit)) {
+        for (String[] k : RlSpec.kit(sc.kit + (extraKit.isEmpty() ? "" : ", " + extraKit))) {
             Object[] it = MindSkills.item(k[0]);
             if (it == null) { Events.log("rl: no item " + k[0] + " for the kit"); continue; }
             int n = Integer.parseInt(k[1]);
@@ -518,6 +520,20 @@ public class RlEnv {
         if (held != null) a.setCurrentItemOrArmor(0, held);
         c.agents.add(a);
         Ledger.act(a, "rl spawn");
+    }
+
+    /** the scenario's animals ("Cow 3, Sheep 3"): on the ground 10 to 20 blocks from the base, in sight of nothing yet */
+    void animals(WorldServer w, String what, java.util.Random rnd) {
+        for (String[] k : RlSpec.kit(what))
+            for (int i = 0; i < Integer.parseInt(k[1]); i++) {
+                net.minecraft.entity.Entity e = net.minecraft.entity.EntityList.createEntityByName(k[0], w);
+                if (e == null) { Events.log("rl: no animal " + k[0]); break; }
+                double ang = rnd.nextDouble() * Math.PI * 2, d = 10 + rnd.nextDouble() * 10;
+                int x = arena.x + (int) Math.round(Math.cos(ang) * d), z = arena.z + (int) Math.round(Math.sin(ang) * d);
+                int y = RlArena.ground(w, x, z);
+                e.setLocationAndAngles(x + 0.5, y, z + 0.5, rnd.nextFloat() * 360, 0);
+                w.spawnEntityInWorld(e);
+            }
     }
 
     /** the crew's chest beside the base with what the scenario puts in it */
@@ -623,7 +639,7 @@ public class RlEnv {
             String k = id(a);
             Mine m = mine(a);
             // equipment
-            double[] e = RlScore.equipment(a.getTotalArmorValue(), swordTier(a), pickTier(a), DefenseSkills.bow(a) != null, Skills.count(a.bag, Items.arrow, -1));
+            double[] e = RlScore.equipment(worn(a), swordTier(a), pickTier(a), DefenseSkills.bow(a) != null, Skills.count(a.bag, Items.arrow, -1));
             for (int i = 0; i < e.length; i++) pay(k, RlScore.EQUIPMENT[i], track.delta(k + "|" + RlScore.EQUIPMENT[i], e[i]), null);
             // the mine: a horizon reached, ore got by digging, a trip back
             int fy = MathHelper.floor_double(a.boundingBox.minY);
@@ -744,7 +760,7 @@ public class RlEnv {
         if (p == 0) return 0;
         String comp = RlSpec.component(key);
         if (p > 0 && RlScore.progress(comp)) stall.progress(agent, ticks / 20.0);
-        List<RlCause.Link> ch = chain != null && !chain.isEmpty() ? chain : RlCause.chain(cause.now(agent));
+        List<RlCause.Link> ch = chain != null && !chain.isEmpty() ? RlCause.chain(chain.toArray(new RlCause.Link[0])) : RlCause.chain(cause.now(agent));
         String head = ch.isEmpty() ? "-" : String.valueOf(ch.get(0).id);
         String ek = agent + "|" + key + "|" + head;
         JsonObject e = rewardEvents.get(ek);
@@ -767,6 +783,13 @@ public class RlEnv {
         if (m.equals("IRON")) return 3;
         if (m.equals("STONE")) return 2;
         return m.equals("WOOD") || m.equals("GOLD") ? 1 : 0;
+    }
+
+    /** the armour points it wears (the four armour slots; the game's sum counts an armour piece held in the hand too) */
+    static int worn(Agent a) {
+        int n = 0;
+        for (int i = 1; i <= 4; i++) { ItemStack s = a.getEquipmentInSlot(i); if (s != null && s.getItem() instanceof ItemArmor) n += ((ItemArmor) s.getItem()).damageReduceAmount; }
+        return n;
     }
 
     static List<ItemStack> things(Agent a) {
@@ -837,7 +860,7 @@ public class RlEnv {
                 double s = 0;
                 for (Agent a : c.agents) {
                     double v;
-                    if (sc.goal.equals("armor")) v = a.getTotalArmorValue() / (double) sc.perAgent;
+                    if (sc.goal.equals("armor")) v = worn(a) / (double) sc.perAgent;
                     else if (sc.goal.equals("bow")) v = DefenseSkills.bow(a) == null ? 0 : Skills.count(a.bag, Items.arrow, -1) / (double) sc.perAgent;
                     else if (sc.goal.equals("mine_trip")) v = mine(a).trips;
                     else if (sc.goal.equals("enchant")) v = enchanted(a);
@@ -1329,7 +1352,7 @@ public class RlEnv {
         put(r, "health", a.getHealth());
         put(r, "max_health", a.getMaxHealth());
         put(r, "low_health", Defense.LOW);
-        put(r, "armor", a.getTotalArmorValue());
+        put(r, "armor", worn(a));
         put(r, "held_tier", a.getHeldItem() == null ? 0 : EpochScore.tier(MindSkills.id(a.getHeldItem())));
         int[] tr = tiers(a);
         put(r, "pick_tier", tr[0]);
@@ -1450,6 +1473,7 @@ public class RlEnv {
         put(r, "post_dist", pa == null ? 0 : Math.hypot(a.posX - pa[0] - 0.5, a.posZ - pa[2] - 0.5));
         put(r, "light_spots", bag.containsKey("torch") ? lightSpots(c, a, w) : 0);
         put(r, "can_equip", canEquip(a) ? 1 : 0);
+        put(r, "place_spot", MindSkills.beside(c, a, w) != null ? 1 : 0);
         // contract 3's: the mine, the gear, the farm, the primitives' targets (their skills tell their own facts)
         MineSkills.facts(r, c, a, w);
         GearSkills.facts(r, c, a, w);
@@ -1483,6 +1507,7 @@ public class RlEnv {
         put(r, "time_frac", timeFrac);
         put(r, "goal_progress", progress);
         put(r, "novel_count", mm.novel);
+        put(r, "trip_ores", mm.trip.ores);
         // the episode's own measures, when the environment runs
         RlEnv e = running();
         if (e != null) {
@@ -1541,9 +1566,17 @@ public class RlEnv {
 
     /** blocks of the kind seen that mine could pick (as MindSkills.mine looks: within 32, 12 up or down, still there) */
     static int minable(Crew c, Agent a, WorldServer w, Block b) {
-        int n = 0;
+        List<int[]> near = new ArrayList<int[]>();
         for (int[] p : Exploration.knownBlocks(w, b))
-            if (MindSkills.hdist(a, p) <= 32 && Math.abs(p[1] - a.posY) <= 12 && w.getBlock(p[0], p[1], p[2]) == b && !c.board.reserved(a, p[0], p[1], p[2])) n++;
+            if (MindSkills.hdist(a, p) <= 32 && Math.abs(p[1] - a.posY) <= 12 && w.getBlock(p[0], p[1], p[2]) == b && !c.board.reserved(a, p[0], p[1], p[2])) near.add(p);
+        if (near.isEmpty() || b == Blocks.stone) return near.size();
+        MindSkills.nearestFirst(near, a);   // as mine picks: where it may dig and a way back is left (the first few looked at)
+        int n = 0, checks = 0;
+        for (int[] p : near) {
+            if (checks++ > 12) break;
+            if (Reacts.standsOn(a, w, p[0], p[1], p[2]) || !Ground.mayDig(c, p[0], p[1], p[2], "gather") || !Ground.digLeavesWay(c, w, p[0], p[1], p[2], "gather")) continue;
+            n++;
+        }
         return n;
     }
 
