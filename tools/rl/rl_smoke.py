@@ -5,6 +5,7 @@ kinds, the causes' chains, the discoveries); then each skill's results from the 
 
     python tools/rl/rl_smoke.py --url 127.0.0.1:26110 --scenarios mine_trip,farm --steps 300 [--crew 1] [--seed 3]
     python tools/rl/rl_smoke.py --url ... --log build/rl/servers/env-26110/stdout.txt   # the skills' results too
+    python tools/rl/rl_smoke.py --url ... --contract 3.1 --prefer "dig@below,pillar:up"  # a 3.1 episode, a script of its own
 """
 import argparse
 import collections
@@ -85,11 +86,13 @@ def choose(scen, mask, raw, rng, eps):
     return rng.choice(allowed) if allowed else 0
 
 
-def episode(env, scen, steps, crew, seed, eps, extra):
+def episode(env, scen, steps, crew, seed, eps, extra, contract=""):
     rng = random.Random(seed)
     msg = {"op": "reset", "scenario": scen, "seed": seed, "crew": crew, "raw": True}
     if extra:
         msg["extra_kit"] = extra
+    if contract:
+        msg["contract"] = contract
     t0 = time.time()
     o = env.ask(msg)
     chosen = collections.Counter()
@@ -146,14 +149,24 @@ def main():
     ap.add_argument("--eps", type=float, default=0.1)
     ap.add_argument("--extra", default="")
     ap.add_argument("--log", default="")
+    ap.add_argument("--contract", default="")
+    ap.add_argument("--prefer", default="")
     ap.add_argument("--out", default="")
     a = ap.parse_args()
     env = Env(a.url)
     info = env.ask({"op": "info"})
-    print("server: contract %s, %d actions, %d features" % (info["contract"], info["actions"]["n"], info["obs"]["dim"]))
+    print("server: contract %s, %d actions (%s), %d features (%s); serves %s" % (info["contract"], info["actions"]["n"], info["actions"]["hash"], info["obs"]["dim"],
+                                                                          info["obs"]["hash"], sorted(info.get("contracts", {}))))
+    if a.contract == "3.1":
+        global ACTIONS, IDX
+        ACTIONS = [x["id"] for x in json.loads((ROOT / "rl" / "actions.json").read_text(encoding="utf-8"))["actions"]]
+        IDX = {x: i for i, x in enumerate(ACTIONS)}
+    if a.prefer:
+        for s in a.scenarios.split(","):
+            SCRIPT[s] = a.prefer.split(",")
     out = []
     for s in a.scenarios.split(","):
-        r = episode(env, s, a.steps, a.crew, a.seed, a.eps, a.extra)
+        r = episode(env, s, a.steps, a.crew, a.seed, a.eps, a.extra, a.contract)
         out.append(r)
         print(json.dumps(r, ensure_ascii=False))
         sys.stdout.flush()

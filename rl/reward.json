@@ -1,5 +1,6 @@
 {
-  "version": 3,
+  "version": 4,
+  "contract": "3.1",
   "note": "Generated from RlSpec.java (docs/rl/CONTRACT-v2.md): the weights the server uses unless -Daiguide.rl.reward=<file> gives others (same keys). A key 'a.b' is part b of the component a in info.components. The components named in 'scales' are paid only in the scenarios whose scenarioScales name them (times the factor); the others always.",
   "weights": {
     "noop": -1.0,
@@ -7,6 +8,8 @@
     "stall": -0.05,
     "skill_fail": -0.05,
     "skill_ok": 0.02,
+    "retry_fail": -0.03,
+    "switch_ok": 0.05,
     "damage": -0.01,
     "death": -1.0,
     "accident": -1.5,
@@ -16,6 +19,7 @@
     "safety.moat": 1.0,
     "safety.light": 0.5,
     "safety.gate": 0.5,
+    "safety.shelter": 0.0,
     "perimeter.mob_seconds": -0.02,
     "perimeter.breach": -0.2,
     "perimeter.hurt_inside": -0.02,

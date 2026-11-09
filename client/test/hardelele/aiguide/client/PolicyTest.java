@@ -37,8 +37,9 @@ public class PolicyTest {
             System.exit(bad == 0 ? 0 : 1);
         }
         PolicyNet net = PolicyNet.load(weights);
-        check(net.d == RlSpec.FEATURES.size() && net.a == RlSpec.ACTIONS.size() || net.d == RlSpec1.FEATURES.size() && net.a == RlSpec1.ACTIONS.size(),
-                "the net fits RlSpec (contract 2) or RlSpec1 (contract 1): " + net.d + " features, " + net.a + " actions");
+        check(net.d == RlSpec.FEATURES.size() && net.a == RlSpec.ACTIONS.size() || net.d == RlSpec3.FEATURES.size() && net.a == RlSpec3.ACTIONS.size()
+                        || net.d == RlSpec1.FEATURES.size() && net.a == RlSpec1.ACTIONS.size(),
+                "the net fits RlSpec (contract 3.1), RlSpec3 (contract 3) or RlSpec1 (contract 1): " + net.d + " features, " + net.a + " actions");
         check(RlSpec.space(net) != null, "RlSpec.space takes it (its version and size): contract " + (RlSpec.space(net) == null ? "none" : RlSpec.space(net).contract));
         FileInputStream in = new FileInputStream(test);
         Map<String, float[]> t;

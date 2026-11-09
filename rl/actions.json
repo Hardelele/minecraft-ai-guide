@@ -1,8 +1,10 @@
 {
-  "version": 3,
-  "hash": "553dfd026d9d",
-  "n": 124,
+  "version": 4,
+  "contract": "3.1",
+  "hash": "45d2a5d06270",
+  "n": 136,
   "v1_prefix": 38,
+  "v3_prefix": 124,
   "note": "Generated from RlSpec.java (docs/rl/CONTRACT-v2.md). The index is the action's number; noop (0) is always allowed and ends the episode with -1. The first 38 are contract 1's in its order. 'mask': the rule of the action's mask over the raw facts (a fact missing is 0): {\"all\":[...]}, {\"any\":[...]}, [fact, op, number or another fact], op one of > >= < <= == !=.",
   "actions": [
     {
@@ -4499,6 +4501,197 @@
         ">",
         0.5
       ]
+    },
+    {
+      "id": "dig@below",
+      "tool": "dig_at",
+      "args": {
+        "target": "below"
+      },
+      "mask": [
+        "nb_below_dig",
+        ">",
+        0.5
+      ]
+    },
+    {
+      "id": "dig@front",
+      "tool": "dig_at",
+      "args": {
+        "target": "front"
+      },
+      "mask": [
+        "nb_front_dig",
+        ">",
+        0.5
+      ]
+    },
+    {
+      "id": "dig@front_down",
+      "tool": "dig_at",
+      "args": {
+        "target": "front_down"
+      },
+      "mask": [
+        "nb_front_down_dig",
+        ">",
+        0.5
+      ]
+    },
+    {
+      "id": "dig@left",
+      "tool": "dig_at",
+      "args": {
+        "target": "left"
+      },
+      "mask": [
+        "nb_left_dig",
+        ">",
+        0.5
+      ]
+    },
+    {
+      "id": "dig@right",
+      "tool": "dig_at",
+      "args": {
+        "target": "right"
+      },
+      "mask": [
+        "nb_right_dig",
+        ">",
+        0.5
+      ]
+    },
+    {
+      "id": "dig@back",
+      "tool": "dig_at",
+      "args": {
+        "target": "back"
+      },
+      "mask": [
+        "nb_back_dig",
+        ">",
+        0.5
+      ]
+    },
+    {
+      "id": "dig@above",
+      "tool": "dig_at",
+      "args": {
+        "target": "above"
+      },
+      "mask": [
+        "nb_above_dig",
+        ">",
+        0.5
+      ]
+    },
+    {
+      "id": "place:block@left",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "left"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "nb_left_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:block@right",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "right"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "nb_right_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:block@back",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "back"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "nb_back_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "place:block@above",
+      "tool": "place_at",
+      "args": {
+        "slot": "block",
+        "target": "above"
+      },
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "nb_above_free",
+            ">",
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "pillar:up",
+      "tool": "pillar",
+      "args": {},
+      "mask": {
+        "all": [
+          [
+            "slot_block",
+            ">",
+            0.0
+          ],
+          [
+            "pillar_ok",
+            ">",
+            0.5
+          ]
+        ]
+      }
     }
   ]
 }

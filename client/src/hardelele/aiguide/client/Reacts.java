@@ -296,9 +296,14 @@ final class Reacts {
                     to = Ground.feet(w, o.posX, o.posY, o.posZ);
                 }
         }
-        if (to == null) { double[] p = Moves.away(a.posX, a.posZ, m.posX, m.posZ, 10); to = new int[] { MathHelper.floor_double(p[0]), MathHelper.floor_double(a.posY), MathHelper.floor_double(p[1]) }; }
+        java.util.List<int[]> pref = new java.util.ArrayList<int[]>();
+        if (to != null) pref.add(to);
+        final Agent ag0 = a;
+        to = Reach.fallBack(a.posX, a.posY, a.posZ, m.posX, m.posZ, pref, p -> MindSkills.reached(ag0, w, p));   // a cell a path goes to
+        if (to == null) return new Hit((EntityLiving) m);   // nowhere to fall back: it hits back, not stands under the blows
         Walk back = new Walk("fall back", to, 200, false, ag -> m.isDead || ag.getDistanceToEntity(m) > 10, Result.BLOCKED);
         back.nav = true;
+        back.progress = new Reach.Progress(40);   // no nearer in 2 s: over (the next reflex may hit back)
         Defense.of(a.who()).retreats++;
         return back;
     }
@@ -311,6 +316,7 @@ final class Reacts {
         final Skills.Scaffold.Until until;
         final Result fail;
         boolean nav;
+        Reach.Progress progress;
         Walk(String how, int[] to, int max, boolean swim, Skills.Scaffold.Until until, Result fail) {
             super(how); this.to = to; this.max = max; this.swim = swim; this.until = until; this.fail = fail;
         }
@@ -318,6 +324,7 @@ final class Reacts {
             if (until.ok(a)) { a.body.stop(); return Result.OK; }
             if (++ticks > max) { a.body.stop(); return fail; }
             double x = to[0] + 0.5, y = to[1], z = to[2] + 0.5;
+            if (progress != null && progress.stuck(Crew.dist(a, x, y, z))) { a.body.stop(); return fail; }
             if (nav) { if (ticks % 10 == 1 || a.body.pathless()) a.body.walkTo(x, y, z, 1.25); }
             else a.body.stepTo(x, y, z, 1.2);
             if (swim || a.isInWater() || a.handleLavaMovement() || a.isCollidedHorizontally || y > a.posY + 0.5) a.body.jump();

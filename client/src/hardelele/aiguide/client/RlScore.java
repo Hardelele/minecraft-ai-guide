@@ -171,6 +171,45 @@ final class RlScore {
         }
     }
 
+    // ---- failures: the same again, or another way (3.1) -------------------------------------------------------
+
+    /**
+     * An agent's memory of its failures by action: how many times running each failed (since its last success), how
+     * many of the last WINDOW decisions failed by each, the group of the last failure's reason. A step tells: { the k-th
+     * failure in a row of the same action (k >= 2: the retry's growing penalty, k - 1), 1 when it succeeded with another
+     * action than the one that failed last (a change of approach) }.
+     */
+    static final class Fails {
+        final Map<Integer, Integer> run = new HashMap<Integer, Integer>();
+        final ArrayDeque<int[]> window = new ArrayDeque<int[]>();   // { action, failed }
+        int lastFailed = -1;
+        String group = "";
+
+        double[] step(int action, boolean ok, String reason) {
+            window.add(new int[] { action, ok ? 0 : 1 });
+            while (window.size() > RlSpec.FAIL_WINDOW) window.poll();
+            if (!ok) {
+                int k = (run.containsKey(action) ? run.get(action) : 0) + 1;
+                run.put(action, k);
+                lastFailed = action;
+                group = RlSpec.failGroup(reason);
+                return new double[] { k >= 2 ? k - 1 : 0, 0 };
+            }
+            run.remove(action);
+            boolean other = lastFailed >= 0 && lastFailed != action;
+            lastFailed = -1;
+            return new double[] { 0, other ? 1 : 0 };
+        }
+
+        int run(int action) { Integer k = run.get(action); return k == null ? 0 : k; }
+
+        double recent(int action) {
+            int n = 0;
+            for (int[] e : window) if (e[0] == action && e[1] == 1) n++;
+            return n / (double) RlSpec.FAIL_WINDOW;
+        }
+    }
+
     // ---- stall: no measured progress for a while ------------------------------------------------------------------
 
     /** an agent's time of its last measured progress; a stall each STALL_S seconds without */

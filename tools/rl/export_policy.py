@@ -5,7 +5,7 @@ gives, the masked argmax) for PolicyNet.java; the container is places' (places/e
     python tools/rl/export_policy.py --ckpt ... --out build/rl/snapshots/x.bin --no-test
 
 policy.bin, little-endian:
-    "RLP1", int32 version (rl/actions.json's: 1 the v1 spaces, 2 and 3 the v2 ones; the layout is the same), int32 D, int32 A, int32 H, int32 n_tensors=8, then each tensor as in places.bin:
+    "RLP1", int32 version (rl/actions.json's: 1 the v1 spaces, 2, 3 and 4 the v2 ones (4: contract 3.1); the layout is the same), int32 D, int32 A, int32 H, int32 n_tensors=8, then each tensor as in places.bin:
     int32 len, UTF-8 name, int32 ndim, int32 shape[ndim], float32 data (row-major):
     obs_mean[D], obs_std[D], l1.w[H,D], l1.b[H], l2.w[H,H], l2.b[H], pi.w[A,H], pi.b[A]
     x = clip((obs - obs_mean) / obs_std, -10, 10); h1 = tanh(l1.w x + l1.b); h2 = tanh(l2.w h1 + l2.b); logits = pi.w h2 + pi.b
@@ -53,7 +53,7 @@ def write_policy(p: Policy, path: Path):
 
 def read_policy(path: Path) -> Policy:
     magic, head, t = read_tensors_any(path)
-    assert magic == b"RLP1" and head[0] in (1, 2, 3), (magic, head)
+    assert magic == b"RLP1" and head[0] in (1, 2, 3, 4), (magic, head)
     p = Policy(head[1], head[2], head[3])
     with torch.no_grad():
         l1, l2, l3 = p.actor[0], p.actor[2], p.actor[4]
