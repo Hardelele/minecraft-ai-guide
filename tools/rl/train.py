@@ -353,7 +353,8 @@ def main():
                     msk.append(m)
                     tnow.append(t_e)
             ti = time.perf_counter()
-            ot = torch.tensor(np.asarray(obs, np.float32), device=dev)
+            obs = np.asarray(obs, np.float32)   # one array: the transitions keep its rows, not lists of floats
+            ot = torch.tensor(obs, device=dev)
             mt = torch.tensor(np.asarray(msk, bool), device=dev)
             pol.norm.update(ot)
             with torch.no_grad():

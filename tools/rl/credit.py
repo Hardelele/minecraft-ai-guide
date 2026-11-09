@@ -79,7 +79,7 @@ class RudderTrainer:
     """keeps finished episodes (observations normalised by the policy's running norm, actions, return), trains the
     predictor a few steps a PPO epoch, and gives each step's redistributed reward"""
 
-    def __init__(self, d: int, a: int, dev, hidden: int = 128, keep: int = 1024, lr: float = 1e-3, max_len: int = 400):
+    def __init__(self, d: int, a: int, dev, hidden: int = 128, keep: int = 512, lr: float = 1e-3, max_len: int = 400):
         self.net = Rudder(d, a, hidden).to(dev)
         self.opt = torch.optim.Adam(self.net.parameters(), lr=lr)
         self.dev, self.keep, self.max_len = dev, keep, max_len

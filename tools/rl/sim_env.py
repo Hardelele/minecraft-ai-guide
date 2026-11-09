@@ -133,6 +133,8 @@ ALL_SCEN = {**SCEN, **SIM_SCEN}
 
 def sk(name: str) -> dict:
     """the calibration's entry of a skill (rl/sim-calibration.json)"""
+    if "@" in name and not name.startswith("attack"):
+        return SK["place_at"]
     if name.startswith("mine:"):
         return SK["mine_stone"] if name in ("mine:stone", "mine:gravel") else SK["mine_ore"]
     if name.startswith("craft:"):
@@ -312,6 +314,8 @@ class SimEnv:
         self.grown = 0                        # trees grown from planted saplings, standing
         self.pen = False
         self.pen_adults: dict[str, int] = {}
+        # pasture (contract 3): 3 cows and 3 sheep 10-20 blocks from the base, seen
+        self.pen_wild = {"cow": 3, "sheep": 3} if scenario == "pasture" else {}
         self.pen_young: list[tuple[float, str]] = []
         self.pen_rest: dict[str, float] = {}
         self.bred = 0
@@ -412,6 +416,8 @@ class SimEnv:
         x["bag_total"], x["bag_stackables"] = tot, stack
         x["food_items"] = a.foods()
         x["lure_food"] = a.n("wheat") + a.n("wheat_seeds")
+        x["place_spot"] = 1   # a free cell beside it (the arena's ground is open)
+        x["lure_targets"] = (self.animals + sum(self.pen_wild.values())) if x["lure_food"] > 0 and not deep else 0
         x["fuel"] = a.n("coal") + a.n("planks") + a.n("log")
         x["wall_blocks"] = max(a.n("cobblestone"), a.n("planks"), a.n("dirt"))
         d = lambda n, far: (far if n <= 0 else max(2.0, a.dist * 0.5 + 6 + 20 / (1 + n)))  # noqa: E731
@@ -1201,7 +1207,7 @@ class SimEnv:
             ate = 0
             causes = []
             for food in ("food_cooked", "bread", "food_raw"):
-                while a.n(food) > 0 and (a.health < 20 or (self.hunger and a.food < 20)):
+                while a.n(food) > 0 and (a.food < 20 if self.hunger else a.health < 20):   # with hunger: as a player
                     a.add(food, -1)
                     pts = FOOD_PTS[food]
                     if self.hunger:
@@ -1330,9 +1336,15 @@ class SimEnv:
             a.add("fence_gate", -1)
             self.pen = True
         elif name == "lure:pen":
-            if self.animals <= 0:
+            if self.animals <= 0 and not any(self.pen_wild.values()):
                 return "NO_ANIMAL"
             self.leave(a)
+            wild = [k for k, v in self.pen_wild.items() if v > 0]
+            if wild:   # the scenario's cows and sheep first
+                k = wild[r.randrange(len(wild))]
+                self.pen_wild[k] -= 1
+                self.pen_adults[k] = self.pen_adults.get(k, 0) + 1
+                return ""
             n = min(self.animals, r.randint(1, 2))
             self.animals -= n
             for _ in range(n):   # the kinds as the real arena has them (rl/sim-calibration.json: cows are rare)
