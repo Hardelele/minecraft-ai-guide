@@ -601,6 +601,37 @@ public class Director {
             if (t == 0) { setupRadius = num(arg, 96); final String name = mc.thePlayer.getCommandSenderName(); serverQueue.add(new Runnable() { public void run() { setup(name); } }); }
             return t >= 10;
         }
+        if (cmd.equals("start")) {   // x y z tx ty tz: the player at a fixed point facing a fixed trunk (not the world's random spawn); else the take stops
+            if (t == 0) {
+                startResult = null;
+                final double[] v = nums(arg);
+                final String name = mc.thePlayer.getCommandSenderName();
+                serverQueue.add(new Runnable() { public void run() { startResult = start(name, v); } });
+            }
+            String r = startResult;
+            if (r == null) {
+                if (t > 20 * 30) { abortCaptureToQuit("start " + arg + ": no answer from the server in 30 s"); return true; }
+                return false;
+            }
+            if (!r.isEmpty()) { abortCaptureToQuit("start " + arg + ": " + r); return true; }
+            return t >= 10;
+        }
+        if (cmd.equals("expect")) {   // at|base x y z r: the player (at) or the waves' base (base) there, within r blocks; else the take stops
+            String[] a = arg.trim().split("\\s+");
+            double[] v = nums(arg.trim().substring(a[0].length()));
+            double r = v.length > 3 ? v[3] : 1;
+            int[] got;
+            if (a[0].equals("base")) got = Waves.base();
+            else got = new int[] { MathHelper.floor_double(mc.thePlayer.posX), MathHelper.floor_double(mc.thePlayer.boundingBox.minY), MathHelper.floor_double(mc.thePlayer.posZ) };
+            String where = got == null ? "none (no waves on)" : got[0] + " " + got[1] + " " + got[2];
+            if (got == null || Math.abs(got[0] - v[0]) > r || Math.abs(got[2] - v[2]) > r || Math.abs(got[1] - v[1]) > 1) {
+                abortCaptureToQuit("expect " + a[0] + ": it is at " + where + ", not at " + (int) v[0] + " " + (int) v[1] + " " + (int) v[2] + " (within " + r
+                        + "): the start moved, the take would not compare; stopped");
+                return true;
+            }
+            event("expect " + a[0] + ": at " + where + " as wanted");
+            return true;
+        }
         if (cmd.equals("time")) {
             final long time = Long.parseLong(arg);
             serverQueue.add(new Runnable() { public void run() {
@@ -1357,6 +1388,34 @@ public class Director {
     /** a clear morning, and the player put a few steps from a nice tree, looking at its trunk */
     void setup(String name) {
         setup(name, false);
+    }
+
+    volatile String startResult;   // the start command's answer from the server: null not yet, "" done, else why not
+
+    /** the player at x y z facing the trunk at tx ty tz, the world's spawn there, no rain (as setup); "" or why not */
+    String start(String name, double[] v) {
+        if (v.length < 6) return "needs x y z tx ty tz";
+        WorldServer w = MinecraftServer.getServer().worldServers[0];
+        EntityPlayerMP p = null;
+        for (Object o : w.playerEntities) if (((EntityPlayerMP) o).getCommandSenderName().equals(name)) p = (EntityPlayerMP) o;
+        if (p == null) return "no player";
+        int x = (int) v[0], y = (int) v[1], z = (int) v[2], tx = (int) v[3], ty = (int) v[4], tz = (int) v[5];
+        w.getChunkProvider().loadChunk(x >> 4, z >> 4);
+        w.getChunkProvider().loadChunk(tx >> 4, tz >> 4);
+        Block log = w.getBlock(tx, ty, tz);
+        if (log != Blocks.log && log != Blocks.log2) return "no trunk at " + tx + " " + ty + " " + tz + " (" + Block.blockRegistry.getNameForObject(log) + "): another world or seed";
+        if (!stand(w, x, y, z)) return "no place to stand at " + x + " " + y + " " + z + " (" + Block.blockRegistry.getNameForObject(w.getBlock(x, y - 1, z)) + " under)";
+        w.getWorldInfo().setRaining(false);
+        w.getWorldInfo().setRainTime(20 * 60 * 60);
+        w.getWorldInfo().setThundering(false);
+        w.getWorldInfo().setThunderTime(20 * 60 * 60);
+        float yaw = (float) Math.toDegrees(Math.atan2(-(tx - x), tz - z));
+        p.playerNetServerHandler.setPlayerLocation(x + 0.5, y, z + 0.5, yaw, 4);
+        w.setSpawnLocation(x, y, z);
+        int h = 0;
+        while (w.getBlock(tx, ty + h, tz) == log) h++;
+        event("start: tree at " + tx + " " + ty + " " + tz + " (" + h + " logs), player at " + x + " " + y + " " + z + " (fixed)");
+        return "";
     }
 
     void setup(String name, boolean retry) {
