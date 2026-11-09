@@ -128,10 +128,12 @@ SIM_SCEN = {
 }
 if V31:
     # a night out with no wall and no weapon, mobs about: hurt outside, safe shut in (walls at the feet and the head,
-    # a roof: dug down two and a block over the head, or blocks round and one down); alive with health >= 10 passes
+    # a roof: three down and a block over the head, or blocks round, two down and a roof); alive with health >= 10 at
+    # the night's end passes and is paid the goal; noop costs more than a death out in the open (else it is the way out);
+    # a pit two deep halves the hits (walls round, the mobs reach in from over it only): a step on the way
     SIM_SCEN["night:shelter"] = dict(goal="none", item="", per=1, seconds=240, kit={"cobblestone": 8}, health=20, time=14000,
-                                     waves=None, weights={**_ZERO, "damage": -0.03, "skill_fail": -0.01, "retry_fail": -0.03,
-                                                          "switch_ok": 0.05}, night=3, pass_alive=10)
+                                     waves=None, weights={**_ZERO, "noop": -2.0, "damage": -0.005, "skill_fail": -0.01, "retry_fail": -0.03,
+                                                          "switch_ok": 0.05, "goal": 2.0}, night=3, pass_alive=10)
 for _s in SIM_SCEN.values():
     _s.setdefault("hunger", False)
     _s.setdefault("xp", 0)
@@ -1902,7 +1904,8 @@ class SimEnv:
                 continue
             if self.sc.get("night") and a.alive:   # the night scenario: mobs about, more with the time
                 m = self.sc["night"] + self.t / 60
-                self.hurt(a, 0.035 * m, dt)
+                deep = a.near is not None and a.depth == 0 and a.near.pit() >= 2
+                self.hurt(a, 0.035 * m * (0.5 if deep else 1.0), dt)
                 if a.held and self.poisson(0.01 * a.held * dt):
                     self.kills += 1
                 if a.health <= 0:
@@ -2086,7 +2089,7 @@ class SimEnv:
         return self.close()
 
     def close(self):
-        if self.reason == "goal":
+        if self.reason == "goal" or "pass_alive" in self.sc and self.success():
             self.give_all("goal")
         for a in self.agents:
             a.pending = None
