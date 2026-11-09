@@ -39,7 +39,7 @@ def spaces():
     check(spec.A == act["n"] == len(act["actions"]) and spec.ACTIONS[0] == "noop", f"actions: {spec.A}, noop first")
     check(set(spec.SCENARIOS) == set(json.loads((spec.RL / "reward.json").read_text(encoding="utf-8"))["scenarios"]),
           "the simulator's scenarios are rl/env's")
-    for k in ("noop", "time", "skill_fail", "skill_ok", "goal", "wave_cleared"):
+    for k in ("noop", "time", "skill_fail", "skill_ok", "goal", "wave_cleared" if spec.VERSION < 2 else "perimeter.wave_cleared"):
         check(k in spec.WEIGHTS, "reward weight " + k)
 
 
@@ -137,7 +137,11 @@ def simulator():
     check(spec.mask(env.raw(a))[spec.IDX["craft:wooden_pickaxe"]], "with a table in the bag it may")
     o = env.step({0: spec.IDX["craft:wooden_pickaxe"]})
     check(a.n("wooden_pickaxe") == 1 and a.n("planks") == 0 and a.n("stick") == 0 and env.table, "the craft takes 3 planks and 2 sticks, puts the table down")
-    check(o["reward"][0] > 0.4, f"a new tier and a new item are rewarded ({o['reward'][0]:.3f})")
+    if spec.VERSION < 2:
+        check(o["reward"][0] > 0.4, f"a new tier and a new item are rewarded ({o['reward'][0]:.3f})")
+    else:   # contract 2: the achievement (pickaxe's scenario: its scales) and an OK with a trace
+        check(o["components"][0].get("achievement", 0) > 0 or o["components"][0].get("skill_ok", 0) > 0,
+              f"the pickaxe's craft is paid by its scales ({o['components'][0]})")
     check(spec.mask(env.raw(a))[spec.IDX["mine:stone"]], "a pickaxe: stone may be mined")
     o = env.step({0: spec.IDX["noop"]})
     check(o["done"] and o["info"]["done_reason"] == "noop" and o["reward"][0] <= -0.99, "noop: -1 and the episode ends")
@@ -185,7 +189,7 @@ def simulator_v2():
     o = env.step({0: I["harvest:farm"]})
     for _ in range(4):
         o = env.step({0: I["wait:5"]})
-    check(a.n("wheat") > 0 and env.comp.get("sustain", 0) <= 0, f"farm: a harvest not eaten is not paid ({a.n('wheat')} wheat)")
+    check(a.n("wheat") > 0 and env.sus_paid[0] == 0, f"farm: a harvest not eaten is not paid ({a.n('wheat')} wheat)")
     if a.n("wheat") < 3:
         env.ren_wheat += [(-1, 0)] * (3 - a.n("wheat"))
         a.add("wheat", 3 - a.n("wheat"))
@@ -194,7 +198,7 @@ def simulator_v2():
     a.food, a.sat = 10.0, 0.0
     o = env.step({0: I["eat:best"]})
     env.advance(env.t + 2)
-    check(env.comp.get("sustain", 0) > 0, f"farm: bread of its wheat eaten is paid ({env.comp.get('sustain', 0):.3f})")
+    check(env.sus_paid[0] > 0 and env.comp.get("sustain", 0) > 0, f"farm: bread of its wheat eaten is paid (food points {env.sus_paid[0]:.2f})")
     env.reset("waves:easy", 2, crew=2)
     env.ring, env.wall = True, 20
     env.phase, env.enemies, env.phase_until, env.wave_num = "wave", 12.0, env.t + 240, 1
@@ -224,19 +228,21 @@ def delayed_credit():
     o = env.reset("delay:sword", 1, crew=1)
     a = env.agents[0]
     a.bag = {"planks": 2, "stick": 1, "crafting_table": 1}
-    did = o["decision_ids"][0]
-    env.step({0: I["craft:wooden_sword"]})
+    o = env.step({0: I["craft:wooden_sword"]})
+    did = o["info"]["assigned"][0]
     env.step({0: I["equip:best"]})
     env.phase, env.enemies, env.phase_until, env.wave_num = "wave", 6.0, env.t + 240, 1
     a.worn = {"helmet": "diamond_helmet", "chestplate": "diamond_chestplate", "leggings": "diamond_leggings", "boots": "diamond_boots"}
     evs = []
     for _ in range(60):
         o = env.step({0: I["wait:5"]})
-        evs += o["events"][0]
+        evs += o["info"]["events"]
         if o["done"]:
             break
-    kills = [e for e in evs if e["key"] == "kill"]
-    check(kills and all(did in e["causes"] for e in kills), f"a kill names the sword's craft as its cause ({len(kills)} kills)")
+    kills = [e for e in evs if e.get("key") == "kill"]
+    check(kills and all(did in [c["decision_id"] for c in e["chain"]] and any(c["via"] == "item:wooden_sword" for c in e["chain"])
+                        for e in kills), f"a kill's chain names the sword's craft (via item:wooden_sword) ({len(kills)} kills)")
+    check(any(e["type"] == "novel_effect" and e["effect"] == "mob_killed" for e in evs), "the first kill by the sword is a novel effect")
     # two transitions: the craft (reward 0) and a later step with a kill of 1 point caused by it, 600 s on
     t_craft = [None, None, 0, 0, 0, 0.0, False, 0, 0.0, 0, 7, [], 0, None]
     t_kill = [None, None, 0, 0, 0, 1.0, False, 0, 600.0, 0, 8, [{"key": "kill", "points": 1.0, "t": 600.0, "causes": [7]}], 1, None]
@@ -279,11 +285,16 @@ if __name__ == "__main__":
         masking()
         sys.exit(1 if bad else 0)
     spaces()
-    masking()
+    if "--v3" not in sys.argv:   # the Java check's cases are contract 1's (PolicyTest)
+        masking()
     ppo_toy()
     simulator()
     simulator_v2()
     delayed_credit()
     export()
     end_to_end()
+    if spec.VERSION < 2 and "--v1-only" not in sys.argv:   # the same checks on the contract's spaces (rl/: contract 3)
+        print("     -- rl/ (contract %s):" % json.loads((ROOT / "rl" / "actions.json").read_text(encoding="utf-8"))["version"])
+        r = subprocess.run([sys.executable, __file__, "--v3"], env={**os.environ, "AIGUIDE_RL_SPEC": str(ROOT / "rl")})
+        bad += 1 if r.returncode else 0
     sys.exit(1 if bad else 0)

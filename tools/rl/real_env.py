@@ -48,7 +48,7 @@ class RealEnv:
                          "t": info.get("ticks", 0) / 20.0, "cleared": cleared, "success": bool(done and success),
                          "goal_progress": info.get("goal_progress"), "episode_components": dict(self.comp) if done else {}}}
 
-    def reset(self, scenario="wood", seed=None, crew=1):
+    def reset(self, scenario="wood", seed=None, crew=1, target=None):
         if self.env is None:
             self.env = self.CrewEnv(self.host, self.port, scenario, crew=crew, timeout=self.timeout)
         self.env.crew = crew   # the reset's message carries it

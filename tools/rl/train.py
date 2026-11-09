@@ -105,7 +105,7 @@ class Curriculum:
 
 # ---- the envs: in worker processes ----------------------------------------------------------------------------
 
-def worker(conn, kind: str, items: list, shaping: float, curiosity: float = 0.0):
+def worker(conn, kind: str, items: list, shaping: float, curiosity: float = -1.0):
     below_normal()
     torch.set_num_threads(1)
     if kind == "sim":
@@ -142,7 +142,7 @@ def strip(o):
 class Envs:
     """N envs across W worker processes; env e lives in worker e % W."""
 
-    def __init__(self, n: int, workers: int, kind: str, seed: int, shaping: float, url=None, curiosity: float = 0.0):
+    def __init__(self, n: int, workers: int, kind: str, seed: int, shaping: float, url=None, curiosity: float = -1.0):
         addrs = []
         if kind == "real":   # one env a server
             addrs = [x.strip() for x in (url or "").split(",") if x.strip()]
@@ -272,7 +272,7 @@ def main():
     ap.add_argument("--rudder", type=float, default=0.0, help="alpha: the learned redistribution's share of the reward (0: off)")
     ap.add_argument("--gamma-s", type=float, default=0.0, help="a discount per game second instead of --gamma per decision (0: off)")
     ap.add_argument("--lam-s", type=float, default=0.0, help="GAE's lambda per game second (0: --lam per decision)")
-    ap.add_argument("--curiosity", type=float, default=0.0, help="novel_effect's first bonus in the simulator (0: off)")
+    ap.add_argument("--curiosity", type=float, default=-1.0, help="the simulator's curiosity.novel weight (-1: the contract's, 0: off)")
     ap.add_argument("--recurrent", type=int, default=0, help="a GRU memory of this size in the policy (0: the MLP); no Java export")
     ap.add_argument("--chunk", type=int, default=16, help="--recurrent: decisions a training sequence")
     a = ap.parse_args()
@@ -303,10 +303,17 @@ def main():
     chains_f = open(out / "chains.jsonl", "w", encoding="utf-8")
     novel_total = 0
 
+    import achievements as ACHS
+    ach_depth = [1]   # the deepest achievement the crews got so far: the achievements' targets go one deeper
+
     def job():
         sc = cur.sample()
         lo, hi = CREW.get(sc, (1, 1))
-        return sc, int(rng.integers(1 << 30)), int(rng.integers(lo, hi + 1))
+        target = None
+        if sc == "achievements":   # the curriculum down the tree: a target the crews nearly reach (reset's target)
+            near = [k for k in ACHS.SIM if 0 < ACHS.depth(k) <= ach_depth[0] + 1]
+            target = near[int(rng.integers(len(near)))] if near else None
+        return sc, int(rng.integers(1 << 30)), int(rng.integers(lo, hi + 1)), target
 
     res = envs.reset_all([job() for _ in range(envs.n)])
     ep_info = [{"ret": 0.0, "dec": 0, "noop": 0} for _ in range(envs.n)]
@@ -337,15 +344,13 @@ def main():
         pol.eval()
         while n_done < a.rollout:
             # every env's agents at a decision now: one batch
-            keys, obs, msk, dids, tnow = [], [], [], [], []
+            keys, obs, msk, tnow = [], [], [], []
             for e, o in enumerate(res):
                 t_e = float(o.get("t", o.get("info", {}).get("ticks", 0) / 20.0))
-                ids = o.get("decision_ids") or [None] * len(o["agents"])
-                for ag, v, m, di in zip(o["agents"], o["obs"], o["mask"], ids):
+                for ag, v, m in zip(o["agents"], o["obs"], o["mask"]):
                     keys.append((e, ag))
                     obs.append(v)
                     msk.append(m)
-                    dids.append(di)
                     tnow.append(t_e)
             ti = time.perf_counter()
             ot = torch.tensor(np.asarray(obs, np.float32), device=dev)
@@ -374,7 +379,7 @@ def main():
                 h = hist.setdefault(k, {"obs": [], "act": [], "ret": 0.0, "G": None})
                 h["obs"].append(obs[j])
                 h["act"].append(int(act[j]))
-                pending[k] = [obs[j], msk[j], int(act[j]), float(logp[j]), float(val[j]), 0.0, False, 0.0, tnow[j], 0.0, dids[j], [],
+                pending[k] = [obs[j], msk[j], int(act[j]), float(logp[j]), float(val[j]), 0.0, False, 0.0, tnow[j], 0.0, None, [],
                               len(h["act"]) - 1, h, h_np[j] if a.recurrent else None, fresh[j] if a.recurrent else False]
                 acts[k[0]][k[1]] = int(act[j])
                 stats["dec"] += 1
@@ -385,9 +390,26 @@ def main():
             res2 = envs.step(dict(acts), {})
             resets = {}
             for e, o in res2.items():
-                t_e = float(o.get("t", o.get("info", {}).get("ticks", 0) / 20.0))
-                evs = o.get("events") or [[] for _ in o["agents"]]
-                for ag, r, ev in zip(o["agents"], o["reward"], evs):
+                inf0 = o.get("info", {})
+                t_e = float(o.get("t", inf0.get("ticks", 0) / 20.0))
+                for ag, di in (inf0.get("assigned") or {}).items():   # contract 3: the ids of the decisions just taken
+                    tr = pending.get((e, int(ag)))
+                    if tr is not None and tr[10] is None:
+                        tr[10] = int(di)
+                ev_by: dict = collections.defaultdict(list)   # the step's reward events with causes, by agent
+                for ev in inf0.get("events") or ():
+                    if ev.get("type") == "reward" and ev.get("chain"):
+                        ev_by[int(ev["agent"])].append({"key": ev["key"], "points": float(ev["points"]),
+                                                        "t": ev.get("ticks", inf0.get("ticks", 0)) / 20.0,
+                                                        "causes": [int(c["decision_id"]) for c in ev["chain"] if "decision_id" in c]})
+                    elif ev.get("type") == "novel_effect" and ev.get("first_ever"):
+                        stats["discoveries"] += 1
+                for ag, evl in ev_by.items():   # to the transition the event happened in: the agent's running one
+                    k = (e, ag)
+                    tr = pending.get(k) or waiting.get(k) or (streams[k][-1] if streams.get(k) else None)
+                    if tr is not None:
+                        tr[11] = tr[11] + evl
+                for ag, r in zip(o["agents"], o["reward"]):
                     k = (e, ag)
                     ep_info[e]["ret"] += r
                     if k in hist:
@@ -396,7 +418,6 @@ def main():
                         continue
                     tr = pending.pop(k)
                     tr[5] = float(r)
-                    tr[11] = ev or []
                     tr[6] = o["done"]
                     if o["done"]:
                         tr[9] = max(0.0, t_e - tr[8])
@@ -440,6 +461,9 @@ def main():
                                  int(noop_end), na, inf.get("cleared", 0), inf.get("done_reason", ""), ach, inf.get("breaches", 0),
                                  inf.get("mob_seconds", 0.0), sus[0], sus[1], round(float(inf.get("goal_progress", 0.0)), 3),
                                  " ".join(inf.get("achievement_ids", []))])
+                    for k_ in inf.get("achievement_ids", []) or []:
+                        if k_ in ACHS.ACH:
+                            ach_depth[0] = max(ach_depth[0], ACHS.depth(k_))
                     novel_total += int(inf.get("novel", 0))
                     stats["novel"] += int(inf.get("novel", 0))
                     stats["kills"] += int(inf.get("kills", 0))
@@ -582,7 +606,8 @@ def main():
                "entropy": round(float(np.mean(lst["ent"])), 4), "policy_loss": round(float(np.mean(lst["pg"])), 4),
                "value_loss": round(float(np.mean(lst["vl"])), 4), "approx_kl": round(float(np.mean(lst["kl"])), 5),
                "ent_coef": round(ent_coef, 4),
-               "novel": stats["novel"], "novel_total": novel_total, "kills": stats["kills"], "spawned": stats["spawned"],
+               "novel": stats["novel"], "novel_total": novel_total, "discoveries": stats["discoveries"],
+               "kills": stats["kills"], "spawned": stats["spawned"],
                "credit_linked": cst.get("linked", ""), "credit_moved": round(cst.get("moved", 0.0), 3) if cst else "",
                "credit_lag_s": round(cst.get("lag_s", 0.0), 1) if cst else "",
                "rudder_loss": round(rud.loss, 4) if rud is not None else ""}

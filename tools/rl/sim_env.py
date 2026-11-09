@@ -14,25 +14,28 @@ caps, the renewable food that is eaten), only where the scenario turns the scale
 ring, breaches, a clean wave; `skill_ok` only for an OK with a measured effect (never `wait`, `look_around`); `stall`
 after STALL_S s with no measured progress. With v1's files (rl/v1 or the old rl/) the v1 rewards stand.
 
-Delayed credit: every decision has an id (`decision_ids` in a step's answer, one per agent at a decision: the id its
-next action will carry); a reward event names the decisions that caused it (`events`: key, points, the game time,
-`causes` [ids]): a kill names the craft of the weapon that made it and the post taken, an ore the craft of the
-pickaxe, bread eaten the planting of its wheat, a clean wave the wall's building. tools/rl/credit.py moves a share of
-an event's points to its causes before PPO's update. `novel_effect`: the first time (in this simulator's life) an
-action brings a kind of thing it never brought, a small bonus that fades with how often it was seen (--curiosity).
-Sim-only scenarios with a delayed reward and nothing in between (SIM_SCEN: delay:sword, delay:pickaxe, delay:torches)
-check that the credit reaches back.
+Contract 3 (docs/rl/CONTRACT-v2.md 2.1, 3.1): every decision has a decision_id (`info.assigned`: the ids of the
+decisions taken on the actions just sent); a reward event carries the chain of its causes, the nearest first
+(`info.events`: {type reward, agent, key, points, chain [{decision_id, agent, tick, kind, via}]}): a kill names the
+hit and the craft of the weapon (via item:<id>), a mob burnt in the moat the pouring of the lava (via block:lava), an
+ore the craft of the pickaxe, bread eaten the planting of its wheat, a clean wave the wall's building. The primitives
+(place block/water/lava/torch at a target slot, a bucket filled at a source, fire, attack, open) act on the same
+rough world. novel_effect: a kind of link x effect new in the episode (on a mob, an animal, an agent saved) pays the
+curiosity scale; its first time ever (in this process) counts as a discovery. tools/rl/credit.py moves a share of an
+event's points to its causes before PPO's update. Sim-only scenarios with a delayed reward and nothing in between
+(SIM_SCEN: delay:sword, delay:pickaxe, delay:lava, delay:bucket) check that the credit reaches back.
 
 Calibrated from the real environment's v1 logs (rl/sim-calibration.json, tools/rl/calibrate.py): a skill's game
 seconds, its fresh failure rate and the stickiness of a failure (a tree out of reach stays out of reach until the
 agent moves), chops that bring no log, hunts of sheep that bring no meat, tables put where 3x3 crafts cannot reach
 them, wall cells out of reach, smelting one piece a call.
 
-Protocol (rl/env's, in Python): reset(scenario, seed, crew) -> {agents, obs, mask, raw, reward, done, info, t,
-decision_ids, events}; step({agent: action}) -> the same; `agents` are those at a decision now and their reward is
+Protocol (rl/env's, in Python): reset(scenario, seed, crew, target) -> {agents, obs, mask, raw, reward, done, info,
+t}; step({agent: action}) -> the same; `agents` are those at a decision now and their reward is
 what they got since their last decision; at done every agent closes its step; info: scenario, done_reason,
-components, cleared, ticks, achievements (the crew's; by id at the end), breaches, mob_seconds, clean_waves,
-sustain (renewable food eaten, food eaten), novel (new effects this episode), chains (at the end: cause -> effects).
+components, cleared, ticks, assigned, events, achievements (the crew's; by id at the end), breaches, mob_seconds,
+clean_waves, sustain (renewable food eaten, food eaten), novel (new links this episode), discoveries (new ever), chains
+(at the end: what a made thing did later, for the film).
 """
 from __future__ import annotations
 
@@ -53,6 +56,7 @@ SK = CAL["skills"]
 V2 = spec.VERSION >= 2
 _C = json.loads((spec.RL / "reward.json").read_text(encoding="utf-8")).get("constants", {})
 STALL_S = float(_C.get("stall_s", 60))
+GROW = float(_C.get("grow", 1))             # the environment grows the crew's crops, saplings and young this much faster
 WINDOW_S = float(_C.get("window_s", 120))
 STOCK = {k: tuple(v) for k, v in _C.get("stock_cap_value", {}).items()}   # item -> (cap, value); food in points
 NO_RESULT = ("look_around", "wait:5")       # never a skill_ok: nothing checkable comes of them
@@ -85,28 +89,39 @@ SIM_RECIPES.update({
     "book": ({"paper": 3, "leather": 1}, 1, True),
     "bookshelf": ({"planks": 6, "book": 3}, 1, False),
     "enchanting_table": ({"book": 1, "diamond": 2, "obsidian": 4}, 1, False),
+    "bucket": ({"iron_ingot": 3}, 1, False),
+    "flint_and_steel": ({"iron_ingot": 1, "flint": 1}, 1, True),
 })
 for _m, _mat in ARMOR_MAT.items():
     for _piece, _n in _PIECES.items():
         SIM_RECIPES[_m + "_" + _piece] = ({_mat: _n}, 1, False)
-TOOLS = ("_pickaxe", "_sword", "_hoe", "bow") + tuple(ARMOR)
+TOOLS = ("_pickaxe", "_sword", "_hoe", "bow", "bucket", "flint_and_steel") + tuple(ARMOR)
+TARGETS = ("front", "below", "front_down", "hole", "moat", "mob")
+CURIOUS = ("mob_hurt", "mob_killed", "animal_killed", "agent_saved")   # RlCause.curious
 FOODS = tuple(FOOD_PTS)
 ANIMALS = CAL["animals"]
 
 # the simulator's own scenarios with a delayed reward and nothing paid in between (not the contract's: for the credit
 # checks); `weights` replaces the reward's, the scales are off
-_ZERO = {"noop": -1.0, "time": 0.0, "death": -1.0}
+_ZERO = {"noop": -1.0, "time": 0.0, "death": -1.0, "accident": -1.5}
 SIM_SCEN = {
-    # a sword crafted in the long quiet before the waves pays only by the kills it makes later
-    "delay:sword": dict(goal="none", item="", per=1, seconds=600, kit={"planks": 6, "stick": 4, "crafting_table": 1, "cobblestone": 64},
-                        health=20, time=14000, waves="easy", prep=150, weights={**_ZERO, "kill": 1.0}, pass_kills=6),
+    # a sword crafted in the long quiet before the waves pays only by the kills it makes later (bare hands kill
+    # almost nothing); the craft is four steps from logs with nothing paid on the way
+    "delay:sword": dict(goal="none", item="", per=1, seconds=700, kit={"log": 2}, health=20, time=14000, waves="easy", prep=300,
+                        weights={**_ZERO, "kill": 1.0}, pass_kills=4, unarmed=0.05),
     # a stone pickaxe made early pays only by the iron ore it digs much later (hidden: to be found by going out)
     "delay:pickaxe": dict(goal="items", item="iron_ore", per=3, seconds=900, kit={"log": 3}, health=20, time=1000, waves=None,
                           weights={**_ZERO, "iron_found": 1.0, "goal": 2.0}, iron=(3, 5)),
-    # torches put out before the waves: fewer mobs come (no cause in any event: only a learned credit can find it)
-    "delay:torches": dict(goal="none", item="", per=1, seconds=500, kit={"torch": 16, "stone_sword": 1, "cobblestone": 64},
-                          health=20, time=14000, waves="easy", prep=90, weights={**_ZERO, "spawned": -0.3, "kill": 0.1},
-                          pass_spawned=10),
+    # a trap: lava fetched with the bucket from the pool by the base and poured into the moat in the quiet before the
+    # waves burns the mobs that cross it; no weapon (the kills' chain: block:lava -> the pouring)
+    "delay:lava": dict(goal="none", item="", per=1, seconds=700, kit={"bucket": 1, "cobblestone": 64}, health=20, time=14000,
+                       waves="easy", prep=240, weights={**_ZERO, "kill": 1.0}, pass_kills=4, unarmed=0.05, lava_pool=True,
+                       moat_dug=True),
+    # a bucket of water carried down saves its agent from the lava at y~12 (the reflex); diamonds pay, a death costs;
+    # no event names the bucket: only a learned credit (or curiosity's agent_saved) can link it
+    "delay:bucket": dict(goal="none", item="", per=1, seconds=900, kit={"bucket": 1, "iron_pickaxe": 1, "torch": 16, "cobblestone": 32},
+                         health=20, time=1000, waves=None, weights={**_ZERO, "mine.diamond": 1.0}, pass_diamonds=2, pond=True,
+                         lava_risk=0.08, rich=True),
 }
 for _s in SIM_SCEN.values():
     _s.setdefault("hunger", False)
@@ -156,10 +171,10 @@ class Agent:
         self.holding = False
         self.acc = 0.0
         self.comp: dict[str, float] = {}
-        self.events: list[dict] = []
         self.did = -1            # the decision now running (its id)
-        self.next_did = -1       # the id the next decision will carry
-        self.made: dict[str, tuple[int, float]] = {}   # a thing -> (the decision that made it, when)
+        self.kind = ""           # its action
+        self.did_t = 0.0
+        self.made: dict[str, tuple[int, float, str]] = {}   # a thing -> (the decision that made it, when, its action)
         self.last = -1
         self.outcome = "none"
         self.repeated = 0
@@ -225,20 +240,19 @@ class SimEnv:
     _did = 0   # decision ids: unique in a process
 
     def __init__(self, seed: int = 0, shaping: float = 0.0, weights: dict | None = None, noise: bool = True,
-                 curiosity: float = 0.0):
+                 curiosity: float = -1.0):
         """noise=False: the calibration's failures off (no fresh or sticky failures, no tables out of reach, no empty
-        chops): the mechanics alone, for the tests; curiosity: novel_effect's first bonus (0: off; it fades as
-        1/sqrt(times seen))"""
+        chops): the mechanics alone, for the tests; curiosity: curiosity.novel's weight (-1: the contract's)"""
         self.noise = noise
         self.rng = random.Random(seed)
         self.shaping = shaping
         self.base_w = dict(WEIGHTS if weights is None else weights)
         self.curiosity = curiosity
-        self.effects: dict[str, int] = {}   # novel_effect's journal: action -> kind of result, how often seen
+        self.journal: set[str] = set()   # the kinds of link x effect ever met (the discoveries' journal)
         self.scenario = "wood"
 
     # ---- the episode ------------------------------------------------------------------------------------
-    def reset(self, scenario: str = "wood", seed: int | None = None, crew: int = 1):
+    def reset(self, scenario: str = "wood", seed: int | None = None, crew: int = 1, target: str | None = None):
         if seed is not None:
             self.rng.seed(seed)
         if scenario not in ALL_SCEN:
@@ -248,8 +262,10 @@ class SimEnv:
         self.sc = ALL_SCEN[scenario]
         self.sim_only = scenario in SIM_SCEN
         self.w = dict(self.sc["weights"]) if self.sim_only else self.base_w
-        if self.curiosity:
-            self.w["novel_effect"] = self.curiosity
+        if self.curiosity >= 0:
+            self.w = dict(self.w)
+            self.w["curiosity.novel"] = self.curiosity
+        self.target = target if target in ACH.ACH else None
         sc_scales = self.sc.get("scales", {})
         self.factors = dict(sc_scales) if isinstance(sc_scales, dict) else {k: 1.0 for k in sc_scales}
         self.hunger = bool(self.sc.get("hunger")) and V2
@@ -272,15 +288,18 @@ class SimEnv:
         self.mine_d = r.uniform(4, 10)
         self.seen = {1: {}, 2: {}}
         self.hidden = {lv: {k: r.randint(*v) for k, v in ores.items()} for lv, ores in LEVEL_ORES.items()}
+        self.hidden[2]["lava"] = r.randint(1, 3)
+        if self.sc.get("rich"):
+            self.hidden[2]["diamond"] = r.randint(3, 6)
         self.table = self.furnace = False
         self.table_bad = False
         self.table_d = self.furnace_d = 64.0
         self.chest = False
         self.chest_food = 0
-        self.ring = False
-        self.wall = 0
+        self.ring = bool(self.sc.get("moat_dug"))
+        self.wall = RING if self.sc.get("moat_dug") else 0
         self.bad = 0                          # wall cells out of reach (of the ring's)
-        self.moat = 0
+        self.moat = MOAT if self.sc.get("moat_dug") else 0
         self.torches = 0
         self.posts_taken = 0
         self.door = False
@@ -316,6 +335,14 @@ class SimEnv:
         self.items_seen: set[str] = set()
         self.comp: dict[str, float] = {}
         self.novel = 0
+        self.discoveries = 0
+        self.links_ep: set[str] = set()
+        self.events: list[dict] = []
+        self.assigned: dict[int, int] = {}
+        self.baked = 0
+        self.pond = bool(self.sc.get("pond")) or r.random() < 0.6     # a water source by the base
+        self.lava_pool = bool(self.sc.get("lava_pool"))
+        self.moat_liquid: tuple[str, dict] | None = None             # water or lava in the moat, and who poured it
         self.chains: dict[tuple, list] = {}   # (agent, cause decision, what it was) -> [time, effect counts]
         self.done = False
         self.reason = ""
@@ -463,13 +490,36 @@ class SimEnv:
         x["sources"] = self.sources()
         x["stock_value"] = self.stock()
         x["stall"] = min(STALL_S, self.t - a.progress_t)
+        x["novel_count"] = self.novel
+        x["buckets"] = a.n("bucket") + a.n("water_bucket") + a.n("lava_bucket")
+        x["slot_block"] = max(a.n("cobblestone"), a.n("planks"), a.n("dirt"))
+        e_vis = (self.enemies if self.phase == "wave" else 0) + self.inside
+        for tg in TARGETS:   # the primitives' target slots
+            if tg in ("front", "below", "front_down"):
+                there, dist = 1, 1.0
+            elif tg == "hole":
+                there, dist = int(self.ring and self.wall < RING and not deep), abs(a.dist - 8) + 1
+            elif tg == "moat":
+                there, dist = int(self.moat > 0 and not deep), abs(a.dist - 10) + 1
+            else:
+                there, dist = int(e_vis > 0 and not deep), 8 + 10 * (self.wall / RING)
+            x["tgt_" + tg] = there
+            x["tgt_%s_dist" % tg] = dist if there else 24
+            liquid = self.moat_liquid[0] if tg == "moat" and self.moat_liquid else None
+            x["tgt_%s_free" % tg] = int(there and liquid is None)
+            x["tgt_%s_water" % tg] = int(liquid == "water")
+            x["tgt_%s_lava" % tg] = int(liquid == "lava")
+        if not deep and a.dist < 12 and self.pond:
+            x["tgt_front_water_src"] = 1
+        if not deep and a.dist < 12 and self.lava_pool or a.depth == 2 and self.seen[2].get("lava", 0) > 0:
+            x["tgt_front_lava_src"] = 1
+        x["tgt_front_door"] = int(self.door and 6.5 < a.dist < 9.5)
         for k in a.ach:
             x["ach_" + k] = 1
         x["ach_count"] = len(a.ach)
         x["ach_available"] = len([k for k in ACH.available(a.ach) if ACH.ACH[k][2]])
-        nxt = self.next_ach(a)
-        if nxt:
-            x["ach_target_" + nxt] = 1
+        if self.target:   # the curriculum's target (reset's), not the reward's
+            x["ach_target_" + self.target] = 1
         others = [b for b in self.agents if b is not a and b.alive]
         x["allies_alive"] = len(others)
         x["allies_health_mean"] = sum(b.health for b in others) / len(others) if others else 20
@@ -523,20 +573,21 @@ class SimEnv:
             return min(1.0, self.food() / need)
         if g == "fortify":
             return 0.5 * self.wall / RING + 0.5 * min(1.0, self.moat / (0.9 * MOAT))
+        each = lambda f: sum(min(1.0, f(a)) for a in self.agents) / n  # noqa: E731
         if g == "armor":   # each agent wears per_agent armour points
-            return sum(min(1.0, a.armor() / s["per"]) for a in self.agents) / n
-        if g == "bow":     # a bow each and per_agent arrows each
-            return 0.5 * min(1.0, sum(1 for a in self.agents if a.n("bow")) / n) + 0.5 * min(1.0, self.crew("arrow") / need)
-        if g == "mine_trip":   # down to a horizon, ore got, back on the surface
-            return min(1.0, sum(a.trips for a in self.agents) / need)
-        if g == "farm":    # edible harvest: bread
-            return min(1.0, self.crew("bread") / need)
-        if g == "pasture":
+            return each(lambda a: a.armor() / s["per"])
+        if g == "bow":     # each: a bow and per_agent arrows
+            return each(lambda a: 0.5 * (a.n("bow") > 0) + 0.5 * min(1.0, a.n("arrow") / s["per"]))
+        if g == "mine_trip":   # each went down to a horizon, got ore and came back up
+            return each(lambda a: a.trips / s["per"])
+        if g == "farm":    # bread baked (of the farm's wheat or not) >= per_agent x crew
+            return min(1.0, self.baked / need)
+        if g == "pasture":   # young born in the pen
             return min(1.0, self.bred / need)
         if g == "enchant":
-            return min(1.0, sum(a.enchanted for a in self.agents) / need)
-        if g == "achievements":   # per_agent achievements of the crew besides the root
-            return min(1.0, self.crew_ach() / s["per"])
+            return each(lambda a: a.enchanted / s["per"])
+        if g == "achievements":   # each: per_agent achievements besides the root
+            return each(lambda a: (len(a.ach) - 1) / s["per"])
         return min(1.0, self.cleared / 10)
 
     def crew_ach(self) -> int:
@@ -557,8 +608,8 @@ class SimEnv:
         """the policy side's success: the goal, or for a waves run WAVES_PASS waves cleared"""
         if "pass_kills" in self.sc:
             return self.kills >= self.sc["pass_kills"] * len(self.agents)
-        if "pass_spawned" in self.sc:
-            return self.wave_num >= 2 and self.spawned <= self.sc["pass_spawned"]
+        if "pass_diamonds" in self.sc:
+            return self.crew("diamond") >= self.sc["pass_diamonds"] * len(self.agents)
         if self.sc["goal"] == "none":
             return self.cleared >= spec.WAVES_PASS.get(self.scenario, 3)
         return self.goal_met()
@@ -661,8 +712,10 @@ class SimEnv:
         a.acc += p
         a.comp[comp] = a.comp.get(comp, 0.0) + p
         self.comp[comp] = self.comp.get(comp, 0.0) + p
-        if causes:
-            a.events.append({"key": key, "points": p, "t": self.t, "causes": [c for c in causes if c is not None and c >= 0]})
+        chain = [c for c in (causes or ()) if c]
+        if chain:   # contract 3: the reward's event with the chain of its causes, the nearest first
+            self.events.append({"type": "reward", "agent": a.i, "key": key, "points": round(p, 6), "chain": chain,
+                                "ticks": int(self.t * 20)})
         if p > 0 and (comp in spec.SCALES or comp in ("goal", "skill_ok")):
             a.progress_t = self.t     # RlScore.progress: the stall's clock starts again
 
@@ -679,11 +732,40 @@ class SimEnv:
             self.give(a, "new_item")
 
     def made(self, a: Agent, thing: str):
-        a.made[thing] = (a.did, self.t)
+        a.made[thing] = (a.did, self.t, a.kind)
 
-    def cause(self, a: Agent, thing: str | None) -> int | None:
+    def link(self, a: Agent, did: int, t: float, kind: str, via: str) -> dict:
+        return {"decision_id": did, "agent": a.i, "tick": int(t * 20), "kind": kind, "via": via}
+
+    def cause(self, a: Agent, thing: str | None, via: str | None = None) -> dict | None:
+        """the link of the decision that made a thing (via item:<thing>, or the via given)"""
         m = a.made.get(thing) if thing else None
-        return m[0] if m else None
+        return self.link(a, m[0], m[1], m[2], via or "item:" + thing) if m else None
+
+    def hit(self, a: Agent) -> dict:
+        """the agent's running decision as the cause of a blow"""
+        return self.link(a, a.did, a.did_t, a.kind, "hit")
+
+    def effect_of(self, a: Agent, chain: list, effect: str):
+        """RlCause.novel: each kind of link of the chain (its via) met with this effect for the first time in the
+        episode is novel: curiosity pays it (effects on mobs, animals, an agent saved); the first time ever is a
+        discovery"""
+        for via in dict.fromkeys(c["via"] for c in chain if c):
+            if via == "step":
+                continue
+            pair = via + " -> " + effect
+            if pair in self.links_ep:
+                continue
+            self.links_ep.add(pair)
+            self.novel += 1
+            first = pair not in self.journal
+            if first:
+                self.journal.add(pair)
+                self.discoveries += 1
+            self.events.append({"type": "novel_effect", "agent": a.i, "cause": via, "effect": effect, "first_ever": first,
+                                "chain": [c for c in chain if c], "ticks": int(self.t * 20)})
+            if effect in CURIOUS:
+                self.give(a, "curiosity.novel")
 
     def chain(self, a: Agent, thing: str | None, effect: str, k: int = 1):
         """for the film: the effects of a thing made by a decision ("stone_sword made 4.2 min ago -> 3 kills")"""
@@ -694,19 +776,6 @@ class SimEnv:
         c[1][effect] = c[1].get(effect, 0) + k
         c[2] = self.t
 
-    def note_novel(self, a: Agent, name: str, before: dict):
-        """novel_effect: what the action brought (new kinds in the bag, an achievement) never seen from it before"""
-        kinds = sorted(k for k, v in a.bag.items() if v > before.get(k, 0))
-        if not kinds:
-            return
-        key = name + "->" + ",".join(kinds)
-        n = self.effects.get(key, 0)
-        self.effects[key] = n + 1
-        if n == 0:
-            self.novel += 1
-        if self.curiosity:
-            self.give(a, "novel_effect", 1.0 / math.sqrt(1 + n))
-
     def achieve(self, a: Agent, k: str):
         """the game's rule: an achievement needs its parent got by the same agent; once an agent"""
         if k in a.ach or k not in ACH.ACH or not ACH.ACH[k][2]:
@@ -715,6 +784,7 @@ class SimEnv:
         if par is not None and par not in a.ach:
             return
         a.ach.add(k)
+        self.events.append({"type": "achievement", "agent": a.i, "id": k, "name": ACH.ACH[k][1], "ticks": int(self.t * 20)})
         self.give(a, "achievement.new")
         self.give(a, "achievement.depth", ACH.depth(k))
 
@@ -728,7 +798,9 @@ class SimEnv:
     def begin(self, a: Agent, act: int):
         name = ACTIONS[act]
         r = self.rng
-        a.did = a.next_did
+        SimEnv._did += 1
+        a.did, a.kind, a.did_t = SimEnv._did, name, self.t
+        self.assigned[a.i] = a.did
         raw = self.raw(a)
         if not spec.allowed(act, raw):   # RlEnv: a masked action is a failed step, nothing done
             a.pending = (act, False, "MASKED", self.t)
@@ -797,12 +869,9 @@ class SimEnv:
         name = ACTIONS[act]
         self.changed = False
         if ok:
-            before = dict(a.bag)
             res = self.effect(a, name, self.rng)
             if res:
                 ok, reason = False, res
-            else:
-                self.note_novel(a, name, before)
         if name in MOVES or name.startswith("place:"):
             a.stuck.clear()
         result = "OK" if ok else reason
@@ -944,7 +1013,7 @@ class SimEnv:
             item, n, xp = {"coal": ("coal", 3, 1), "iron": ("iron_ore", 3, 0), "gold": ("gold_ore", 2, 0),
                            "redstone": ("redstone", 4, 3), "diamond": ("diamond", 1, 5), "obsidian": ("obsidian", 1, 0)}[ore]
             pick = a.best_item("pickaxe")
-            causes = [self.cause(a, pick)]
+            causes = [self.cause(a, pick)]   # the ore: the craft of the pickaxe that dug it
             self.got(a, item, n, "gathered." + item if item in ("coal", "iron_ore") else None)
             self.give(a, "mine." + ore, n, causes=causes)
             if ore == "iron":
@@ -964,7 +1033,8 @@ class SimEnv:
             a.trip_out = True
             a.post = False
             a.dist = self.mine_d
-            self.made(a, "trip")
+            if not a.trip_out or "trip" not in a.made:
+                self.made(a, "trip")
             for k in self.hidden[a.depth]:
                 self.see_ore(a.depth, k, 0.35)
         elif name == "tunnel:branch":
@@ -994,6 +1064,8 @@ class SimEnv:
                     return "NO_PATH"
             for k, v in need.items():
                 a.add(k, -v)
+            if item == "bread":
+                self.baked += 1
             if item == "bread":   # the farm's wheat makes renewable bread: its planting is its cause
                 k = 0
                 while k < 3 and self.ren_wheat:
@@ -1063,13 +1135,13 @@ class SimEnv:
                 return "NO_ITEMS"
             a.add(mat, -k)
             self.wall += k
-            self.builders.append((a.did, self.t, a.i))
+            self.builders.append((a.did, self.t, a.i, a.kind))
             self.give(a, "built.wall", k)
             a.dist = r.uniform(5, 9)
         elif name == "dig_moat:ring":
             n = min(int(SK["dig_moat"].get("yield_mean", 16)), MOAT - self.moat)
             self.moat += n
-            self.builders.append((a.did, self.t, a.i))
+            self.builders.append((a.did, self.t, a.i, a.kind))
             self.got(a, "dirt", n)
             self.give(a, "built.moat", n)
             a.dist = r.uniform(8, 11)
@@ -1187,7 +1259,7 @@ class SimEnv:
             a.add("wooden_door", -1)
             self.door = True
             self.gate_open = False
-            self.builders.append((a.did, self.t, a.i))
+            self.builders.append((a.did, self.t, a.i, a.kind))
         elif name == "close:gate":
             if not self.gate_open:
                 return "DONE_ALREADY"
@@ -1228,7 +1300,7 @@ class SimEnv:
             a.add("wheat_seeds", -n)
             self.planted += n
             g0, g1 = CAL["crops"]["grow_s"]
-            self.crops += [(self.t + r.uniform(g0, g1), a.did, a.i) for _ in range(n)]
+            self.crops += [(self.t + r.uniform(g0, g1) / GROW, a.did, a.i) for _ in range(n)]
         elif name == "harvest:farm":
             if not self.ripe:
                 return "NOT_RIPE"
@@ -1239,12 +1311,18 @@ class SimEnv:
             self.got(a, "wheat", n)
             s0, s1 = CAL["crops"]["seeds_per_harvest"]
             self.got(a, "wheat_seeds", sum(r.randint(s0, s1) for _ in range(n)))
+            k = min(n, a.n("wheat_seeds"))   # contract 3: harvest replants with its own seeds
+            if k:
+                a.add("wheat_seeds", -k)
+                self.planted += k
+                g0, g1 = CAL["crops"]["grow_s"]
+                self.crops += [(self.t + r.uniform(g0, g1) / GROW, a.did, a.i) for _ in range(k)]
         elif name == "plant:sapling":
             if a.n("sapling") < 1:
                 return "NO_ITEMS"
             a.add("sapling", -1)
             g0, g1 = CAL["saplings"]["grow_s"]
-            self.saplings.append(self.t + r.uniform(g0, g1))
+            self.saplings.append(self.t + r.uniform(g0, g1) / GROW)
         elif name == "build_pen:pasture":
             if a.n("fence") < 15 or a.n("fence_gate") < 1:
                 return "NO_ITEMS"
@@ -1269,7 +1347,7 @@ class SimEnv:
                 if a.n(f) >= 2:
                     a.add(f, -2)
                     break
-            self.pen_young.append((self.t + CAL["pasture"]["grow_s"], k))
+            self.pen_young.append((self.t + CAL["pasture"]["grow_s"] / GROW, k))
             self.pen_rest[k] = self.t + CAL["pasture"]["breed_cooldown_s"]
             self.bred += 1
             self.xp(a, 3)
@@ -1294,6 +1372,100 @@ class SimEnv:
             a.enchanted += 1
             self.give(a, "enchant.item")
             self.give(a, "enchant.levels", spent)
+        elif name.startswith(("place:block@", "place:water@", "place:lava@", "place:torch@")):
+            return self.place_at(a, name[6:name.index("@")], name[name.index("@") + 1:], r)
+        elif name.startswith("use:bucket@"):
+            tg = name[11:]
+            if a.n("bucket") < 1:
+                return "NO_ITEMS"
+            raw = self.raw(a)
+            if raw.get("tgt_%s_lava_src" % tg, 0) > 0.5 or tg == "moat" and self.moat_liquid and self.moat_liquid[0] == "lava":
+                liquid = "lava"
+            elif raw.get("tgt_%s_water_src" % tg, 0) > 0.5 or tg == "moat" and self.moat_liquid and self.moat_liquid[0] == "water":
+                liquid = "water"
+            else:
+                return "NOT_SEEN"
+            a.add("bucket", -1)
+            self.got(a, liquid + "_bucket", 1)
+            self.made(a, liquid + "_bucket")
+            if tg == "moat":
+                self.moat_liquid = None
+        elif name.startswith("use:fire@"):
+            if a.n("flint_and_steel") < 1:
+                return "NO_ITEMS"
+            if name.endswith("@mob") and self.enemies > 0 and self.phase == "wave":
+                k = min(int(self.enemies), r.randint(0, 2))
+                link = self.link(a, a.did, a.did_t, a.kind, "block:fire")
+                if k:
+                    self.kill(a, k, chain=[link])
+                else:
+                    self.effect_of(a, [link], "mob_hurt")
+            else:
+                self.changed = False
+        elif name == "attack@mob":
+            e = self.enemies if self.phase == "wave" else 0
+            if e + self.inside <= 0:
+                return "NOT_VISIBLE"
+            weapon = a.best_item("sword")
+            p = (0.25 + 0.15 * a.held) * (1.0 if a.held else self.sc.get("unarmed", 1.0))
+            k = min(int(math.ceil(e + self.inside)), self.poisson(p * 3))
+            self.hurt(a, 0.3, 3.0)
+            if k:
+                self.kill(a, k, inside=self.inside >= k and e < k, weapon=weapon)
+            else:
+                self.effect_of(a, [self.hit(a), self.cause(a, weapon)], "mob_hurt")
+                self.changed = False
+        elif name == "attack@animal":
+            if self.animals <= 0:
+                return "NO_ANIMAL"
+            self.leave(a)
+            self.animals -= 1
+            kind = r.choices(list(ANIMALS), weights=list(ANIMALS.values()))[0]
+            self.drops(a, kind)
+            self.effect_of(a, [self.hit(a), self.cause(a, a.best_item("sword"))], "animal_killed")
+        elif name in ("open@gate", "open@front"):
+            if not self.door:
+                return "NOT_SEEN"
+            self.gate_open = not self.gate_open
+        return ""
+
+    def place_at(self, a: Agent, slot: str, tg: str, r: random.Random) -> str:
+        """place:<slot>@<target>: a building block, a bucket of water or lava, a torch into a target slot"""
+        if slot == "block":
+            mat = max(("cobblestone", "planks", "dirt"), key=a.n)
+            if a.n(mat) < 1:
+                return "NO_ITEMS"
+            a.add(mat, -1)
+            if tg == "hole" and self.ring and self.wall < RING:
+                self.wall += 1
+                self.bad = max(0, self.bad - (1 if self.wall > RING - self.bad else 0))
+                self.builders.append((a.did, self.t, a.i, a.kind))
+            elif tg == "moat" and self.moat > 0:
+                self.moat -= 1
+            return ""
+        if slot == "torch":
+            if a.n("torch") < 1:
+                return "NO_ITEMS"
+            a.add("torch", -1)
+            if tg in ("front", "below", "front_down", "hole") and a.depth == 0 and a.dist < 12:
+                self.torches = min(12, self.torches + 1)
+            return ""
+        item = slot + "_bucket"
+        if a.n(item) < 1:
+            return "NO_ITEMS"
+        a.add(item, -1)
+        a.add("bucket", 1)
+        link = self.link(a, a.did, a.did_t, a.kind, "block:" + slot)
+        if tg == "moat" and self.moat > 0:
+            self.moat_liquid = (slot, link)
+        elif tg == "mob" and slot == "lava" and self.enemies > 0 and self.phase == "wave":
+            k = min(int(self.enemies), r.randint(1, 3))
+            self.kill(a, k, chain=[link])
+        elif slot == "lava" and tg in ("front", "below", "front_down"):   # lava at one's feet: a burn, at worst death
+            self.hurt(a, 1.0, 4.0)
+            if a.health <= 0:
+                self.give(a, "accident")
+                self.die(a, out=False, accident=True)
         return ""
 
     def drops(self, a: Agent, kind: str) -> int:
@@ -1371,18 +1543,21 @@ class SimEnv:
             return hp
         return 0.0
 
-    def kill(self, a: Agent, k: int, inside: bool = False, weapon: str | None = None):
-        """k mobs killed by a: the causes are the craft of the weapon that did it and the post it took"""
+    def kill(self, a: Agent, k: int, inside: bool = False, weapon: str | None = None, chain: list | None = None):
+        """k mobs killed by a: the chain is the blow (the running decision) and the craft of the weapon that did it,
+        or the one given (lava, fire: the decision that put it)"""
         if inside:
             self.inside -= k
         else:
             self.enemies -= k
         self.kills += k
         weapon = weapon or a.best_item("sword")
-        causes = [self.cause(a, weapon), self.cause(a, "post") if a.post else None]
+        causes = chain if chain is not None else [self.hit(a), self.cause(a, weapon)]
         self.give(a, "kill", k, causes=causes)
         self.give(a, "perimeter.kill", k, causes=causes)
-        self.chain(a, weapon, "kill", k)
+        self.effect_of(a, causes, "mob_killed")
+        if chain is None:
+            self.chain(a, weapon, "kill", k)
         self.xp(a, 5 * k)
         self.achieve(a, "killEnemy")
         if a.enchanted and a.tier("sword") >= 4 and self.rng.random() < 0.1 * k:   # 18 in a hit: an enchanted diamond sword
@@ -1415,7 +1590,7 @@ class SimEnv:
         wave = self.phase == "wave"
         open_ = 2 if self.gate_open else 0
         wallf = max(0.0, self.wall - open_) / RING if self.ring else 0.0
-        leak = (1 - wallf) * (1 - 0.4 * self.moat / MOAT)
+        leak = (1 - wallf) * (1 - 0.4 * self.moat / MOAT) * (0.7 if self.moat_liquid else 1.0)
         if self.crops:   # crops, saplings, young animals grow
             ripe = [c for c in self.crops if c[0] <= self.t]
             if ripe:
@@ -1444,16 +1619,27 @@ class SimEnv:
                     a.food = max(0.0, a.food - drain)
                 if a.food >= CAL["hunger"]["regen_min_food"]:
                     a.health = min(20.0, a.health + 0.25 * dt)
-                elif a.food <= 0 and a.health > 1:   # normal difficulty: hunger hurts down to half a heart
-                    hp = min(a.health - 1, dt / CAL["hunger"]["starve_dmg_s"])
+                elif a.food <= 0:   # contract 2: hunger hurts to death (as "hard"); the death is an accident
+                    hp = dt / CAL["hunger"]["starve_dmg_s"]
                     a.health -= hp
                     self.give(a, "damage", hp)
+                    if a.health <= 0:
+                        self.give(a, "accident")
+                        self.die(a, out=False, accident=True)
+                        continue
             else:
                 a.health = min(20.0, a.health + 0.25 * dt)   # the agents count as fed: 1 a 4 s
             if a.depth:   # under the surface: caves' mobs, now and then lava or a fall
                 lit = 0.5 if a.n("torch") else 1.0
                 self.hurt(a, CAL["mine"]["cave_hits"][a.depth] * lit, dt, 4.0)
-                if self.noise and self.rng.random() < CAL["mine"]["accident"][a.depth] * dt / 10:
+                risk = self.sc.get("lava_risk", 0.0) if a.depth == 2 else 0.0
+                if (self.noise or risk) and self.rng.random() < (CAL["mine"]["accident"][a.depth] + risk) * dt / 10:
+                    if a.n("water_bucket") and self.rng.random() < 0.85:   # the reflex: water under itself, saved
+                        a.add("water_bucket", -1)
+                        a.add("bucket", 1)
+                        link = self.cause(a, "water_bucket", "block:water")
+                        self.effect_of(a, [link] if link else [self.link(a, a.did, a.did_t, "reflex:water", "block:water")], "agent_saved")
+                        continue
                     self.give(a, "accident")
                     self.die(a, out=False, accident=True)
                     continue
@@ -1470,18 +1656,20 @@ class SimEnv:
                 self.hurt(a, 0.08 * math.sqrt(e), dt)
             elif a.holding and a.post:
                 self.hurt(a, 0.025 * math.sqrt(e) * (0.4 + leak), dt)
-                k = min(self.poisson((0.05 + 0.04 * a.held) * dt * min(1.0, e / 2)), int(math.ceil(self.enemies)))
+                unarmed = 1.0 if a.held else self.sc.get("unarmed", 1.0)
+                k = min(self.poisson((0.05 + 0.04 * a.held) * unarmed * dt * min(1.0, e / 2)), int(math.ceil(self.enemies)))
                 if k:
                     self.kill(a, k)
             else:
                 self.hurt(a, 0.025 * e * (leak if inside else 1.0), dt, inside=bool(inside))
                 if leak > 0.3 or not self.ring:
-                    k = min(self.poisson(0.012 * (1 + a.held) * dt), int(math.ceil(self.enemies)))
+                    unarmed = 1.0 if a.held else self.sc.get("unarmed", 1.0)
+                    k = min(self.poisson(0.012 * (1 + a.held) * unarmed * dt), int(math.ceil(self.enemies)))
                     if k:
                         self.kill(a, k)
             if inside and self.inside > 0:   # what got in hits the agents inside, they fight it
                 self.hurt(a, 0.05 * self.inside, dt, inside=True)
-                k = min(self.poisson(0.04 * (1 + a.held) * dt), int(math.ceil(self.inside)))
+                k = min(self.poisson(0.04 * (1 + a.held) * (1.0 if a.held else self.sc.get("unarmed", 1.0)) * dt), int(math.ceil(self.inside)))
                 if k:
                     self.kill(a, k, inside=True)
             if a.health <= 0:
@@ -1489,6 +1677,12 @@ class SimEnv:
         if wave:
             if self.ring and self.wave_num >= 6 and self.wall > 0:   # creepers from the 6th wave
                 self.wall = max(0, self.wall - self.poisson(0.01 * self.enemies * dt * (1 - 0.5 * self.moat / MOAT)))
+            if self.moat_liquid and self.moat_liquid[0] == "lava" and self.enemies > 0 and self.moat > 0:
+                # the trap: mobs crossing the lava moat burn; the kills are its pourer's (chain: block:lava)
+                k = min(self.poisson(0.03 * self.enemies * dt * self.moat / MOAT), int(self.enemies))
+                if k:
+                    who = next((b for b in self.agents if b.i == self.moat_liquid[1]["agent"]), self.agents[0])
+                    self.kill(who, k, chain=[self.moat_liquid[1]])
             if self.ring and self.enemies > 0:   # the perimeter: mobs that get inside the wall
                 k = min(self.poisson(0.02 * self.enemies * leak * dt), int(self.enemies))
                 if k:
@@ -1508,7 +1702,9 @@ class SimEnv:
                 self.give_all("perimeter.wave_cleared")
                 if self.wave_breaches == 0 and self.ring:   # a clean wave: the wall's builders are its causes
                     self.clean += 1
-                    self.give_all("perimeter.clean_wave", causes=[b[0] for b in self.builders[-8:]])
+                    for a in self.agents:
+                        self.give(a, "perimeter.clean_wave", causes=[self.link(next(x for x in self.agents if x.i == b[2]), b[0], b[1], b[3],
+                                                                               "block:cobblestone") for b in self.builders[-8:]])
                 self.phase, self.phase_until = "break", self.t + (60 if self.sc["seconds"] > 1200 else 20)
             elif self.wave_losses >= len(self.agents):
                 self.done, self.reason = True, "lost"
@@ -1548,7 +1744,6 @@ class SimEnv:
             self.enemies *= 1 - min(0.3, self.torches / 40) if not self.sim_only else 1 - min(0.8, self.torches / 15)
             self.enemies = float(round(self.enemies))
             self.spawned += int(self.enemies)
-            self.give_all("spawned", self.enemies)   # delay:torches: no cause named (torches act through the spawn)
             self.wave_losses = 0
             self.wave_breaches = 0
             self.wave_mob_s = 0.0
@@ -1564,7 +1759,7 @@ class SimEnv:
     # ---- the protocol -----------------------------------------------------------------------------------
     def decide(self, ready: list[Agent], first: bool = False, final: bool = False):
         out = {"agents": [], "obs": [], "mask": [], "raw": [], "reward": [], "components": [], "done": bool(self.done),
-               "decision_ids": [], "events": [], "t": self.t}
+               "t": self.t}
         if not first:
             self.measure()
         for a in ready:
@@ -1576,28 +1771,27 @@ class SimEnv:
                 self.comp["shaping"] = self.comp.get("shaping", 0.0) + f
                 a.phi = phi
             raw = self.raw(a)
-            SimEnv._did += 1
-            a.next_did = SimEnv._did
             out["agents"].append(a.i)
             out["raw"].append(raw)
             out["obs"].append(spec.vector(raw))
             out["mask"].append(spec.mask(raw))
             out["reward"].append(a.acc)
             out["components"].append(a.comp)
-            out["decision_ids"].append(a.next_did)
-            out["events"].append(a.events)
-            a.acc, a.comp, a.events = 0.0, {}, []
+            a.acc, a.comp = 0.0, {}
         out["info"] = {"t": self.t, "ticks": int(self.t * 20), "scenario": self.scenario, "done_reason": self.reason,
                        "success": self.success() if self.done else False, "cleared": self.cleared,
                        "goal_progress": self.progress(), "episode_components": dict(self.comp) if self.done else {},
                        "achievements": self.crew_ach(), "breaches": self.breaches, "mob_seconds": round(self.mob_s, 1),
-                       "clean_waves": self.clean, "novel": self.novel, "kills": self.kills, "spawned": self.spawned,
+                       "clean_waves": self.clean, "novel": self.novel, "discoveries": self.discoveries, "kills": self.kills,
+                       "spawned": self.spawned, "assigned": dict(self.assigned), "events": self.events,
                        "sustain": [round(self.sus["food_renew"], 2), round(self.sus["food_eaten"], 2)]}
+        self.assigned, self.events = {}, []
         if self.done:
             got = set()
             for a in self.agents:
                 got |= a.ach
             out["info"]["achievement_ids"] = sorted(got - {"openInventory"})
+            out["info"]["journal"] = sorted(self.journal)
             out["info"]["chains"] = [{"agent": k[0], "cause": k[2], "made_s": round(v[0], 1), "last_s": round(v[2], 1), "effects": v[1]}
                                      for k, v in self.chains.items()]
         return out
@@ -1652,7 +1846,7 @@ if __name__ == "__main__":   # a random agent (uniform over the allowed actions,
                     acts[i] = env.rng.choice(ok)
                 o = env.step(acts)
                 steps += 1
-            for k in ("success", "cleared", "achievements", "breaches", "novel"):
+            for k in ("success", "cleared", "achievements", "breaches", "novel", "kills"):
                 res[k] += o["info"][k]
             res[o["info"]["done_reason"]] += 1
         print(sc, dict(res))
