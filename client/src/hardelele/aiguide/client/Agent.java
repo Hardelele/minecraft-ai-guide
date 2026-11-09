@@ -146,6 +146,7 @@ public class Agent extends EntityCreature implements Doer {
         float before = getHealth();
         boolean hit = super.attackEntityFrom(s, amount);
         if (hit && !worldObj.isRemote) {
+            if (hungerOn) hunger.exhaust(s.getHungerDamage());   // as a player's hurt
             hurtAt = ticksExisted;
             hurtBy = s.getEntity() != null ? s.getEntity().getCommandSenderName() : s.getDamageType();
             Defense.of(who()).taken += Math.max(0, before - getHealth());
@@ -199,10 +200,26 @@ public class Agent extends EntityCreature implements Doer {
     @Override
     public float getEyeHeight() { return 1.62F; }
 
+    /** its hunger as a player's (Hunger), when the agents get hungry (hungerOn: a learning scenario's rule); else it is fed */
+    final Hunger hunger = new Hunger();
+    static volatile boolean hungerOn;
+    /** its experience as a player's (orbs picked up, levels spent on an enchanting) */
+    final Xp xp = new Xp();
+    boolean running;   // the last step was faster than a walk (a jump then costs as a sprint jump)
+    int reflexAt = -1000;   // when it last put water under itself (AgentLife)
+
     @Override
     public void onLivingUpdate() {
         super.onLivingUpdate();
-        if (!worldObj.isRemote && !isDead && getHealth() > 0 && getHealth() < getMaxHealth() && ticksExisted % 80 == 0) heal(1.0F);
+        if (worldObj.isRemote || isDead || getHealth() <= 0) return;
+        AgentLife.tick(this);   // hunger or a fed body's healing, the orbs, the water reflex
+    }
+
+    /** a jump costs food as a player's (more running) */
+    @Override
+    protected void jump() {
+        super.jump();
+        if (!worldObj.isRemote && hungerOn) hunger.jumped(running);
     }
 
     @Override

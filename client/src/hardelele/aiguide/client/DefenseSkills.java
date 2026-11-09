@@ -409,7 +409,8 @@ final class DefenseSkills {
      * have no hunger (they count as fed): a bite heals them by its food points, the game's number for it.
      */
     static Skill eat(Agent a, final int most) {
-        if (a.getHealth() >= a.getMaxHealth()) return MindSkills.failed("FULL_HEALTH", "health " + Math.round(a.getHealth()) + " of " + Math.round(a.getMaxHealth()) + ": nothing to heal");
+        if (!Agent.hungerOn && a.getHealth() >= a.getMaxHealth()) return MindSkills.failed("FULL_HEALTH", "health " + Math.round(a.getHealth()) + " of " + Math.round(a.getMaxHealth()) + ": nothing to heal");
+        if (Agent.hungerOn && !a.hunger.canEat(false)) return MindSkills.failed("NOT_HUNGRY", "food " + a.hunger.food + "/20: full (as a player, it cannot eat)");
         if (food(a) == null) return MindSkills.failed("NO_FOOD", "no food in the bag (bread, apples, cooked meat; raw meat is cooked in a furnace: smelt)");
         Skill s = new Skill() {
             int ticks, eaten;
@@ -417,7 +418,7 @@ final class DefenseSkills {
             Result run(Agent ag, WorldServer w) {
                 if (from < 0) from = ag.getHealth();
                 ItemStack f = food(ag);
-                if (f == null || eaten >= most || ag.getHealth() >= ag.getMaxHealth()) return end(ag);
+                if (f == null || eaten >= most || (Agent.hungerOn ? !ag.hunger.canEat(false) : ag.getHealth() >= ag.getMaxHealth())) return end(ag);
                 ag.body.stop();
                 ag.body.hold(f);
                 if (++ticks % 4 == 0) { ag.swingItem(); w.playSoundEffect(ag.posX, ag.posY + 1, ag.posZ, "random.eat", 0.5F, 1.0F); }
@@ -427,7 +428,9 @@ final class DefenseSkills {
                 Item it = f.getItem();
                 Skills.take(ag, it, f.getMetadata(), 1, Ledger.Way.INGREDIENT);
                 if (it == Items.mushroom_stew) Skills.put(ag, new ItemStack(Items.bowl), Ledger.Way.CRAFTED);
-                ag.heal(heal);
+                if (Agent.hungerOn) ag.hunger.eat(heal, ((ItemFood) it).getSaturationModifier(f));   // hungry: food and saturation, the healing by them
+                else ag.heal(heal);
+                RlEnv.ate(ag, heal);
                 eaten++;
                 Defense.of(ag.who()).eaten++;
                 w.playSoundEffect(ag.posX, ag.posY + 1, ag.posZ, "random.burp", 0.5F, 1.0F);

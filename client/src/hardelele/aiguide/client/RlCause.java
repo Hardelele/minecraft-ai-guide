@@ -69,6 +69,13 @@ final class RlCause {
         return l;
     }
 
+    /** a decision beside the agent's own (a reflex of its body): an id of its own, the agent's current one stays */
+    Link aside(String agent, long tick, String kind) {
+        Link l = new Link(next++, agent, tick, kind, null);
+        decisions.put(l.id, l);
+        return l;
+    }
+
     Link decision(long id) { return decisions.get(id); }
 
     /** the agent's decision running now (via step), or null */

@@ -40,6 +40,7 @@ public final class RlTest {
         achievements();
         score();
         causes();
+        body();
         System.out.println("RlTest " + (bad == 0 ? "PASS" : "FAIL") + " (" + passed + " checks, " + bad + " failed)");
         if (bad > 0) System.exit(1);
     }
@@ -273,6 +274,29 @@ public final class RlTest {
         sl.progress("1", 100);
         check(!sl.check("1", 150) && sl.check("1", 160), "progress starts the window again");
         check(RlScore.progress("mine") && RlScore.progress("goal") && !RlScore.progress("time") && !RlScore.progress("skill_fail"), "what counts as progress");
+    }
+
+    /** the agents' experience and hunger as a player's of 1.7.10 */
+    static void body() {
+        Xp x = new Xp();
+        x.add(17);
+        check(x.level == 1 && x.progress < 1e-6 && x.total == 17, "17 points: level 1 (" + x.level + ")");
+        x.setLevels(15);
+        check(x.level == 15 && Xp.cap(15) == 17 && Xp.cap(16) == 20 && Xp.cap(30) == 62 && Xp.cap(31) == 69, "the bar's caps");
+        x.spend(3);
+        check(x.level == 12, "levels spent on an enchanting");
+        Hunger h = new Hunger();
+        for (int i = 0; i < 200; i++) h.exhaust(0.15F);   // 30 of exhaustion: 5 points of saturation, then 2 of food
+        h.tick(20, 20, 0);
+        int was = h.food;
+        for (int i = 0; i < 60; i++) h.tick(20, 20, 0);
+        check(h.food == 18 && h.saturation == 0, "exhaustion takes the saturation, then the food: " + h.line());
+        h.food = 0;
+        int starve = 0;
+        for (int i = 0; i < 81; i++) if (h.tick(10, 20, 0) == Hunger.STARVE) starve++;
+        check(starve == 1, "starving: a point of damage every 4 s");
+        h.eat(5, 0.6F);
+        check(h.food == 5 && h.canEat(false) && was <= 20, "bread: 5 points");
     }
 
     /** the causes on synthetic events: a lava trap, a sword made then used, a water bucket that saves; the novelty once */

@@ -18,7 +18,7 @@ PURE = ["Sight.java", "CaseVec.java", "CaseBook.java", "Events.java", "Result.ja
         "PlaceView.java", "PlaceSource.java", "Labels.java", "Episodes.java", "Scrub.java", "ShareBuild.java", "ShareUpload.java", "CrewCommand.java",
         "UiIcon.java", "UiLayout.java", "UiToasts.java", "Mind.java", "MindState.java", "Defense.java",
         "WavePlan.java", "WaveRing.java", "WaveCycle.java", "WaveReport.java", "WaveCommand.java",
-        "EpochScore.java", "Lessons.java", "EpochKnobs.java", "EpochRun.java", "RlSpec.java", "RlSpec1.java", "RlAchievements.java", "RlScore.java", "RlCause.java", "RlReward.java", "PolicyNet.java"]   # the classes with no game in them (Gson aside)
+        "EpochScore.java", "Lessons.java", "EpochKnobs.java", "EpochRun.java", "RlSpec.java", "RlSpec1.java", "RlAchievements.java", "RlScore.java", "RlCause.java", "Xp.java", "Hunger.java", "RlReward.java", "PolicyNet.java"]   # the classes with no game in them (Gson aside)
 TESTS = ["hardelele.aiguide.client.SightTest", "hardelele.aiguide.client.CaseTest", "hardelele.aiguide.client.ReflexesTest",
          "hardelele.aiguide.client.PlacesSplitTest", "hardelele.aiguide.client.PlacesNetTest", "hardelele.aiguide.client.FeedbackTest",
          "hardelele.aiguide.client.CrewCommandTest", "hardelele.aiguide.client.UiLayoutTest", "hardelele.aiguide.client.MindTest",

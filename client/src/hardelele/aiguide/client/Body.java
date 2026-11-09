@@ -203,7 +203,12 @@ class Body {
         if (k < 1) return Result.RUNNING;
         reset(w);
         Ledger.act(a, "break " + b.getUnlocalizedName().replace("tile.", ""));
-        return Skills.harvest(a, w, x, y, z) ? Result.OK : Result.BLOCKED;
+        boolean got = Skills.harvest(a, w, x, y, z);
+        if (got) {
+            if (Agent.hungerOn) a.hunger.exhaust(Hunger.BREAK);   // a block broken costs food as a player's
+            RlEnv.broken(a, w, x, y, z);
+        }
+        return got ? Result.OK : Result.BLOCKED;
     }
 
     private void reset(WorldServer w) {
@@ -262,6 +267,7 @@ class Body {
         MovingObjectPosition hit = aim();
         Result r = Skills.use(a, w, x, y, z, in, use, (float) (hit.hitVec.xCoord - use[0]), (float) (hit.hitVec.yCoord - use[1]), (float) (hit.hitVec.zCoord - use[2]));
         if (r == Result.OK && !a.bag.contains(in)) hold(Skills.bestHeld(a));   // the last one went: a tool in the hand again
+        if (r == Result.OK) RlEnv.placed(a, w, x, y, z);   // its decision's mark on the block (the causes)
         return r;
     }
 
