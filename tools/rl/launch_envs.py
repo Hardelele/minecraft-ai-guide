@@ -8,6 +8,7 @@ nothing while League of Legends or another Minecraft runs), each a dedicated For
     python tools/rl/launch_envs.py --host laptop status
     python tools/rl/launch_envs.py --host laptop --n 4 stop
     python tools/rl/launch_envs.py --host local --n 2 start       # here (the minecraft port is PORT + 1000)
+    python tools/rl/launch_envs.py --host local --n 2 --base-port 26104 --xmx 1536M --contract 3.1 start   # contract 3.1
 """
 import argparse
 import json
@@ -87,7 +88,7 @@ def local_ours():
     return res
 
 
-def local_start(ports, xmx, fast, seed):
+def local_start(ports, xmx, fast, seed, contract=""):
     if len(ports) + len(local_ours()) > LOCAL_MAX:
         sys.exit("at most %d servers here (the owner's limit); %d run now" % (LOCAL_MAX, len(local_ours())))
     if xmx_mb(xmx) > LOCAL_XMX_MB:
@@ -109,7 +110,10 @@ def local_start(ports, xmx, fast, seed):
         open(os.path.join(d, "eula.txt"), "w").write("eula=true\n")
         open(os.path.join(d, "server.properties"), "w").write(server_properties(port, seed))
         args = [LOCAL_JAVA, "-Xms256M", "-Xmx" + xmx, "-XX:+UseG1GC", "-Dfile.encoding=UTF-8", "-Daiguide.rl=%d" % port, "-Daiguide.rl.fast=%s" % str(fast).lower(),
-                "-Daiguide.rl.dir=" + d, "-Daiguide.places=false", "-Daiguide.record=false", "-jar", FORGE, "nogui"]
+                "-Daiguide.rl.dir=" + d, "-Daiguide.places=false", "-Daiguide.record=false"]
+        if contract:   # the contract served by default (3.1: -Daiguide.rl.contract=3.1; else 3)
+            args.append("-Daiguide.rl.contract=" + contract)
+        args += ["-jar", FORGE, "nogui"]
         flags = 0x00004000 | 0x00000200 | 0x08000000   # BELOW_NORMAL_PRIORITY_CLASS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
         p = subprocess.Popen(args, cwd=d, stdout=open(os.path.join(d, "stdout.txt"), "w"), stderr=open(os.path.join(d, "stderr.txt"), "w"),
                              stdin=subprocess.DEVNULL, creationflags=flags)
@@ -198,12 +202,13 @@ def main():
     ap.add_argument("--xmx", default="1200M")
     ap.add_argument("--no-fast", action="store_true")
     ap.add_argument("--seed", default="5802634")
+    ap.add_argument("--contract", default="", help="here: the contract the servers serve by default (3.1; else 3)")
     a = ap.parse_args()
     ports = [a.base_port + i for i in range(a.n)]
     fast = not a.no_fast
     if a.host == "local":
         if a.action == "start":
-            sys.exit(0 if local_start(ports, a.xmx, fast, a.seed) else 1)
+            sys.exit(0 if local_start(ports, a.xmx, fast, a.seed, a.contract) else 1)
         if a.action == "stop":
             local_stop(ports)
         elif a.action == "status":
