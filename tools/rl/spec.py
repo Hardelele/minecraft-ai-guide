@@ -3,17 +3,20 @@ generated from RlSpec.java: docs/rl/CONTRACT.md): the actions, the observation's
 of the actions from the raw facts (a port of RlSpec.allowed), the outcome groups, the scenarios.
 
 The simulator (tools/rl/sim_env.py) builds its raw facts under the game's names and runs them through vector() and
-mask() here, so its observations and masks are the real environment's in form. tools/rl/test_rl.py writes
+mask() here, so its observations and masks are the real environment's in form. tools/tests/test_rl_policy.py writes
 build/rl/obs-mask-cases.json and the Java test (PolicyTest) checks RlSpec.vector/mask give the same on them.
+
+AIGUIDE_RL_SPEC=<dir> reads the three files from another directory (a draft of the spaces).
 """
 from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-RL = ROOT / "rl"
+RL = Path(os.environ.get("AIGUIDE_RL_SPEC") or ROOT / "rl")
 
 _actions = json.loads((RL / "actions.json").read_text(encoding="utf-8"))
 _obs = json.loads((RL / "obs.json").read_text(encoding="utf-8"))
@@ -22,6 +25,7 @@ _reward = json.loads((RL / "reward.json").read_text(encoding="utf-8"))
 ACTIONS = [a["id"] for a in _actions["actions"]]
 ACTION_SPECS = _actions["actions"]
 ACTIONS_HASH = _actions.get("hash", "")
+VERSION = int(_actions.get("version", 1))   # the spaces' version: policy.bin's header carries it
 A = len(ACTIONS)
 IDX = {a: i for i, a in enumerate(ACTIONS)}
 FEATURES = [(f["name"], f["kind"], float(f["scale"])) for f in _obs["features"]]
