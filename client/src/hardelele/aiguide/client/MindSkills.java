@@ -242,7 +242,8 @@ final class MindSkills {
                     for (int dy : new int[] { 0, -1, 1 }) {
                         int x = f[0] + dx, y = f[1] + dy, z = f[2] + dz;
                         if (!Crew.soft(w, x, y, z) || !Crew.solid(w, x, y - 1, z) || Ground.liquid(w, x, y, z)) continue;
-                        boolean taken = false;
+                        boolean taken = a.boundingBox.intersectsWith(net.minecraft.util.AxisAlignedBB.getBoundingBox(x, y, z, x + 1, y + 1, z + 1))
+                                || a.boundingBox.intersectsWith(net.minecraft.util.AxisAlignedBB.getBoundingBox(x, y - 1, z, x + 1, y, z + 1));   // its own body (on stairs too)
                         for (Doer d : c.doers())
                             if (d.alive() && Math.floor(d.px()) == x && Math.floor(d.pz()) == z && Math.abs(Math.floor(d.py()) - y) <= 1) taken = true;
                         if (!taken) return new int[] { x, y, z };

@@ -11,7 +11,7 @@
 
 | файл | версия | хеш | размер |
 |---|---|---|---|
-| `rl/actions.json` | 3 | `d0bdaadf0eb3` | 124 действия (первые 38 — v1 в том же порядке) |
+| `rl/actions.json` | 3 | `553dfd026d9d` | 124 действия (первые 38 — v1 в том же порядке) |
 | `rl/obs.json` | 3 | `7821a391980f` | 402 признака |
 | `rl/reward.json` | 3 | `c5c25ba77c8a` (веса + `scenarioScales`) | 45 весов, 9 шкал, 17 сценариев |
 | `rl/achievements.json` | 3 | — | 33 достижения 1.7.10, 18 поддержаны |
@@ -36,7 +36,8 @@
 - `info` → `{"contract":3, "actions":{"version":3,"hash","n":124}, "obs":{"version":3,"hash","dim":402},
   "reward":{"version":3,"hash"}, "achievements":{"version":3,"n":33,"supported":18}, "scenarios":[…], …}`.
 - `reset` принимает ещё `"target":"<id достижения>"` — цель учебной программы по дереву достижений (признак
-  `ach_target_<id>`; на награду не влияет). Без него — нет цели.
+  `ach_target_<id>`; на награду не влияет). Без него — нет цели. `"extra_kit":"lava_bucket 2, …"` — добавка к
+  стартовому набору каждого агента (для проверок; обучение его не шлёт).
 - `step` → в `info` ещё: `assigned` — `{агент: decision_id}` решений, принятых по присланным в этом `step`
   действиям; `events` — события за шаг (раздел 2.1); при `done` — `measured` (сырые суммы всех ключей награды за
   эпизод, оплаченных и нет: метрики) и `achievements` (`{агент: [id…]}`).
@@ -116,9 +117,9 @@
 | 18 | `craft:chest` | craft (item=chest, count=1) | craftable_chest > 0 и (small_chest > 0 или СТОЛ) и bag_chest <= 0 и chest_known < 0.5 |
 | 19 | `smelt:iron_ingot` | smelt (item=iron_ingot, count=3) | bag_iron_ore > 0 и fuel > 0 и ПЕЧЬ |
 | 20 | `smelt:food` | smelt (item=food, count=4) | bag_food_raw > 0 и fuel > 0 и ПЕЧЬ |
-| 21 | `place:crafting_table` | place (item=crafting_table, at=near) | bag_crafting_table > 0 и (table_known < 0.5 или table_dist > 6) |
-| 22 | `place:furnace` | place (item=furnace, at=near) | bag_furnace > 0 и (furnace_known < 0.5 или furnace_dist > 6) |
-| 23 | `place:chest` | place (item=chest, at=near) | bag_chest > 0 и chest_known < 0.5 |
+| 21 | `place:crafting_table` | place (item=crafting_table, at=near) | bag_crafting_table > 0 и place_spot > 0.5 и (table_known < 0.5 или table_dist > 6) |
+| 22 | `place:furnace` | place (item=furnace, at=near) | bag_furnace > 0 и place_spot > 0.5 и (furnace_known < 0.5 или furnace_dist > 6) |
+| 23 | `place:chest` | place (item=chest, at=near) | bag_chest > 0 и place_spot > 0.5 и chest_known < 0.5 |
 | 24 | `build_wall:ring` | build_wall (shape=around base, height=2, material=any) | base_known > 0.5 и underground < 0.5 и wall_blocks > 0 и (ring_planned < 0.5 или wall_frac < 1) |
 | 25 | `repair_wall:nearest` | repair_wall | underground < 0.5 и ring_planned > 0.5 и holes > 0 и wall_blocks > 0 |
 | 26 | `dig_moat:ring` | dig_moat (depth=1) | underground < 0.5 и ring_planned > 0.5 и moat_frac < 1 |
@@ -127,7 +128,7 @@
 | 29 | `take_post:auto` | take_post (where=auto) | ring_planned > 0.5 и ((has_post < 0.5 и posts_free > 0) или (has_post > 0.5 и post_dist > 2)) |
 | 30 | `hold_line:post` | hold_line (radius=4, seconds=60) | waves_active > 0.5 и health >= low_health |
 | 31 | `retreat:home` | retreat (where=home) | base_known > 0.5 и base_dist > 3 |
-| 32 | `eat:best` | eat | food_items > 0 и (health < max_health или (hunger_on > 0.5 и food_level < 20)) |
+| 32 | `eat:best` | eat | food_items > 0 и ((hunger_on < 0.5 и health < max_health) или (hunger_on > 0.5 и food_level < 20)) |
 | 33 | `hunt:near` | hunt (at=near) | animals_seen > 0 |
 | 34 | `put:chest_all` | put (chest=crew, item=all, count=1728) | chest_known > 0.5 и bag_stackables > 0 |
 | 35 | `take:chest_food` | take (chest=crew, item=food, count=8) | chest_known > 0.5 и chest_food > 0 |
@@ -169,7 +170,7 @@
 | 71 | `gather:sugar_cane` | gather (what=sugar_cane, count=6) | underground < 0.5 и cane_seen > 0 |
 | 72 | `plant:sapling` | plant (what=sapling, count=4) | underground < 0.5 и bag_sapling > 0 и sapling_spots > 0 |
 | 73 | `build_pen:pasture` | build_pen | base_known > 0.5 и underground < 0.5 и bag_fence >= 15 и bag_fence_gate > 0 и pen_built < 0.5 |
-| 74 | `lure:pen` | lure | pen_built > 0.5 и lure_food > 0 и animals_seen > 0 и pen_animals < 8 |
+| 74 | `lure:pen` | lure | pen_built > 0.5 и lure_targets > 0 и pen_animals < 8 |
 | 75 | `breed:pen` | breed | pen_pairs > 0 |
 | 76 | `slaughter:pen` | slaughter | pen_adults >= 3 |
 | 77 | `craft:paper` | craft (item=paper, count=3) | craftable_paper > 0 и (small_paper > 0 или СТОЛ) и bag_paper < 32 |
@@ -190,7 +191,7 @@
 | 122 | `open@front` | open (target=front) | tgt_front_door > 0.5 |
 | 123 | `open@gate` | open (target=gate) | door_placed > 0.5 |
 
-СТОЛ = `(table_known > 0.5 и table_dist <= 24) или bag_crafting_table > 0`; ПЕЧЬ — то же для печи. «craftable»
+СТОЛ = `(table_known > 0.5 и table_dist <= 24) или (bag_crafting_table > 0 и place_spot > 0.5)`; ПЕЧЬ — то же для печи (`place_spot` — свободная клетка рядом). «craftable»
 у крафта — `craftable_<item> > 0 и (small_<item> > 0 или СТОЛ)`; точная формула каждого — в `actions.json`.
 
 ### 3.1. Примитивы второго уровня
@@ -289,7 +290,8 @@ redstone, diamond, obsidian, gravel: увиденное в 32 по горизо�
 `craftable_<item>`, `small_<item>`, `armor_craftable_<материал>`, `fuel`, `wall_blocks`, `light_spots`, `can_equip`
 (лучшее оружие не в руке или броня лучше надетой), `post_dist`, `low_health`, `max_health`, `food_items` (съедобное в
 сумке), `bag_stackables`, `sword_tier`, `hoe_tier`, `shelves_total` (полки у стола + в сумке), `lure_food`
-(пшеница + семена), `enchantable` (вещь без чар, которую можно зачаровать), `buckets` (вёдер всех видов),
+(пшеница + семена), `lure_targets` (видимые взрослые животные вне загона, чей корм есть в сумке), `place_spot` (свободная клетка рядом: свой
+верстак, печь, сундук), `enchantable` (вещь без чар, которую можно зачаровать), `buckets` (вёдер всех видов),
 `tgt_<цель>_water_src`, `tgt_<цель>_lava_src` (источник жидкости в цели).
 
 Тиры (`pick_tier`, `sword_tier`, `hoe_tier`): дерево 1, камень 2, железо 3, алмаз 4; золотая кирка — 1 (её уровень
@@ -393,13 +395,13 @@ redstone, diamond, obsidian, gravel: увиденное в 32 по горизо�
 | `wood` | пусто | брёвен ≥ 10 × экипаж | 300 |
 | `pickaxe` | пусто | `stone_pickaxe` ≥ экипаж | 600 |
 | `sword` | пусто | `stone_sword` ≥ экипаж | 600 |
-| `armor` | 8 `iron_ingot`, 5 `leather`, верстак | надетая броня ≥ 6 у каждого | 600 |
+| `armor` | 12 `iron_ingot`, 5 `leather`, верстак | надетая броня ≥ 8 у каждого (только 4 слота брони) | 600 |
 | `iron` | `stone_pickaxe`, 16 `planks`, 4 `stick` | `iron_pickaxe` ≥ экипаж | 900 |
 | `bow` | 3 `string`, 8 `stick`, 4 `flint`, 4 `feather`, верстак | лук и ≥ 8 стрел у каждого | 600 |
-| `mine_trip` | `stone_pickaxe`, 16 факелов, 4 `cooked_beef`, 16 булыжника; голод | каждый сходил: горизонт y≈40, руда, назад на поверхность | 900 |
-| `diamond` | `iron_pickaxe`, 32 факела, 6 `cooked_beef`, 32 булыжника; голод | ≥ 1 алмаз у экипажа | 1500 |
-| `farm` | `wooden_hoe`, 8 семян, 2 `cooked_beef`; голод | хлеба испечено ≥ 2 × экипаж | 1200 |
-| `pasture` | 15 заборов, калитка, 16 пшеницы, 8 семян, деревянный меч; голод | ≥ 1 детёныш в загоне | 1200 |
+| `mine_trip` | 2 `stone_pickaxe`, 16 факелов, 4 `cooked_beef`, 16 булыжника; голод | каждый сходил: горизонт y≈40, руда, назад на поверхность | 900 |
+| `diamond` | 2 `iron_pickaxe`, 32 факела, 6 `cooked_beef`, 32 булыжника; голод | ≥ 1 алмаз у экипажа | 1500 |
+| `farm` | `wooden_hoe`, 8 семян, 2 `cooked_beef`, верстак; голод | хлеба испечено ≥ 2 × экипаж | 1200 |
+| `pasture` | 15 заборов, калитка, 16 пшеницы, 8 семян, деревянный меч; голод; 3 коровы и 3 овцы в 10–20 блоках от базы | ≥ 1 детёныш в загоне | 1200 |
 | `enchant` | стол зачарований, 6 полок, железные меч и кирка; 8 уровней | зачарованная вещь у каждого | 600 |
 | `fortify` | 140 булыжника, `stone_pickaxe`, дверь | стена целиком и ров ≥ 90 % | 600 |
 | `food` | `wooden_sword`, здоровье 10 | еды ≥ 2 × экипаж (регрессия v1) | 300 |
@@ -448,7 +450,9 @@ redstone, diamond, obsidian, gravel: увиденное в 32 по горизо�
 - 3 — причинная разметка движка и цепочки причин у событий награды (`decision_id`, `assigned`, `events`),
   примитивы второго уровня (`place:<слот>@<цель>`, `use:bucket|fire@<цель>`, `attack@`, `open@`; крафт ведра и огнива),
   42 + 2 действия (124), признаки целей и `novel_count` (402), шкала `curiosity`, журнал открытий, рефлекс «вода под
-  себя».
+  себя». Правка по живому прогону (хеш действий d0bdaadf0eb3 → 553dfd026d9d, версия та же): `eat:best` при голоде —
+  только когда не сыт (как игрок, даже раненый), `lure:pen` — по `lure_targets`, свой верстак/печь/сундук из сумки — по
+  `place_spot`; наборы `armor`, `mine_trip`, `diamond`, `farm`, животные `pasture`.
 - 2 — 82 действия (шахта по горизонтам с возвратом, руды, броня, лук и стрельба, ворота, ферма, саженцы, загон,
   зачарование), маска данными в `actions.json`, 322 признака (голод, опыт, шахта, ферма, загон, периметр,
   восполняемость, достижения), награда шкалами по сценариям (изменение измеренного; `skill_ok` только со следом;

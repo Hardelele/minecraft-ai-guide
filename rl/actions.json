@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "hash": "d0bdaadf0eb3",
+  "hash": "553dfd026d9d",
   "n": 124,
   "v1_prefix": 38,
   "note": "Generated from RlSpec.java (docs/rl/CONTRACT-v2.md). The index is the action's number; noop (0) is always allowed and ends the episode with -1. The first 38 are contract 1's in its order. 'mask': the rule of the action's mask over the raw facts (a fact missing is 0): {\"all\":[...]}, {\"any\":[...]}, [fact, op, number or another fact], op one of > >= < <= == !=.",
@@ -159,11 +159,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -217,11 +226,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -275,11 +293,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -333,11 +360,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -391,11 +427,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -449,11 +494,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -507,11 +561,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -565,11 +628,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -623,11 +695,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -681,11 +762,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -739,11 +829,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -797,11 +896,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -860,11 +968,20 @@
                   ]
                 ]
               },
-              [
-                "bag_furnace",
-                ">",
-                0.0
-              ]
+              {
+                "all": [
+                  [
+                    "bag_furnace",
+                    ">",
+                    0.0
+                  ],
+                  [
+                    "place_spot",
+                    ">",
+                    0.5
+                  ]
+                ]
+              }
             ]
           }
         ]
@@ -905,11 +1022,20 @@
                   ]
                 ]
               },
-              [
-                "bag_furnace",
-                ">",
-                0.0
-              ]
+              {
+                "all": [
+                  [
+                    "bag_furnace",
+                    ">",
+                    0.0
+                  ],
+                  [
+                    "place_spot",
+                    ">",
+                    0.5
+                  ]
+                ]
+              }
             ]
           }
         ]
@@ -928,6 +1054,11 @@
             "bag_crafting_table",
             ">",
             0.0
+          ],
+          [
+            "place_spot",
+            ">",
+            0.5
           ],
           {
             "any": [
@@ -960,6 +1091,11 @@
             ">",
             0.0
           ],
+          [
+            "place_spot",
+            ">",
+            0.5
+          ],
           {
             "any": [
               [
@@ -990,6 +1126,11 @@
             "bag_chest",
             ">",
             0.0
+          ],
+          [
+            "place_spot",
+            ">",
+            0.5
           ],
           [
             "chest_known",
@@ -1233,11 +1374,20 @@
           ],
           {
             "any": [
-              [
-                "health",
-                "<",
-                "max_health"
-              ],
+              {
+                "all": [
+                  [
+                    "hunger_on",
+                    "<",
+                    0.5
+                  ],
+                  [
+                    "health",
+                    "<",
+                    "max_health"
+                  ]
+                ]
+              },
               {
                 "all": [
                   [
@@ -1551,11 +1701,20 @@
                   ]
                 ]
               },
-              [
-                "bag_furnace",
-                ">",
-                0.0
-              ]
+              {
+                "all": [
+                  [
+                    "bag_furnace",
+                    ">",
+                    0.0
+                  ],
+                  [
+                    "place_spot",
+                    ">",
+                    0.5
+                  ]
+                ]
+              }
             ]
           }
         ]
@@ -1600,11 +1759,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -1658,11 +1826,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -1716,11 +1893,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -1774,11 +1960,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -1832,11 +2027,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -1890,11 +2094,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -1938,11 +2151,20 @@
                   ]
                 ]
               },
-              [
-                "bag_crafting_table",
-                ">",
-                0.0
-              ]
+              {
+                "all": [
+                  [
+                    "bag_crafting_table",
+                    ">",
+                    0.0
+                  ],
+                  [
+                    "place_spot",
+                    ">",
+                    0.5
+                  ]
+                ]
+              }
             ]
           }
         ]
@@ -1977,11 +2199,20 @@
                   ]
                 ]
               },
-              [
-                "bag_crafting_table",
-                ">",
-                0.0
-              ]
+              {
+                "all": [
+                  [
+                    "bag_crafting_table",
+                    ">",
+                    0.0
+                  ],
+                  [
+                    "place_spot",
+                    ">",
+                    0.5
+                  ]
+                ]
+              }
             ]
           }
         ]
@@ -2016,11 +2247,20 @@
                   ]
                 ]
               },
-              [
-                "bag_crafting_table",
-                ">",
-                0.0
-              ]
+              {
+                "all": [
+                  [
+                    "bag_crafting_table",
+                    ">",
+                    0.0
+                  ],
+                  [
+                    "place_spot",
+                    ">",
+                    0.5
+                  ]
+                ]
+              }
             ]
           }
         ]
@@ -2055,11 +2295,20 @@
                   ]
                 ]
               },
-              [
-                "bag_crafting_table",
-                ">",
-                0.0
-              ]
+              {
+                "all": [
+                  [
+                    "bag_crafting_table",
+                    ">",
+                    0.0
+                  ],
+                  [
+                    "place_spot",
+                    ">",
+                    0.5
+                  ]
+                ]
+              }
             ]
           }
         ]
@@ -2178,11 +2427,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -2236,11 +2494,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -2294,11 +2561,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -2352,11 +2628,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -2419,11 +2704,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -2486,11 +2780,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -2724,12 +3027,7 @@
             0.5
           ],
           [
-            "lure_food",
-            ">",
-            0.0
-          ],
-          [
-            "animals_seen",
+            "lure_targets",
             ">",
             0.0
           ],
@@ -2800,11 +3098,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -2858,11 +3165,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -2916,11 +3232,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]
@@ -2974,11 +3299,20 @@
                           ]
                         ]
                       },
-                      [
-                        "bag_crafting_table",
-                        ">",
-                        0.0
-                      ]
+                      {
+                        "all": [
+                          [
+                            "bag_crafting_table",
+                            ">",
+                            0.0
+                          ],
+                          [
+                            "place_spot",
+                            ">",
+                            0.5
+                          ]
+                        ]
+                      }
                     ]
                   }
                 ]

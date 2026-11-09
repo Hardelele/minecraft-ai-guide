@@ -116,6 +116,15 @@ class Body {
         return m != null && m.blockX == x && m.blockY == y && m.blockZ == z;
     }
 
+    /** the aim on a block with no box (wheat, grass, a sapling, a torch): a ray that stops at what has a selection box, as a player's click */
+    boolean aimingAtPlant(int x, int y, int z) {
+        double[] v = look();
+        Vec3 from = Vec3.createVectorHelper(eyeX(), eyeY(), eyeZ());
+        Vec3 to = Vec3.createVectorHelper(eyeX() + v[0] * Crew.REACH, eyeY() + v[1] * Crew.REACH, eyeZ() + v[2] * Crew.REACH);
+        MovingObjectPosition m = a.worldObj.rayTraceBlocks(from, to, false, false, false);
+        return m != null && m.blockX == x && m.blockY == y && m.blockZ == z;
+    }
+
     boolean aimingAt(int x, int y, int z, int face) {
         MovingObjectPosition m = aim();
         return m != null && m.blockX == x && m.blockY == y && m.blockZ == z && m.sideHit == face;
@@ -127,8 +136,11 @@ class Body {
      */
     double[] sightPoint(WorldServer w, int x, int y, int z) {
         Vec3 from = Vec3.createVectorHelper(eyeX(), eyeY(), eyeZ());
+        Block blk = w.getBlock(x, y, z);
+        blk.setBlockBoundsBasedOnState(w, x, y, z);
+        double mid = (blk.getBlockBoundsMinY() + blk.getBlockBoundsMaxY()) / 2;   // a low plant's middle (wheat: an eighth up)
         for (int k = -1; k < 6; k++) {
-            double tx = x + 0.5, ty = y + 0.5, tz = z + 0.5;
+            double tx = x + 0.5, ty = y + (k < 0 ? mid : 0.5), tz = z + 0.5;
             if (k >= 0) {
                 int[] d = Skills.SIDE[k];
                 if (!w.isAirBlock(x + d[0], y + d[1], z + d[2]) && w.getBlock(x + d[0], y + d[1], z + d[2]).getMaterial().isSolid()) continue;
@@ -188,7 +200,8 @@ class Body {
         double dx = p[0] - eyeX(), dy = p[1] - eyeY(), dz = p[2] - eyeZ();
         if (Math.sqrt(dx * dx + dy * dy + dz * dz) > Crew.REACH) { reset(w); return Result.OUT_OF_REACH; }
         lookAt(p[0], p[1], p[2]);
-        if (!aimingAt(x, y, z)) {   // the eyes are not on it yet: the cracks wait
+        boolean plant = b.getCollisionBoundingBoxFromPool(w, x, y, z) == null;
+        if (!(aimingAt(x, y, z) || plant && aimingAtPlant(x, y, z))) {   // the eyes are not on it yet: the cracks wait
             if (++digWait > LOOK_FOR) { reset(w); return Result.NOT_VISIBLE; }
             return Result.RUNNING;
         }

@@ -88,8 +88,9 @@ final class RlSpec {
     static Cond none(String fact) { return is(fact, "<=", 0); }
 
     static final Cond ALWAYS = all();
-    static final Cond TABLE = any(all(on("table_known"), is("table_dist", "<=", 24)), has("bag_crafting_table"));
-    static final Cond FURNACE = any(all(on("furnace_known"), is("furnace_dist", "<=", 24)), has("bag_furnace"));
+    /** a table near, or its own from the bag with a free cell beside it to put it in */
+    static final Cond TABLE = any(all(on("table_known"), is("table_dist", "<=", 24)), all(has("bag_crafting_table"), on("place_spot")));
+    static final Cond FURNACE = any(all(on("furnace_known"), is("furnace_dist", "<=", 24)), all(has("bag_furnace"), on("place_spot")));
     static final Cond BASE = on("base_known");
     static final Cond SURFACE = off("underground");
 
@@ -137,9 +138,9 @@ final class RlSpec {
         for (String[] c : CRAFTS) l.add(new Action("craft:" + c[0], "craft", craftRule(c[0]), "item", c[0], "count", c[1]));
         l.add(new Action("smelt:iron_ingot", "smelt", all(has("bag_iron_ore"), has("fuel"), FURNACE), "item", "iron_ingot", "count", "3"));
         l.add(new Action("smelt:food", "smelt", all(has("bag_food_raw"), has("fuel"), FURNACE), "item", "food", "count", "4"));
-        l.add(new Action("place:crafting_table", "place", all(has("bag_crafting_table"), any(off("table_known"), is("table_dist", ">", 6))), "item", "crafting_table", "at", "near"));
-        l.add(new Action("place:furnace", "place", all(has("bag_furnace"), any(off("furnace_known"), is("furnace_dist", ">", 6))), "item", "furnace", "at", "near"));
-        l.add(new Action("place:chest", "place", all(has("bag_chest"), off("chest_known")), "item", "chest", "at", "near"));
+        l.add(new Action("place:crafting_table", "place", all(has("bag_crafting_table"), on("place_spot"), any(off("table_known"), is("table_dist", ">", 6))), "item", "crafting_table", "at", "near"));
+        l.add(new Action("place:furnace", "place", all(has("bag_furnace"), on("place_spot"), any(off("furnace_known"), is("furnace_dist", ">", 6))), "item", "furnace", "at", "near"));
+        l.add(new Action("place:chest", "place", all(has("bag_chest"), on("place_spot"), off("chest_known")), "item", "chest", "at", "near"));
         l.add(new Action("build_wall:ring", "build_wall", all(BASE, SURFACE, has("wall_blocks"), any(off("ring_planned"), is("wall_frac", "<", 1))),
                 "shape", "around base", "height", "2", "material", "any"));
         l.add(new Action("repair_wall:nearest", "repair_wall", all(SURFACE, on("ring_planned"), has("holes"), has("wall_blocks"))));
@@ -150,7 +151,7 @@ final class RlSpec {
                 "where", "auto"));
         l.add(new Action("hold_line:post", "hold_line", all(on("waves_active"), vs("health", ">=", "low_health")), "radius", "4", "seconds", "60"));
         l.add(new Action("retreat:home", "retreat", all(BASE, is("base_dist", ">", 3)), "where", "home"));
-        l.add(new Action("eat:best", "eat", all(has("food_items"), any(vs("health", "<", "max_health"), all(on("hunger_on"), is("food_level", "<", 20))))));
+        l.add(new Action("eat:best", "eat", all(has("food_items"), any(all(off("hunger_on"), vs("health", "<", "max_health")), all(on("hunger_on"), is("food_level", "<", 20))))));
         l.add(new Action("hunt:near", "hunt", has("animals_seen"), "at", "near"));
         l.add(new Action("put:chest_all", "put", all(on("chest_known"), has("bag_stackables")), "chest", "crew", "item", "all", "count", "1728"));
         l.add(new Action("take:chest_food", "take", all(on("chest_known"), has("chest_food")), "chest", "crew", "item", "food", "count", "8"));
@@ -189,7 +190,7 @@ final class RlSpec {
         l.add(new Action("gather:sugar_cane", "gather", all(SURFACE, has("cane_seen")), "what", "sugar_cane", "count", "6"));
         l.add(new Action("plant:sapling", "plant", all(SURFACE, has("bag_sapling"), has("sapling_spots")), "what", "sapling", "count", "4"));
         l.add(new Action("build_pen:pasture", "build_pen", all(BASE, SURFACE, is("bag_fence", ">=", 15), has("bag_fence_gate"), off("pen_built"))));
-        l.add(new Action("lure:pen", "lure", all(on("pen_built"), has("lure_food"), has("animals_seen"), is("pen_animals", "<", 8))));
+        l.add(new Action("lure:pen", "lure", all(on("pen_built"), has("lure_targets"), is("pen_animals", "<", 8))));
         l.add(new Action("breed:pen", "breed", has("pen_pairs")));
         l.add(new Action("slaughter:pen", "slaughter", is("pen_adults", ">=", 3)));
         // the enchanting
@@ -560,7 +561,7 @@ final class RlSpec {
 
     static final class Scenario {
         final String name;
-        String kit = "", chest = "", goalItem = "", goal = "";
+        String kit = "", chest = "", goalItem = "", goal = "", animals = "";
         int seconds = 300, perAgent = 1, xpLevels;
         long time = 1000;
         float health = 20;
@@ -588,17 +589,17 @@ final class RlSpec {
             case "wood": s.goal = "items"; s.goalItem = "log"; s.perAgent = 10; s.seconds = 300; s.on("stock", "achievement"); break;
             case "pickaxe": s.goal = "items"; s.goalItem = "stone_pickaxe"; s.seconds = 600; s.on("achievement").only("equipment", "pickaxe"); break;
             case "sword": s.goal = "items"; s.goalItem = "stone_sword"; s.seconds = 600; s.on("achievement").only("equipment", "weapon"); break;
-            case "armor": s.goal = "armor"; s.perAgent = 6; s.seconds = 600; s.kit = "iron_ingot 8, leather 5, crafting_table 1"; s.on("achievement").only("equipment", "armor"); break;
+            case "armor": s.goal = "armor"; s.perAgent = 8; s.seconds = 600; s.kit = "iron_ingot 12, leather 5, crafting_table 1"; s.on("achievement").only("equipment", "armor"); break;
             case "iron": s.goal = "items"; s.goalItem = "iron_pickaxe"; s.seconds = 900; s.kit = "stone_pickaxe 1, planks 16, stick 4"; s.on("mine", "achievement").only("equipment", "pickaxe"); break;
             case "bow": s.goal = "bow"; s.perAgent = 8; s.seconds = 600; s.kit = "string 3, stick 8, flint 4, feather 4, crafting_table 1"; s.on("achievement").only("equipment", "ranged"); break;
             case "mine_trip":
-                s.goal = "mine_trip"; s.seconds = 900; s.kit = "stone_pickaxe 1, torch 16, cooked_beef 4, cobblestone 16"; s.hunger = true; s.on("mine", "achievement"); break;
+                s.goal = "mine_trip"; s.seconds = 900; s.kit = "stone_pickaxe 2, torch 16, cooked_beef 4, cobblestone 16"; s.hunger = true; s.on("mine", "achievement"); break;
             case "diamond":
-                s.goal = "items"; s.goalItem = "diamond"; s.crewGoal = true; s.seconds = 1500; s.kit = "iron_pickaxe 1, torch 32, cooked_beef 6, cobblestone 32"; s.hunger = true;
+                s.goal = "items"; s.goalItem = "diamond"; s.crewGoal = true; s.seconds = 1500; s.kit = "iron_pickaxe 2, torch 32, cooked_beef 6, cobblestone 32"; s.hunger = true;
                 s.on("mine", "equipment", "achievement"); break;
-            case "farm": s.goal = "farm"; s.perAgent = 2; s.seconds = 1200; s.kit = "wooden_hoe 1, wheat_seeds 8, cooked_beef 2"; s.hunger = true; s.on("sustain", "stock", "achievement"); break;
+            case "farm": s.goal = "farm"; s.perAgent = 2; s.seconds = 1200; s.kit = "wooden_hoe 1, wheat_seeds 8, cooked_beef 2, crafting_table 1"; s.hunger = true; s.on("sustain", "stock", "achievement"); break;
             case "pasture":
-                s.goal = "pasture"; s.crewGoal = true; s.seconds = 1200; s.kit = "fence 15, fence_gate 1, wheat 16, wheat_seeds 8, wooden_sword 1"; s.hunger = true;
+                s.goal = "pasture"; s.crewGoal = true; s.seconds = 1200; s.kit = "fence 15, fence_gate 1, wheat 16, wheat_seeds 8, wooden_sword 1"; s.animals = "Cow 3, Sheep 3"; s.hunger = true;
                 s.on("sustain", "stock", "achievement"); break;
             case "enchant": s.goal = "enchant"; s.seconds = 600; s.kit = "enchanting_table 1, bookshelf 6, iron_sword 1, iron_pickaxe 1"; s.xpLevels = 8; s.on("enchant", "equipment", "achievement"); break;
             case "fortify": s.goal = "fortify"; s.seconds = 600; s.kit = "cobblestone 140, stone_pickaxe 1, wooden_door 1"; s.defense = true; s.on("safety"); break;
@@ -736,6 +737,7 @@ final class RlSpec {
             d.addProperty("health", s.health);
             d.addProperty("kit", s.kit);
             d.addProperty("chest", s.chest);
+            if (!s.animals.isEmpty()) d.addProperty("animals", s.animals);
             d.addProperty("xp_levels", s.xpLevels);
             d.addProperty("hunger", s.hunger);
             if (s.waves != null) d.addProperty("waves", s.waves);

@@ -119,17 +119,18 @@ public final class RlTest {
         check(on(raw("craftable_planks", 1, "small_planks", 1), "craft:planks"), "planks from logs in the hands");
         check(!on(raw("craftable_planks", 1, "small_planks", 1, "bag_planks", 64), "craft:planks"), "no planks over a stack");
         check(!on(raw("craftable_wooden_pickaxe", 1), "craft:wooden_pickaxe"), "a 3x3 craft needs a table");
-        check(on(raw("craftable_wooden_pickaxe", 1, "bag_crafting_table", 1), "craft:wooden_pickaxe"), "the bag's table will do");
+        check(on(raw("craftable_wooden_pickaxe", 1, "bag_crafting_table", 1, "place_spot", 1), "craft:wooden_pickaxe"), "the bag's table will do");
+        check(!on(raw("craftable_wooden_pickaxe", 1, "bag_crafting_table", 1), "craft:wooden_pickaxe"), "the bag's table needs a free cell beside");
         check(on(raw("craftable_wooden_pickaxe", 1, "table_known", 1, "table_dist", 5), "craft:wooden_pickaxe"), "a table near will do");
         check(!on(raw("craftable_wooden_pickaxe", 1, "table_known", 1, "table_dist", 30), "craft:wooden_pickaxe"), "a table too far will not");
-        check(!on(raw("craftable_stone_pickaxe", 1, "bag_crafting_table", 1, "pick_tier", 2), "craft:stone_pickaxe"), "no pickaxe it has already");
-        check(on(raw("craftable_stone_pickaxe", 1, "bag_crafting_table", 1, "pick_tier", 1), "craft:stone_pickaxe"), "a better pickaxe");
+        check(!on(raw("craftable_stone_pickaxe", 1, "bag_crafting_table", 1, "place_spot", 1, "pick_tier", 2), "craft:stone_pickaxe"), "no pickaxe it has already");
+        check(on(raw("craftable_stone_pickaxe", 1, "bag_crafting_table", 1, "place_spot", 1, "pick_tier", 1), "craft:stone_pickaxe"), "a better pickaxe");
         check(!on(raw("pick_tier", 0), "mine:stone") && on(raw("pick_tier", 1), "mine:stone"), "stone needs a pickaxe");
         check(!on(raw("pick_tier", 1, "iron_minable", 3), "mine:iron_ore") && on(raw("pick_tier", 2, "iron_minable", 3), "mine:iron_ore"), "iron needs stone");
         check(on(raw("trees_free", 2), "chop_tree:near") && !on(raw("trees_free", 0), "chop_tree:near"), "a tree seen free");
         check(!on(raw("waves_active", 1, "health", 5, "low_health", 8), "hold_line:post") && on(raw("waves_active", 1, "health", 15, "low_health", 8), "hold_line:post"), "no fight begun hurt");
         check(!on(raw("health", 20, "max_health", 20, "food_items", 3), "eat:best") && on(raw("health", 12, "max_health", 20, "food_items", 3), "eat:best"), "eat when hurt");
-        check(on(raw("bag_iron_ore", 2, "fuel", 4, "bag_furnace", 1), "smelt:iron_ingot") && !on(raw("bag_iron_ore", 2, "bag_furnace", 1), "smelt:iron_ingot"), "smelting needs fuel");
+        check(on(raw("bag_iron_ore", 2, "fuel", 4, "bag_furnace", 1, "place_spot", 1), "smelt:iron_ingot") && !on(raw("bag_iron_ore", 2, "bag_furnace", 1, "place_spot", 1), "smelt:iron_ingot"), "smelting needs fuel");
         check(on(raw("base_known", 1, "wall_blocks", 20), "build_wall:ring") && !on(raw("base_known", 1, "wall_blocks", 20, "ring_planned", 1, "wall_frac", 1), "build_wall:ring"), "no wall built twice");
         check(on(raw("ring_planned", 1, "posts_free", 2), "take_post:auto") && !on(raw("ring_planned", 1, "has_post", 1, "post_dist", 1), "take_post:auto"), "a post once");
         check(on(raw("chest_known", 1, "chest_food", 4), "take:chest_food") && !on(raw("chest_known", 1), "take:chest_food"), "food from the chest");
@@ -143,14 +144,14 @@ public final class RlTest {
         check(!on(raw("pick_tier", 2, "diamond_minable", 1), "mine:diamond_ore") && on(raw("pick_tier", 3, "diamond_minable", 1), "mine:diamond_ore"), "diamond needs iron");
         check(!on(raw("pick_tier", 3, "obsidian_minable", 1), "mine:obsidian") && on(raw("pick_tier", 4, "obsidian_minable", 1), "mine:obsidian"), "obsidian needs diamond");
         check(on(raw("bag_bow", 1, "bag_arrow", 4, "enemies_visible", 1), "shoot:post") && !on(raw("bag_bow", 1, "enemies_visible", 1), "shoot:post"), "a shot needs arrows");
-        check(on(raw("armor_craftable_iron", 1, "bag_crafting_table", 1), "craft_armor:iron") && !on(raw("armor_craftable_iron", 1), "craft_armor:iron"), "armour at a table");
+        check(on(raw("armor_craftable_iron", 1, "bag_crafting_table", 1, "place_spot", 1), "craft_armor:iron") && !on(raw("armor_craftable_iron", 1), "craft_armor:iron"), "armour at a table");
         check(on(raw("bag_wheat_seeds", 3, "farm_empty", 2), "plant:wheat") && !on(raw("bag_wheat_seeds", 3), "plant:wheat"), "seeds on empty farmland");
         check(on(raw("farm_ripe", 1), "harvest:farm") && !on(raw("farm_planted", 5), "harvest:farm"), "a harvest of the ripe only");
         check(on(raw("pen_adults", 3), "slaughter:pen") && !on(raw("pen_adults", 2), "slaughter:pen"), "the pen keeps its two");
         check(on(raw("ench_table_known", 1, "ench_table_dist", 3, "xp_level", 2, "enchantable", 1), "enchant:best")
                 && !on(raw("ench_table_known", 1, "ench_table_dist", 3, "enchantable", 1), "enchant:best"), "an enchanting needs levels");
         check(on(raw("ring_planned", 1, "bag_wooden_door", 1), "build_gate:door") && !on(raw("ring_planned", 1, "bag_wooden_door", 1, "door_placed", 1), "build_gate:door"), "one gate");
-        check(!on(raw("craftable_wooden_hoe", 1, "small_wooden_hoe", 0, "bag_crafting_table", 1, "hoes", 1), "craft:wooden_hoe"), "no second hoe");
+        check(!on(raw("craftable_wooden_hoe", 1, "small_wooden_hoe", 0, "bag_crafting_table", 1, "place_spot", 1, "hoes", 1), "craft:wooden_hoe"), "no second hoe");
         // the rules are data: Cond's JSON read back gives the same
         int[] mk = RlSpec.mask(raw("trees_free", 1, "pick_tier", 1, "base_known", 1, "craftable_planks", 1, "small_planks", 1));
         check(mk[RlSpec.index("chop_tree:near")] == 1 && mk[RlSpec.index("descend:mine")] == 1 && mk[RlSpec.index("ascend:surface")] == 0, "a mask of several");

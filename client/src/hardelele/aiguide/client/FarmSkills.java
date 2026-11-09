@@ -567,7 +567,7 @@ final class FarmSkills {
                     : MindSkills.failed("NO_ANIMAL", "no animal outside the pen in sight");
         }
         Lure l = new Lure(prey, bait(prey));
-        l.lease = 20 * 75;
+        l.lease = 20 * 105;
         return l;
     }
 
@@ -579,21 +579,21 @@ final class FarmSkills {
     static final class Lure extends MindSkills.Skill {
         final EntityLiving prey;
         final Item bait;
-        int t, state, opens;
+        int t, state, opens, waitIn;
         Crew.GoTo walk;
         Lure(EntityLiving prey, Item bait) { this.prey = prey; this.bait = bait; }
 
         Result run(Agent a, WorldServer w) {
             RlWorld rw = RlWorld.now;
-            if (++t > 20 * 60) { reason = "TIMEOUT"; detail = "the " + prey.getCommandSenderName() + " did not come into the pen in 60 s"; return Result.TIMEOUT; }
+            if (++t > 20 * 90) { reason = "TIMEOUT"; detail = "the " + prey.getCommandSenderName() + " did not come into the pen in 90 s (state " + state + ")"; return Result.TIMEOUT; }
             if (prey.isDead || rw.pen == null) { reason = "GONE"; detail = "the animal or the pen is gone"; return Result.GONE; }
             ItemStack s = stack(a, bait);
             if (s == null) { reason = "NO_BAIT"; detail = "no " + MindSkills.id(new ItemStack(bait)) + " left"; return Result.NO_ITEMS; }
             boolean holding = state < 3;
             if (holding) {
                 a.body.hold(s);
-                if (a.getDistanceToEntity(prey) <= 10 && t % 5 == 0) {   // the tempting, as the game's for a player
-                    prey.getNavigator().tryMoveToEntityLiving(a, 1.1);
+                if (a.getDistanceToEntity(prey) <= 10 && a.getDistanceToEntity(prey) > 2.0 && t % 2 == 0) {   // the tempting, as the game's for a player (EntityAITempt: each tick, to 2.5 of it)
+                    prey.getNavigator().tryMoveToEntityLiving(a, 1.25);
                     prey.getLookHelper().setLookPositionWithEntity(a, 30.0F, (float) prey.getVerticalFaceSpeed());
                 }
             }
@@ -622,6 +622,7 @@ final class FarmSkills {
                     if (walk.step(a, w) == Result.RUNNING && !rw.inPen(a.posX, a.posZ)) return Result.RUNNING;
                     if (!rw.inPen(prey.posX, prey.posZ)) {
                         if (a.getDistanceToEntity(prey) > 12) { state = 0; walk = null; }
+                        else if (++waitIn > 20 * 15) { state = 1; walk = null; waitIn = 0; }   // stuck at the fence: out to the gate and lead it again
                         return Result.RUNNING;
                     }
                     a.body.hold(a.bestWeapon());   // the bait away: it stops following
@@ -854,6 +855,12 @@ final class FarmSkills {
         put(r, "pen_pairs", pairs);
         put(r, "pen_dist", rw.pen == null ? 32 : Math.hypot(a.posX - rw.pen[0] - 0.5, a.posZ - rw.pen[2] - 0.5));
         put(r, "lure_food", count(a, Items.wheat) + count(a, Items.wheat_seeds) + count(a, Items.carrot));
+        int targets = 0;   // animals in sight, grown, outside the pen, whose bait it has (what lure takes)
+        for (net.minecraft.entity.EntityLiving e : RlSkills.animals(a, w, SEE)) {
+            Item b = bait(e);
+            if (b != null && count(a, b) > 0 && !rw.inPen(e.posX, e.posZ) && !(e instanceof EntityAgeable && ((EntityAgeable) e).isChild())) targets++;
+        }
+        put(r, "lure_targets", targets);
         put(r, "grass_seen", seen(a, w, new Block[] { Blocks.tallgrass }, 32).size());
         put(r, "leaves_seen", seen(a, w, new Block[] { Blocks.leaves, Blocks.leaves2 }, 32).size());
         put(r, "cane_seen", seen(a, w, new Block[] { Blocks.reeds }, 32).size());
