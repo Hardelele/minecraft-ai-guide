@@ -143,6 +143,55 @@ def run_case(scen, n_ep, seed0, crews, force=None, noise=True, noop_p=0.002, max
     return n_ep, dec, ""
 
 
+def run_multi(n_arenas, steps, seed0):
+    """n arenas at once (in parallel over the threads), each against a SimEnv of its own, resets as they end"""
+    scen = spec.SCENARIOS + list(SIM_SCEN)
+    envs = [SimEnv(0) for _ in range(n_arenas)]
+    sim = BatchSim(n_arenas)
+    pick = random.Random(seed0)
+    jobs = [(scen[e % len(scen)], seed0 * 1000 + e, 1 + e % 3) for e in range(n_arenas)]
+    outs = [env.reset(*j) for env, j in zip(envs, jobs)]
+    sim.reset(np.arange(n_arenas), jobs)
+    offs = [None] * n_arenas
+    ep = n_arenas
+    dec = 0
+    for step in range(steps):
+        row = np.full((n_arenas, T.MA), -1)
+        acts = []
+        for e, o in enumerate(outs):
+            a_ = {}
+            for i, m in zip(o["agents"], o["mask"]):
+                ok = [k for k, v in enumerate(m) if v and k != 0]
+                a_[i] = pick.choice(ok) if ok else 0
+                row[e, i] = a_[i]
+                dec += 1
+            acts.append(a_)
+        sim.step(row)
+        for e in range(n_arenas):
+            o = envs[e].step(acts[e])
+            b = sim.result(e)
+            if offs[e] is None and o["info"]["assigned"]:
+                k0 = next(iter(o["info"]["assigned"]))
+                offs[e] = o["info"]["assigned"][k0] - b["info"]["assigned"][int(k0)]
+            msg = compare(o, b, step, offs[e] or 0, f"arena {e} ({o['info']['scenario']})")
+            if msg:
+                return dec, msg
+            outs[e] = o
+        done = [e for e in range(n_arenas) if outs[e]["done"]]
+        if done:
+            jobs = [(scen[(ep + j) % len(scen)], seed0 * 1000 + ep + j, 1 + (ep + j) % 3) for j in range(len(done))]
+            ep += len(done)
+            sim.reset(np.array(done), jobs)
+            for e, j in zip(done, jobs):
+                outs[e] = envs[e].reset(*j)
+                b = sim.result(e)
+                msg = compare(outs[e], b, 0, offs[e] or 0, f"arena {e} reset")
+                if msg:
+                    return dec, msg
+                offs[e] = None
+    return dec, ""
+
+
 def main():
     from train import below_normal
     below_normal()   # idle while League of Legends runs, else below normal
@@ -158,6 +207,10 @@ def main():
         tot += dec
         check(not msg, f"{s}{'+' + force if force else ''}{'' if noise else ' (noise off)'}: {ep} episodes, {dec} decisions alike" +
               ("\n     " + msg if msg else ""))
+    dec, msg = run_multi(32, 300, 77)
+    tot += dec
+    check(not msg, f"32 arenas at once against 32 SimEnvs, 300 steps, resets as they end: {dec} decisions alike" +
+          ("\n     " + msg if msg else ""))
     print(f"{tot} decisions compared")
     if bad:
         print(bad, "FAILED")
