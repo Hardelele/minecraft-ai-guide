@@ -281,6 +281,19 @@ public class RlEnv {
                 if (r.conn == replyTo) { replyTo = null; if (state != State.IDLE) { Events.log("rl: the policy went; episode " + episode + " dropped"); state = State.IDLE; } }
                 return;
             case "info": r.conn.send(info()); return;
+            case "stage4": r.conn.send(stage4(w, r.msg.has("what") ? r.msg.get("what").getAsString() : "")); return;   // (tests: tools/tests/test_rl_events4.py)
+            case "events4": {
+                JsonObject o = new JsonObject();
+                o.addProperty("ok", true);
+                JsonArray a = new JsonArray();
+                for (JsonObject e : log4) a.add(e);
+                o.add("events", a);
+                o.add("decisions", stageDecisions);
+                if (ev4s != null) { o.addProperty("arrow_looks", ev4s.arrowLooks); o.addProperty("arrow_entities", ev4s.arrowEntities); o.addProperty("debug", RlEvents4.DEBUG); }
+                if (ev4s != null && RlEvents4.DEBUG) { JsonArray t = new JsonArray(); for (String x : ev4s.trace) t.add(new JsonPrimitive(x)); o.add("trace", t); }
+                r.conn.send(o);
+                return;
+            }
             case "audit": {   // the mask against the skill (ended): what the allowed actions came to
                 JsonObject o = auditJson();
                 if (r.msg.has("reset") && r.msg.get("reset").getAsBoolean()) audit.clear();
@@ -401,6 +414,7 @@ public class RlEnv {
     // the step's reward is RlReward4's from the events below; v3's weights still measure (info.measured)
     static final String REWARD4 = System.getProperty("aiguide.rl.reward4", "");
     RlReward4 r4;
+    RlEvents4 ev4s;   // the events that need the world looked at: path_changed, attack_failed, found (RlEvents4)
     final List<JsonObject> fev = new ArrayList<JsonObject>();
     final Set<Integer> mobs4 = new HashSet<Integer>(), killed4 = new HashSet<Integer>(), in4 = new HashSet<Integer>();
     final Set<String> aimed4 = new HashSet<String>();
@@ -436,6 +450,101 @@ public class RlEnv {
         return Math.max(0, cy.cfg.waveMaxTicks - cy.waveTicks) / 20.0;
     }
 
+    // ---- staged situations for the tests of the v4 events (op stage4; never in training) ---------------------
+    String stage = "";
+    long stageAt;
+    EntityLiving stageMob;
+    boolean stageActed;
+    double[] stagePos;   // where the agent is held (its reflexes would run at the mob: the stage is the decisions' only)
+    final List<JsonObject> log4 = new ArrayList<JsonObject>();
+    JsonArray stageDecisions = new JsonArray();
+
+    /** a decision of the agent's own made for the stage (as the policy's would be): its id */
+    RlCause.Link stageDecision(Agent a, String kind) {
+        RlCause.Link l = cause.decide(id(a), ticks, kind);
+        JsonObject o = ev4("decision");
+        o.addProperty("agent", id(a));
+        o.addProperty("id", l.id);
+        o.addProperty("kind", l.kind);
+        stageDecisions.add(new JsonPrimitive(l.id));
+        return l;
+    }
+
+    /**
+     * block: a zombie 8 blocks east of the first agent comes for it down a cleared lane 5 wide; 1.5 s later the agent's
+     * decision walls the lane 3 blocks before it (5 wide, 2 high). arrow: a skeleton 10 blocks east; the first arrow
+     * aimed at the agent meets a wall its decision puts 2 blocks before it (3 wide, 3 high). dodge: the same skeleton;
+     * at the first arrow aimed at it the agent's decision steps it 3 blocks aside. The mobs wear helmets (no burning by
+     * day) and go for the agent (setAttackTarget, as the waves' steer does).
+     */
+    JsonObject stage4(WorldServer w, String what) {
+        Crew c = Crew.instance;
+        if (r4 == null || c == null || c.agents.isEmpty()) return error("stage4: the reward v4 on and an episode reset first");
+        if (!what.equals("block") && !what.equals("arrow") && !what.equals("dodge")) return error("stage4: block, arrow or dodge");
+        Agent a = c.agents.get(0);
+        int ax = MathHelper.floor_double(a.posX), az = MathHelper.floor_double(a.posZ), fy = MathHelper.floor_double(a.boundingBox.minY + 0.1);
+        int far = what.equals("block") ? 8 : 10;
+        for (int x = ax - 2; x <= ax + far + 3; x++)   // the lane: a floor, room above (the world's own: no mark)
+            for (int z = az - 4; z <= az + 4; z++) {
+                w.setBlock(x, fy - 1, z, Blocks.stone);
+                for (int y = fy; y <= fy + 3; y++) w.setBlockToAir(x, y, z);
+            }
+        a.setPositionAndUpdate(ax + 0.5, fy, az + 0.5);
+        stagePos = new double[] { ax + 0.5, fy, az + 0.5 };
+        EntityLiving m = what.equals("block") ? new WaveMobs.Zombie(w) : new WaveMobs.Skeleton(w);
+        m.setLocationAndAngles(ax + far + 0.5, fy, az + 0.5, 90, 0);
+        m.setCurrentItemOrArmor(4, new ItemStack(Items.leather_helmet));
+        if (m instanceof WaveMobs.Skeleton) {   // a bow, and its fight by the bow (the game's choice is made when it is made)
+            m.setCurrentItemOrArmor(0, new ItemStack(Items.bow));
+            ((WaveMobs.Skeleton) m).setCombatTask();
+        }
+        w.spawnEntityInWorld(m);
+        m.setAttackTarget(a);
+        stage = what;
+        stageAt = ticks;
+        stageMob = m;
+        stageActed = false;
+        log4.clear();
+        stageDecisions = new JsonArray();
+        JsonObject o = new JsonObject();
+        o.addProperty("ok", true);
+        o.addProperty("mob", m.getEntityId());
+        o.addProperty("agent", id(a));
+        return o;
+    }
+
+    /** every tick of a staged episode: the target kept, the stage's act when its time comes */
+    void stageTick(WorldServer w) {
+        if (stage.isEmpty() || stageMob == null || Crew.instance == null) return;
+        Agent a = Crew.instance.agents.get(0);
+        if (!stageMob.isDead && stageMob.getAttackTarget() != a) stageMob.setAttackTarget(a);
+        if (stagePos != null && !a.isDead && (Math.abs(a.posX - stagePos[0]) > 0.05 || Math.abs(a.posZ - stagePos[2]) > 0.05)) {
+            a.setPositionAndUpdate(stagePos[0], stagePos[1], stagePos[2]);
+            a.motionX = a.motionZ = 0;
+            a.getNavigator().clearPathEntity();
+        }
+        if (stageActed || a.isDead) return;
+        int ax = MathHelper.floor_double(a.posX), az = MathHelper.floor_double(a.posZ), fy = MathHelper.floor_double(a.boundingBox.minY + 0.1);
+        boolean arrow = ev4s != null && !ev4s.arrows.isEmpty();
+        if (stage.equals("block") && ticks - stageAt >= 30) {
+            stageDecision(a, "place:block@front");
+            for (int z = az - 2; z <= az + 2; z++)
+                for (int y = fy; y <= fy + 1; y++) { w.setBlock(ax + 3, y, z, Blocks.cobblestone); placed(a, w, ax + 3, y, z); }
+            stageActed = true;
+        } else if (stage.equals("arrow") && arrow) {
+            stageDecision(a, "place:block@front");
+            if (RlEvents4.DEBUG) ev4s.trace.add("wall at t " + ticks / 20.0 + " x " + (ax + 2) + " y " + fy + ".." + (fy + 2) + " z " + (az - 1) + ".." + (az + 1));
+            for (int z = az - 1; z <= az + 1; z++)
+                for (int y = fy; y <= fy + 2; y++) { w.setBlock(ax + 2, y, z, Blocks.cobblestone); placed(a, w, ax + 2, y, z); }
+            stageActed = true;
+        } else if (stage.equals("dodge") && arrow) {
+            stageDecision(a, "retreat:home");
+            stagePos[2] += 3;
+            a.setPositionAndUpdate(stagePos[0], stagePos[1], stagePos[2]);
+            stageActed = true;
+        }
+    }
+
     /** a frame for RlReward4: the agents' state and the events since the last; its moves into info.events */
     void flush4(WorldServer w, double dt) {
         if (r4 == null) return;
@@ -455,6 +564,7 @@ public class RlEnv {
                 evs.add(o);
             }
         evs.addAll(fev);
+        if (!stage.isEmpty()) log4.addAll(fev);   // (a staged test's: what was told)
         fev.clear();
         JsonArray arr = new JsonArray();
         for (JsonObject o : evs) arr.add(o);
@@ -582,6 +692,11 @@ public class RlEnv {
     final Map<Long, RlCause.Link> foundBy = new HashMap<Long, RlCause.Link>();
 
     void found(Agent a, int x, int y, int z, String block) {
+        if (ev4s != null && state != State.IDLE) {   // v4: the find as an event (the ores: their scale)
+            String key = null;
+            for (String[] k : ORE_KEY) if (block.replace("minecraft:", "").equals(k[0])) key = k[1];
+            ev4s.found(a, x, y, z, block, key, cause.now(id(a)));
+        }
         double v = RlScore.findValue(block);
         if (v <= 0 || !outcomes() || state == State.IDLE) return;
         Mine m = mine(a);
@@ -896,6 +1011,10 @@ public class RlEnv {
         for (Agent a : c.agents) AgentMind.minds.put(a.skin(), new AgentMind(a.skin(), new Mind(a.who(), g, lim, System.currentTimeMillis()), w));
         reward = new RlReward(weights, s);
         r4 = REWARD4.isEmpty() ? null : RlReward4.of(params4(), weights, s);
+        ev4s = r4 == null ? null : new RlEvents4(this);
+        stage = "";
+        stageMob = null;
+        log4.clear();
         fev.clear();
         mobs4.clear();
         killed4.clear();
@@ -1084,6 +1203,11 @@ public class RlEnv {
         if (c == null) return;
         for (Agent a : c.agents) if (!a.isDead) reward.add(id(a), "time", 1 / 20.0);
         FarmSkills.grow(w, RlSpec.GROW);
+        if (!stage.isEmpty()) stageTick(w);
+        if (ev4s != null) {   // v4: the routes of the mobs, the blows and arrows that failed
+            if (ticks % 2 == 0) ev4s.arrows(c, w);
+            if (ticks % 20 == 10) ev4s.second(c, w);
+        }
         if (outcomes() && sc.waves != null && Waves.cycle.phase == WaveCycle.Phase.WAVE) {   // (3.1) arrows dodged or stopped, blocks the mobs go round
             if (ticks % 2 == 0) arrowsTick(c, w);
             if (ticks % 20 == 10) blockCredit(c, w);
@@ -1322,6 +1446,8 @@ public class RlEnv {
             o.addProperty("agent", agent);
             o.addProperty("key", key);
             o.addProperty("delta", n);
+            String res = ev4s != null && n > 0 ? ev4s.resFor(agent, key) : null;   // a found ore's gain: the scout's
+            if (res != null) o.addProperty("res", res);
             if (chain != null && !chain.isEmpty()) {
                 JsonArray ids = new JsonArray();
                 for (RlCause.Link l : chain) if (l != null) ids.add(new JsonPrimitive(l.id));
@@ -1623,6 +1749,7 @@ public class RlEnv {
         e.cause.placed(RlCause.key(x, y, z), n == null ? "?" : n.toString(), l);
         RlCause.Link via = l.via("block:" + RlCause.plain(n == null ? "?" : n.toString()));
         e.worldChanges.add(via);
+        if (e.ev4s != null) e.ev4s.changed(x, y, z, l, true);
         Mine m = e.mine(a);
         if (m.dangerAt >= 0 && b.getMaterial() == net.minecraft.block.material.Material.water) m.water = RlCause.chain(via);
     }
@@ -1636,6 +1763,10 @@ public class RlEnv {
         RlCause.Link l = e.cause.current.get(id(a));
         if (l != null) e.worldChanges.add(l.via("broke"));
         if (l != null) e.cause.dug(key, l);   // (3.1) a cell dug: a pit, the moat (block_credit)
+        if (e.ev4s != null) {
+            if (l != null) e.ev4s.changed(x, y, z, l, false);
+            e.ev4s.minedAt(a, key);
+        }
         if (e.outcomes()) e.scoutCredit(a, key);   // an ore a scout of the crew found
         if (RlWorld.now.grownLogs.remove(key)) e.sustain.add(e.ticks / 20.0, RlScore.WOOD_RENEW, 1);
     }
@@ -1890,6 +2021,13 @@ public class RlEnv {
         if (done) {
             info.addProperty("done_reason", doneReason);
             info.add("episode_reward", r4 != null ? r4.episodeJson() : reward.episodeJson());
+            if (ev4s != null) {   // v4: how many of the looked-at events the episode had
+                JsonObject n4 = new JsonObject();
+                n4.addProperty("path_changed", ev4s.pathChanged);
+                n4.addProperty("attack_failed", ev4s.attackFailed);
+                n4.addProperty("found", ev4s.found);
+                info.add("events4", n4);
+            }
             info.add("measured", reward.measuredJson());
             JsonObject ach = new JsonObject();
             if (c != null)

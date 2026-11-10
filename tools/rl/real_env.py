@@ -68,7 +68,7 @@ class RealEnv:
                     "t": info.get("ticks", 0) / 20.0, "cleared": cleared, "success": bool(done and success),
                     "goal_progress": info.get("goal_progress"), "episode_components": dict(self.comp) if done else {},
                     "assigned": {int(k): v for k, v in (info.get("assigned") or {}).items()}, "events": evs,
-                    "sim_ms": info.get("sim_ms"), "reset_ms": info.get("reset_ms")}
+                    "sim_ms": info.get("sim_ms"), "reset_ms": info.get("reset_ms"), "events4": info.get("events4")}
         if done:
             ach = info.get("achievements") or {}
             got = set()

@@ -88,6 +88,7 @@ def jvm_args(xmx, opt, jfr, extra=()):
         a.append("-Daiguide.rl.engine.check=%d" % check)
     if os.environ.get("AIGUIDE_ENGINE_PATHCACHE") == "0":   # the exact path cache off (FastPath.Cache)
         a.append("-Daiguide.rl.engine.pathcache=false")
+    a += (os.environ.get("AIGUIDE_ENGINE_OPTS") or "").split()   # more -D's for a look (a test's, a trace's)
     if jfr:
         a += ["-XX:+UnlockCommercialFeatures", "-XX:+FlightRecorder", "-XX:FlightRecorderOptions=stackdepth=512",
               "-XX:StartFlightRecording=delay=%ds,duration=%ds,filename=%s,settings=profile" % (jfr[1], jfr[2], jfr[0])]
