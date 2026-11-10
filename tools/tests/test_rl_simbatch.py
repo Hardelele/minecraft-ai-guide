@@ -20,9 +20,11 @@ sys.path.insert(0, str(ROOT / "tools" / "rl"))
 import spec  # noqa: E402
 import simbatch_tables as T  # noqa: E402
 from sim_env import SIM_SCEN, SimEnv  # noqa: E402
+import simbatch_kernel as KN  # noqa: E402
 from simbatch import BatchSim, reward_from_facts  # noqa: E402
 
 bad = 0
+NL = "\n     "
 
 
 def check(ok, what):
@@ -45,7 +47,8 @@ def norm_events(evs, off):
     out = []
     for ev in evs:
         if ev["type"] == "reward":
-            out.append(("reward", ev["agent"], ev["key"], ev["points"], ev["ticks"], tuple(norm_chain(ev["chain"], off))))
+            pts = round(ev["points"], 9) if "move" in ev else ev["points"]
+            out.append(("reward", int(ev["agent"]), ev["key"], pts, ev["ticks"], ev.get("move"), tuple(norm_chain(ev["chain"], off))))
         elif ev["type"] == "novel_effect":
             out.append(("novel", ev["agent"], ev["cause"], ev["effect"], ev["first_ever"], ev["ticks"], tuple(norm_chain(ev["chain"], off))))
         else:
@@ -196,6 +199,90 @@ def run_multi(n_arenas, steps, seed0):
     return dec, ""
 
 
+ID_FIELDS = {"decision": ("id",), "scale": ("causes",), "found": ("decision",), "path_changed": ("by",), "attack_failed": ("by",),
+             "kill": ("decision",), "novel": ("decision",)}
+
+
+def norm_frame(fr, off):
+    """a v4 frame with the decision ids as the arena's and the floats rounded (1e-9)"""
+    evs = []
+    for ev in fr["events"]:
+        d = {}
+        for k, v in ev.items():
+            if k in ID_FIELDS.get(ev["type"], ()):
+                v = [norm_id(x, off) for x in v] if isinstance(v, list) else norm_id(v, off)
+            elif isinstance(v, float):
+                v = round(v, 9)
+            d[k] = v
+        evs.append(d)
+    return (round(fr["t"], 9), round(fr["dt"], 9), fr["phase"], evs)
+
+
+def run_case4(scen, n_ep, seed0, crews, noop_p=0.004, max_steps=4000):
+    """the reward v4: SimEnv(reward="v4") against BatchSim(reward="v4"): the same frames of events (reward_core's input),
+    the same points (the kernel's core against reward_core), moves, observations"""
+    import reward_core as RCORE
+    env = SimEnv(0, reward="v4")
+    sim = BatchSim(1, reward="v4", record=True)
+    pick = random.Random(seed0 + 99)
+    got: list = []
+    orig = RCORE.RewardCore.frame
+
+    def rec(self, fr):
+        got.append({"t": fr["t"], "dt": fr["dt"], "phase": fr["phase"], "events": [dict(x) for x in fr["events"]]})
+        return orig(self, fr)
+    RCORE.RewardCore.frame = rec
+    dec = 0
+    try:
+        for ep in range(n_ep):
+            seed = seed0 * 1000 + ep
+            crew = crews[ep % len(crews)]
+            got.clear()
+            o = env.reset(scen, seed, crew=crew)
+            sim.reset([0], [(scen, seed, crew, None, None)])
+            maps: dict = {}
+            b = sim.result(0)
+            where = f"v4 {scen} ep {ep} crew {crew}"
+            msg = compare(o, b, 0, maps, where)
+            steps = 0
+            while not msg:
+                fo, fb = [norm_frame(f, maps) for f in got], [norm_frame(f, 0) for f in sim.frames(0)]
+                if fo != fb:
+                    for q, (x, y) in enumerate(zip(fo, fb)):
+                        if x != y:
+                            return ep, dec, f"{where} step {steps}: frame {q} differs" + NL + str(x) + NL + str(y)
+                    return ep, dec, f"{where} step {steps}: {len(fo)} frames vs {len(fb)}"
+                got.clear()
+                if o["done"] or steps >= max_steps:
+                    break
+                acts = {}
+                row = np.full((1, T.MA), -1)
+                for i, m in zip(o["agents"], o["mask"]):
+                    ok = [k for k, v in enumerate(m) if v and k != 0]
+                    a = 0 if (pick.random() < noop_p or not ok) else pick.choice(ok)
+                    acts[i] = a
+                    row[0, i] = a
+                    dec += 1
+                o = env.step(acts)
+                sim.step(row)
+                b = sim.result(0)
+                for k_, v_ in o["info"]["assigned"].items():
+                    if int(k_) in b["info"]["assigned"]:
+                        maps[v_] = b["info"]["assigned"][int(k_)]
+                steps += 1
+                if sim.st.ai[0, KN.A_OVERFLOW]:
+                    return ep, dec, f"{where} step {steps}: the arena's buffers overflowed ({sim.st.ai[0, KN.A_OVERFLOW]})"
+                msg = compare(o, b, steps, maps, where)
+            if msg:
+                return ep, dec, msg
+            st = sim.st
+            if st.ai[0, KN.A_OVERFLOW] or st.ai[0, KN.A_C4_ERR] or st.ai[0, KN.A_C4_FORGOT]:
+                return ep, dec, f"{where}: overflow {st.ai[0, KN.A_OVERFLOW]} core misses {st.ai[0, KN.A_C4_ERR]} forgotten {st.ai[0, KN.A_C4_FORGOT]}"
+    finally:
+        RCORE.RewardCore.frame = orig
+    return n_ep, dec, ""
+
+
 def main():
     from train import below_normal
     below_normal()   # idle while League of Legends runs, else below normal
@@ -211,6 +298,10 @@ def main():
         tot += dec
         check(not msg, f"{s}{'+' + force if force else ''}{'' if noise else ' (noise off)'}: {ep} episodes, {dec} decisions alike" +
               ("\n     " + msg if msg else ""))
+    for k, s in enumerate(["wood", "iron", "farm", "achievements", "waves:easy", "waves:normal", "waves:long", "night:shelter", "fortify", "diamond"]):
+        ep, dec, msg = run_case4(s, max(2, n // 2), 900 + k, (2, 3, 1, 4) if s.startswith("waves") else (1, 2, 3))
+        tot += dec
+        check(not msg, f"v4 {s}: {ep} episodes, {dec} decisions alike (frames of events, points, moves)" + (NL + msg if msg else ""))
     dec, msg = run_multi(32, 300, 77)
     tot += dec
     check(not msg, f"32 arenas at once against 32 SimEnvs, 300 steps, resets as they end: {dec} decisions alike" +

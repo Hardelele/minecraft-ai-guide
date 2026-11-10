@@ -118,15 +118,18 @@ def redistribute(buf: Buffer, idx: np.ndarray, rew: np.ndarray, beta: float, tau
         q = pos.get(j)
         if q is None:
             continue
-        for key, p, t_ev, causes in evs:
+        for key, p, t_ev, causes, mv in evs:
             st["events"] += 1
+            if mv is None and not beta:
+                continue
             found = [where[c] for c in causes if c in where and where[c] != q]
             if not found:
                 continue
             st["linked"] += 1
             for f in found:
                 lag = max(0.0, t_ev - float(buf.t[idx[f]]))
-                m = beta * p * math.exp(-lag / tau) / len(found)
+                # the reward v4's credit moves its share (all of it), undamped; the rest by --credit's beta and tau
+                m = (mv * p if mv is not None else beta * p * math.exp(-lag / tau)) / len(found)
                 rew[f] += m
                 rew[q] -= m
                 st["moved"] += abs(m)
@@ -142,7 +145,8 @@ def run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, cpu_copy,
     from simbatch import BatchSim
     MA = T.MA
     N = a.envs
-    sim = BatchSim(N, curiosity=a.curiosity, threads=a.sim_threads)
+    v4 = getattr(a, "reward", "v3") == "v4"
+    sim = BatchSim(N, curiosity=a.curiosity, threads=a.sim_threads, reward="v4" if v4 else "v3", merge=True)
     sim.reset(np.arange(N), [job() for _ in range(N)])
     rows = N * MA
     last = np.full(rows, -1, np.int64)        # a slot's transition waiting for its reward or its next value
@@ -235,7 +239,7 @@ def run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, cpu_copy,
             got_id = np.flatnonzero(asg >= 0)
             if len(got_id):
                 buf.did[last[got_id]] = asg[got_id]
-            if a.credit:   # the step's reward events with causes: to the transition running at the time
+            if a.credit or v4:   # the step's reward events with causes: to the transition running at the time
                 for e in np.flatnonzero(sim.st.nev):
                     for ev in sim.events(int(e)):
                         if ev["type"] == "reward" and ev["chain"]:
@@ -243,7 +247,7 @@ def run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, cpu_copy,
                             if j >= 0:
                                 buf.events.setdefault(int(j), []).append(
                                     (ev["key"], float(ev["points"]), ev["ticks"] / 20.0,
-                                     [int(c["decision_id"]) for c in ev["chain"] if c.get("via") != "step"]))
+                                     [int(c["decision_id"]) for c in ev["chain"] if c.get("via") != "step"], ev.get("move")))
                         elif ev["type"] == "novel_effect" and ev["first_ever"]:
                             stats["discoveries"] += 1
             orows = np.flatnonzero(sim.valid)
@@ -305,7 +309,7 @@ def run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, cpu_copy,
         n = buf.n
         comp = np.flatnonzero(buf.complete[:n])
         rew = buf.rew[comp].copy()
-        cst = redistribute(buf, comp, rew, a.credit, a.credit_tau) if a.credit else {}
+        cst = redistribute(buf, comp, rew, a.credit, a.credit_tau) if (a.credit or v4) else {}
         # the rewards' scale in time order (block by block)
         blk = buf.block[comp]
         order = np.argsort(blk, kind="stable")

@@ -220,12 +220,13 @@ _AI = ("SCEN NAG TARGET FORCE TREES TREES_HIDDEN STONE_SEEN COAL COAL_HIDDEN IRO
        "CLEARED NOVEL REPEAT_FAIL DISCOVERIES BAKED POND LAVA_POOL MOAT_LIQ ML_DID ML_AGENT ML_TICK ML_KIND ML_VIA HANG HANG_CELLS "
        "HANG_GOT OB_HANG_LOGS OB_DITCH_MET OB_DITCH_BRIDGED OB_LAVA_MET OB_LAVA_PASSED OB_SWITCH_OK OB_RETRY_FAIL OB_PIT_STUCK DONE REASON "
        "CHANGED N_BUILDERS N_CROPS N_RIPE N_SAPLINGS N_YOUNG N_RENFOOD N_RENWHEAT N_SUSWIN SUSWIN_HEAD N_LASTREN DID_NEXT OVERFLOW EPISODES "
-       "PEN_ORDER_N SUCCESS").split()
+       "PEN_ORDER_N SUCCESS V4 GOAL_SENT MOB_NEXT N_FOUND B_SEEN ACTOR HURT_MOB N_OUT N_IN N_FEV N_FEVL NIGHT_ORD "
+       "C4_PHASE C4_PREV_CALM C4_DAY_N C4_THR_N C4_POOL_N C4_MOVES_N C4_EP_FIRST C4_ERR C4_FORGOT C4_DAYFULL REC_NF REC_NE REC_NL").split()
 _AF = ("T MINE_D TABLE_D FURNACE_D PHASE_UNTIL ENEMIES INSIDE MOB_S WAVE_MOB_S SUS_FR SUS_FE SUS_WR SUS_WU SUS_PAID0 SUS_PAID1 CT_WALL CT_MOAT "
-       "CT_LIGHT CT_GATE CT_ETABLE CT_SOURCE CT_STOCK OB_SHELTER PROGRESS_OUT").split()
+       "CT_LIGHT CT_GATE CT_ETABLE CT_SOURCE CT_STOCK OB_SHELTER PROGRESS_OUT C4_TOTAL C4_T C4_CALM_END").split()
 _GI = ("XP HELD DEPTH TUN0 TUN1 TUN2 POST ALIVE PEND PEND_ACT PEND_OK PEND_REASON HOLDING DID KIND LAST OUTCOME REPEATED TRIP_ORES TRIP_OUT TRIPS "
        "ENCHANTED DITCH LAVA_FRONT PIT_FAILS NEAR_VALID NEAR_GROUND NEAR_PICK NEAR_Y NEAR_PLACED NEAR_N MOB_ON MOB_X MOB_Y MOB_Z "
-       "F_LAST_FAILED F_GROUP F_WIN_N F_WIN_HEAD HAS_RESPAWN").split()
+       "F_LAST_FAILED F_GROUP F_WIN_N F_WIN_HEAD HAS_RESPAWN BOX_N NIGHT_N NIGHT_ORD DANGER_N C4_CUR REC_N OPEN_N").split()
 _GF = ("HEALTH FOOD SAT XP_PTS DIST FREE_AT PEND_BEGAN ACC DID_T LAST_S TRK_ARMOR TRK_WEAPON TRK_PICK TRK_RANGED TRK_DEPTH PROGRESS_T "
        "RESPAWN_AT").split()
 for _j, _n in enumerate(_AI):
@@ -242,13 +243,54 @@ DONE_NO, DONE_TIME, DONE_NOOP, DONE_GOAL, DONE_LOST = 0, 1, 2, 3, 4
 DONE_REASONS = ["", "time", "noop", "goal", "lost"]
 FORCE_NONE, FORCE_HANG, FORCE_DITCH, FORCE_LAVA = 0, 1, 2, 3
 CAP_CROPS, CAP_SAPLINGS, CAP_YOUNG, CAP_REN, CAP_SUSWIN, CAP_LASTREN = 64, 64, 64, 256, 512, 128
-EV_CAP, LINK_CAP = 96, 512   # an arena's events and links in one step call
-EV_REWARD, EV_NOVEL, EV_ACH = 0, 1, 2
+EV_CAP, LINK_CAP = 96, 512   # an arena's events and links in one step call (the default; new_state's ev_cap)
+EV_REWARD, EV_NOVEL, EV_ACH, EV_MOVE = 0, 1, 2, 3
+# ---- the reward v4's constants
+for _j, _n in enumerate(T.EV4):
+    globals()["E4_" + {"path_changed": "PATH", "attack_failed": "ATTACK_FAILED", "mob_gone": "GONE"}.get(_n, _n.upper())] = _j
+P4_DAY, P4_NIGHT, P4_PREP, P4_WAVE, P4_BREAK = (T.PHASES4.index(k) for k in ("day", "night", "prep", "wave", "break"))
+CALM4, NOCUR4 = T.CALM4, T.NOCUR4
+NC4 = T.NC4
+C4X = T.C4X
+C4_NOOP, C4_GOAL, C4_DMG, C4_DEATH, C4_BREACH, C4_MOB_S, C4_SURRENDER, C4_AFK = (C4X[k] for k in (
+    "noop", "goal", "crew.damage", "crew.death", "base.breach", "base.mob_seconds", "surrender", "afk"))
+C4_SURVIVE, C4_SCOUT, C4_WASTED, C4_SCALE, C4_NOVEL = (C4X[k] for k in ("credit.survive", "credit.scout", "credit.wasted_day", "credit.scale",
+                                                                    "curiosity.novel"))
+R4_KILL, R4_BLOCK, R4_COVER = 0, 1, 2          # the contributions' reasons: credit.kill, credit.block, credit.cover
+C4_CREDIT0 = C4X["credit.kill"]
+assert (C4X["credit.block"], C4X["credit.cover"]) == (C4_CREDIT0 + 1, C4_CREDIT0 + 2)
+KEY_SCALE4, SW4_C, SW4_HAS, FAC4 = T.KEY_SCALE4, T.SW4_C, T.SW4_HAS, T.FAC4
+_p = T.P4F
+O_NOOP, O_GOAL, O_DMG, O_DEATH, O_BREACH, O_MOB_S = _p["noop"], _p["goal"], _p["dmg"], _p["death"], _p["breach"], _p["mob_s"]
+ACCIDENT_X, BASE_R, FAR_PER, FAR_CAP, FINDS_SOFTEN, SOFTEN_CAP = (_p[k] for k in ("accident_x", "base_r", "far_per", "far_cap", "finds_soften",
+                                                                                  "soften_cap"))
+AFK_RATE, AFK_GRACE, AFK_RAMP, AFK_ACTIVE, NEAR_R = _p["afk_rate"], _p["afk_grace"], _p["afk_ramp"], _p["afk_active"], _p["near_r"]
+AGENT_HITS, TH_KILL, TH_DETER, DELAY_TAU, DODGE_S = _p["agent_hits"], _p["th_kill"], _p["th_deter"], _p["delay_tau"], _p["dodge_s"]
+W_KILL4, W_BLOCKED, W_DETOUR, W_COVER = _p["w_kill"], _p["w_blocked"], _p["w_detour"], _p["w_cover"]
+HP_LOW, HP_SAFE, SURV_SHARE, SCOUT_SHARE, WD_SHARE, SCALE_MOVE = (_p[k] for k in ("hp_low", "hp_safe", "surv_share", "scout_share", "wd_share",
+                                                                                  "scale_move"))
+ACCIDENT_IS = T.ACCIDENT_IS
+ACT_BOX = T.ACT_BOX
+TG_BASE4 = MA                                  # a threat's target: an agent, or the base
+FK = ["coal", "iron", "gold", "redstone", "diamond", "obsidian", "trees"]       # found4's kinds
+FK_COMP = np.array([C4X[T.FOUND4[k][0]] for k in FK], np.int64)
+FK_AMOUNT = np.array([float(T.FOUND4[k][1]) for k in FK])
+_FQ_KEYS = ["mine.coal", "mine.iron", "mine.gold", "mine.redstone", "mine.diamond", "mine.obsidian"]
+FK_FQ = np.array([_FQ_KEYS.index(T.FOUND4[k][0]) if T.FOUND4[k][0] in _FQ_KEYS else -1 for k in FK], np.int64)
+FQ_OF_KEY = np.array([_FQ_KEYS.index(k) if k in _FQ_KEYS else -1 for k in T.KEYS], np.int64)
+FK_OF_ORE = np.array([FK.index(o) if o in FK else -1 for o in T.ORES], np.int64)
+FK_TREES, FK_COAL, FK_IRON = FK.index("trees"), FK.index("coal"), FK.index("iron")
+CA_X, CA_Y, CA_Z, CA_HP, CA_ALIVE, CA_BASE, CA_IDLE, CA_TRIP, CA_DANGER, CA_DANGER_AT, CA_EXISTS = range(11)
+FEV_CAP, FEVL_CAP, FQ_CAP, NIGHT_CAP, BOX_CAP, DANGER_CAP, REC4_CAP = 256, 1024, 64, 32, 64, 64, 16
+DEC_CAP, DAY_CAP, THR_CAP, POOL_CAP, FIND_CAP, MV_CAP = 1024, 512, 256, 128, 256, 64
+V_CREDIT = T.VIA["credit"]
 # a link: decision id, agent, tick, kind (an action, or KIND_REFLEX_WATER), via
 FIELDS = ("ai af gi gf bag worn made_did made_t made_kind stuck ach fails_run win_act win_fail cells drops "
           "seen hidden pen_adults pen_order pen_wild pen_rest items_seen journal links_ep builders crops ripe saplings "
           "young renfood renwheat suswin lastren mt gnext comp facts ev_i ev_f links nev nlink flags sc_f sc_i kit w fac "
-          "scale_on").split()
+          "scale_on mt4 gnext4 fev_i fev_f fev_l fq fq_kind fq_n mobs_out mobs_in night box c4ag danger rec4 open4 open_ord ep4 dec_id "
+          "dec_agent dec_t dec_kind dec_prod dec_end day4 thr_mob thr_dmg thr_until thr_inside thr_nt thr_tg thr_taken pool_i pool_w find_d "
+          "find_a find_v mv_i mv_f rec_ff rec_fi rec_ei rec_ef rec_l").split()
 
 
 @structref.register
@@ -266,17 +308,22 @@ class StateRef(structref.StructRefProxy):
 
 structref.define_proxy(StateRef, StateType, FIELDS)
 # flags: noise, obstacles (x1000), parallel
-FL_NOISE, FL_OBST = 0, 1
+FL_NOISE, FL_OBST, FL_REC, FL_V4, FL_MERGE = 0, 1, 2, 3, 4
+NO_CHAIN = np.zeros((1, 5), np.int64)
 
 
-def new_state(n: int, scen_tables: dict, noise: bool = True, obstacles: float = 1.0):
+def new_state(n: int, scen_tables: dict, noise: bool = True, obstacles: float = 1.0, v4: bool = False, record: bool = False,
+              ev_cap: int = EV_CAP, merge: bool = False):
     """-> (the kernels' StateRef, the same arrays by name for Python)"""
     from simbatch_rng import new_state as rng_state
     mt, gn = rng_state(n)
     sf = np.stack([scen_tables[k].astype(np.float64) for k in SC_F], 1)
     si = np.stack([scen_tables[k].astype(np.int64) for k in SC_I], 1)
     ai = np.zeros((n, NAI), np.int64)
-    ai[:, A_DID_NEXT] = np.arange(n, dtype=np.int64) << 32
+    ai[:, A_DID_NEXT] = (np.arange(n, dtype=np.int64) << 32) + 1
+    m4 = n if v4 else 1        # the reward v4's arrays: only when it is asked for
+    mr = n if (v4 and record) else 1
+    mt4, gn4 = rng_state(m4)
     arrays = dict(
         ai=ai, af=np.zeros((n, NAF)), gi=np.zeros((n, MA, NGI), np.int64), gf=np.zeros((n, MA, NGF)),
         bag=np.zeros((n, MA, NIT), np.int64), worn=np.full((n, MA, 4), -1, np.int64),
@@ -292,17 +339,32 @@ def new_state(n: int, scen_tables: dict, noise: bool = True, obstacles: float = 
         saplings=np.zeros((n, CAP_SAPLINGS)), young=np.zeros((n, CAP_YOUNG, 2)), renfood=np.zeros((n, CAP_REN, 3)),
         renwheat=np.zeros((n, CAP_REN, 2), np.int64), suswin=np.zeros((n, CAP_SUSWIN, 3)), lastren=np.zeros((n, CAP_LASTREN, 2), np.int64),
         mt=mt, gnext=gn, comp=np.zeros((n, NCOMP)), facts=np.zeros((n, MA, NKEY)),
-        ev_i=np.zeros((n, EV_CAP, 8), np.int64), ev_f=np.zeros((n, EV_CAP)), links=np.zeros((n, LINK_CAP, 5), np.int64),
+        ev_i=np.zeros((n, ev_cap, 8), np.int64), ev_f=np.zeros((n, ev_cap)), links=np.zeros((n, max(LINK_CAP, 4 * ev_cap), 5), np.int64),
         nev=np.zeros(n, np.int64), nlink=np.zeros(n, np.int64),
-        flags=np.array([1 if noise else 0, int(round(obstacles * 1000))], np.int64),
-        sc_f=sf, sc_i=si, kit=scen_tables["kit"], w=scen_tables["w"], fac=scen_tables["fac"], scale_on=scen_tables["scale_on"])
+        flags=np.array([1 if noise else 0, int(round(obstacles * 1000)), 1 if (v4 and record) else 0, 1 if v4 else 0, 1 if merge else 0],
+                       np.int64),
+        sc_f=sf, sc_i=si, kit=scen_tables["kit"], w=scen_tables["w"], fac=scen_tables["fac"], scale_on=scen_tables["scale_on"],
+        mt4=mt4, gnext4=gn4, fev_i=np.zeros((m4, FEV_CAP, 9), np.int64), fev_f=np.zeros((m4, FEV_CAP, 3)), fev_l=np.zeros((m4, FEVL_CAP), np.int64),
+        fq=np.zeros((m4, 6, FQ_CAP), np.int64), fq_kind=np.zeros((m4, 6, FQ_CAP), np.int64), fq_n=np.zeros((m4, 6), np.int64),
+        mobs_out=np.zeros((m4, 256), np.int64), mobs_in=np.zeros((m4, 256), np.int64), night=np.zeros((m4, MA, NIGHT_CAP), np.int64),
+        box=np.zeros((m4, MA, BOX_CAP), np.int64), c4ag=np.zeros((m4, MA, 11)), danger=np.zeros((m4, MA, DANGER_CAP), np.int64),
+        rec4=np.zeros((m4, MA, REC4_CAP, 2)), open4=np.zeros((m4, MA, NC4)), open_ord=np.zeros((m4, MA, NC4), np.int64), ep4=np.zeros((m4, NC4)),
+        dec_id=np.full((m4, DEC_CAP), -1, np.int64), dec_agent=np.zeros((m4, DEC_CAP), np.int64), dec_t=np.zeros((m4, DEC_CAP)),
+        dec_kind=np.zeros((m4, DEC_CAP), np.int64), dec_prod=np.zeros((m4, DEC_CAP), np.bool_), dec_end=np.zeros((m4, DEC_CAP)),
+        day4=np.zeros((m4, DAY_CAP), np.int64), thr_mob=np.zeros((m4, THR_CAP), np.int64), thr_dmg=np.zeros((m4, THR_CAP)),
+        thr_until=np.zeros((m4, THR_CAP)), thr_inside=np.zeros((m4, THR_CAP), np.bool_), thr_nt=np.zeros((m4, THR_CAP), np.int64),
+        thr_tg=np.zeros((m4, THR_CAP, MA + 1), np.int64), thr_taken=np.zeros((m4, THR_CAP, MA)), pool_i=np.zeros((m4, POOL_CAP, 4), np.int64),
+        pool_w=np.zeros((m4, POOL_CAP)), find_d=np.full((m4, FIND_CAP), -1, np.int64), find_a=np.zeros((m4, FIND_CAP), np.int64),
+        find_v=np.zeros((m4, FIND_CAP)), mv_i=np.zeros((m4, MV_CAP, 6), np.int64), mv_f=np.zeros((m4, MV_CAP)),
+        rec_ff=np.zeros((mr, 512, 2)), rec_fi=np.zeros((mr, 512, 3), np.int64), rec_ei=np.zeros((mr, 8192, 9), np.int64),
+        rec_ef=np.zeros((mr, 8192, 3)), rec_l=np.zeros((mr, 16384), np.int64))
     arrays = {k: np.ascontiguousarray(arrays[k]) for k in FIELDS}
     return StateRef(*[arrays[k] for k in FIELDS]), arrays
 
 
 SC_F = ("per seconds health day_sin day_cos dusk_in prep lava_risk night_m unarmed pass_kills pass_alive pass_diamonds waves_pass").split()
 SC_I = ("goal item crew_goal night waves hunger xp has_chest chest iron_lo iron_hi rich moat_dug pond lava_pool sim_only hang_scen ditch_scen "
-        "pasture many_animals long").split()
+        "pasture many_animals long delay").split()
 for _j, _n in enumerate(SC_F):
     globals()["SF_" + _n.upper()] = _j
 for _j, _n in enumerate(SC_I):
@@ -427,7 +489,7 @@ def add_cause(st, e, i, ch, n, thing, via):
 @jit
 def emit(st, e, typ, agent, key, points, first, ch, nch):
     k = st.nev[e]
-    if k >= EV_CAP or st.nlink[e] + nch > LINK_CAP:
+    if k >= st.ev_i.shape[1] or st.nlink[e] + nch > st.links.shape[1]:
         st.ai[e, A_OVERFLOW] += 1
         return
     s = st.nlink[e]
@@ -450,6 +512,9 @@ def emit(st, e, typ, agent, key, points, first, ch, nch):
 def give(st, e, i, key, n, ch, nch):
     """sim_env.give: the measured amount by key (st.facts), the points w * n * factor, the event with its causes"""
     st.facts[e, i, key] += n
+    if st.ai[e, A_V4]:
+        give4(st, e, i, key, n, ch, nch)
+        return
     s = st.ai[e, A_SCEN]
     p = st.w[s, key] * n * st.fac[s, key]
     if p == 0:
@@ -465,6 +530,9 @@ def give(st, e, i, key, n, ch, nch):
 @jit
 def give0(st, e, i, key, n):
     st.facts[e, i, key] += n
+    if st.ai[e, A_V4]:
+        give4(st, e, i, key, n, NO_CHAIN, 0)
+        return
     s = st.ai[e, A_SCEN]
     p = st.w[s, key] * n * st.fac[s, key]
     if p == 0:
@@ -1476,6 +1544,12 @@ def begin(st, e, i, act, row):
     st.ai[e, A_DID_NEXT] += 1
     st.gi[e, i, GI_KIND] = act
     st.gf[e, i, GF_DID_T] = t
+    if st.ai[e, A_V4]:
+        j = fev_new(st, e, E4_DECISION)
+        if j >= 0:
+            st.fev_i[e, j, 1] = i
+            st.fev_i[e, j, 2] = st.gi[e, i, GI_DID]
+            st.fev_i[e, j, 3] = act
     raw(st, e, i, row)
     if not allowed(row, act):
         st.gi[e, i, GI_PEND] = 1
@@ -1579,9 +1653,13 @@ def finish(st, e, i):
     st.gi[e, i, GI_HOLDING] = 0
     st.ai[e, A_CHANGED] = 0
     if ok:
+        st.ai[e, A_ACTOR] = i
         res = effect(st, e, i, act)
+        st.ai[e, A_ACTOR] = -1
         if res != R_OK:
             ok, reason = False, res
+    if st.ai[e, A_V4] and ok and ACT_BOX[act]:
+        box_add(st, e, i, st.gi[e, i, GI_DID])
     if ACT_MOVE[act] or ACT_PLACE[act]:
         for k in range(NSTUCK):
             st.stuck[e, i, k] = False
@@ -1599,6 +1677,7 @@ def moved31(st, e, i, act, ok):
         give0(st, e, i, K_DAMAGE, hp)
     st.gi[e, i, GI_NEAR_VALID] = 0
     st.gi[e, i, GI_PIT_FAILS] = 0
+    st.gi[e, i, GI_BOX_N] = 0
     if not ok:
         return
     noise = st.flags[FL_NOISE] == 1
@@ -1652,6 +1731,8 @@ def see(st, e, attr, hidden, p, k):
         n = min(h, k)
         st.ai[e, hidden] = h - n
         st.ai[e, attr] += n
+        if st.ai[e, A_V4]:
+            found4(st, e, FK_TREES if attr == A_TREES else (FK_COAL if attr == A_COAL else (FK_IRON if attr == A_IRON else -1)), n)
 
 
 @jit
@@ -1661,6 +1742,8 @@ def see_ore(st, e, lv, o, p, n):
         n = min(h, n)
         st.hidden[e, lv, o] = h - n
         st.seen[e, lv, o] += n
+        if st.ai[e, A_V4]:
+            found4(st, e, FK_OF_ORE[o], n)
 
 
 @jit
@@ -1757,6 +1840,8 @@ def kill(st, e, i, k, inside, weapon, ch, nch):
     else:
         st.af[e, AF_ENEMIES] -= k
     st.ai[e, A_KILLS] += k
+    if st.ai[e, A_V4]:
+        kill4(st, e, i, k, inside, ch[0, 0] if nch > 0 else st.gi[e, i, GI_DID])
     if weapon < 0:
         weapon = best_item(st, e, i, IT_SWORD)
     if nch < 0:
@@ -2578,6 +2663,13 @@ def renfood_push(st, e, pts, did, ag):
 @jit
 def die(st, e, i, out, accident):
     wave = st.ai[e, A_PHASE] == PH_WAVE
+    if st.ai[e, A_V4]:
+        j = fev_new(st, e, E4_DEATH)
+        if j >= 0:
+            st.fev_i[e, j, 1] = i
+            st.fev_i[e, j, 2] = 1 if accident else 0
+            st.fev_f[e, j, 0] = st.gf[e, i, GF_DIST]
+        st.gi[e, i, GI_BOX_N] = 0
     if not accident:
         give0(st, e, i, K_DEATH, 1.0)
     if out and wave:
@@ -2646,6 +2738,17 @@ def next_phase(st, e):
         st.af[e, AF_WAVE_MOB_S] = 0.0
         st.ai[e, A_PHASE] = PH_WAVE
         st.af[e, AF_PHASE_UNTIL] = t + 240
+        if st.ai[e, A_V4]:   # the wave's mobs: threats to the base from their coming
+            gone4(st, e)
+            for _ in range(int(en)):
+                m = mob4(st, e)
+                no = st.ai[e, A_N_OUT]
+                if no < 256:
+                    st.mobs_out[e, no] = m
+                    st.ai[e, A_N_OUT] = no + 1
+                else:
+                    st.ai[e, A_OVERFLOW] += 1
+                threat4(st, e, m, -1, 240.0)
         if st.ai[e, A_RING]:
             h = float(RING - st.ai[e, A_WALL])
             give_all0(st, e, K_HOLES, h)
@@ -2653,6 +2756,8 @@ def next_phase(st, e):
     elif ph == PH_WAVE:
         st.af[e, AF_ENEMIES] = 0
         st.af[e, AF_INSIDE] = 0
+        if st.ai[e, A_V4]:
+            gone4(st, e)
         st.ai[e, A_PHASE] = PH_BREAK
         st.af[e, AF_PHASE_UNTIL] = t + 20
 
@@ -2772,15 +2877,47 @@ def world(st, e, dt):
             continue
         if sheltered(st, e, i) and night_or_wave(st, e):
             st.af[e, AF_OB_SHELTER] += dt
+            nm4 = st.sc_f[s, SF_NIGHT_M]
+            if st.ai[e, A_V4] and nm4:   # the mobs try at it and the blocks round it turn them
+                nmine = night4(st, e, i, nm4 + st.af[e, AF_T] / 60)
+                if rnd(st.mt4, e) < min(1.0, 0.035 * nmine * dt):
+                    j = fev_new(st, e, E4_ATTACK_FAILED)
+                    if j >= 0:
+                        st.fev_i[e, j, 1] = st.night[e, i, below(st.mt4, e, nmine)]
+                        st.fev_i[e, j, 2] = i
+                        st.fev_i[e, j, 3] = 1   # cover
+                        fev_list(st, e, j, 0, st.box[e, i], st.gi[e, i, GI_BOX_N])
+                        seen = np.empty(1, np.int64)
+                        seen[0] = i
+                        fev_list(st, e, j, 1, seen, 1)
             continue
         nm = st.sc_f[s, SF_NIGHT_M]
         if nm and st.gi[e, i, GI_ALIVE]:
             m = nm + st.af[e, AF_T] / 60
             deep = st.gi[e, i, GI_NEAR_VALID] == 1 and depth == 0 and nr_pit(st, e, i) >= 2
+            if st.ai[e, A_V4]:
+                nmine = night4(st, e, i, m)
+                st.ai[e, A_HURT_MOB] = st.night[e, i, below(st.mt4, e, nmine)]
             hurt(st, e, i, 0.035 * m * (0.5 if deep else 1.0), dt, 3.0, False)
+            st.ai[e, A_HURT_MOB] = -1
             held = st.gi[e, i, GI_HELD]
             if held and poisson(st, e, 0.01 * held * dt):
                 st.ai[e, A_KILLS] += 1
+                if st.ai[e, A_V4]:
+                    nmine = night4(st, e, i, m)
+                    q = below(st.mt4, e, nmine)
+                    x = st.night[e, i, q]
+                    for z in range(q, nmine - 1):
+                        st.night[e, i, z] = st.night[e, i, z + 1]
+                    st.gi[e, i, GI_NIGHT_N] = nmine - 1
+                    j = fev_new(st, e, E4_KILL)
+                    if j >= 0:
+                        st.fev_i[e, j, 1] = x
+                        st.fev_i[e, j, 2] = i
+                        st.fev_i[e, j, 3] = st.gi[e, i, GI_DID]
+                        seen = np.empty(1, np.int64)
+                        seen[0] = i
+                        fev_list(st, e, j, 1, seen, 1)
             if st.gf[e, i, GF_HEALTH] <= 0:
                 die(st, e, i, True, False)
             continue
@@ -2790,7 +2927,7 @@ def world(st, e, dt):
         if en <= 0 and st.af[e, AF_INSIDE] <= 0:
             continue
         dist = st.gf[e, i, GF_DIST]
-        inside_a = dist < 8 and ring
+        inside_a = dist < 8 and perim(st, e)
         held = st.gi[e, i, GI_HELD]
         unarmed = 1.0 if held else unarmed_s
         if dist > 10:
@@ -2826,7 +2963,7 @@ def world(st, e, dt):
                 ch = new_chain()
                 nch = chain_add(ch, 0, st.ai[e, A_ML_DID], st.ai[e, A_ML_AGENT], st.ai[e, A_ML_TICK], st.ai[e, A_ML_KIND], st.ai[e, A_ML_VIA])
                 kill(st, e, who, k, False, -1, ch, nch)
-        if ring and st.af[e, AF_ENEMIES] > 0:
+        if perim(st, e) and st.af[e, AF_ENEMIES] > 0:
             k = min(poisson(st, e, 0.02 * st.af[e, AF_ENEMIES] * leak * dt), int(st.af[e, AF_ENEMIES]))
             if k:
                 st.af[e, AF_ENEMIES] -= k
@@ -2834,14 +2971,31 @@ def world(st, e, dt):
                 st.ai[e, A_BREACHES] += k
                 st.ai[e, A_WAVE_BREACHES] += k
                 give_all0(st, e, K_P_BREACH, float(k))
+                if st.ai[e, A_V4]:
+                    for _ in range(k):
+                        if st.ai[e, A_N_OUT] > 0:
+                            m = pool_pop0(st.mobs_out[e], st.ai[e, A_N_OUT])
+                            st.ai[e, A_N_OUT] -= 1
+                            ni = st.ai[e, A_N_IN]
+                            st.mobs_in[e, ni] = m
+                            st.ai[e, A_N_IN] = ni + 1
+                            j = fev_new(st, e, E4_BREACH)
+                            if j >= 0:
+                                st.fev_i[e, j, 1] = m
         ins = st.af[e, AF_INSIDE]
         if ins > 0:
             st.af[e, AF_MOB_S] += ins * dt
             st.af[e, AF_WAVE_MOB_S] += ins * dt
             give_all0(st, e, K_P_MOB_S, ins * dt)
+            if st.ai[e, A_V4]:
+                j = fev_new(st, e, E4_INSIDE)
+                if j >= 0:
+                    st.fev_f[e, j, 0] = ins * dt
         if st.af[e, AF_ENEMIES] <= 0.5 and st.af[e, AF_INSIDE] <= 0.5:
             st.af[e, AF_ENEMIES] = 0
             st.af[e, AF_INSIDE] = 0
+            if st.ai[e, A_V4]:
+                gone4(st, e)
             st.ai[e, A_CLEARED] += 1
             give_all0(st, e, K_WAVE_CLEARED, 1.0)
             give_all0(st, e, K_P_WAVE_CLEARED, 1.0)
@@ -2862,6 +3016,8 @@ def world(st, e, dt):
         elif st.ai[e, A_WAVE_LOSSES] >= LOSSES_PER_WAVE:
             st.ai[e, A_DONE] = 1
             st.ai[e, A_REASON] = DONE_LOST
+            if st.ai[e, A_V4]:
+                fall4(st, e, 1)
 
 
 @jit
@@ -2873,13 +3029,33 @@ def crew_delta(st, e, col, key, v, first):
 
 
 @jit
+def crew_delta_c(st, e, col, key, v, first, ch, nch):
+    was = st.af[e, col]
+    st.af[e, col] = v
+    if not first and v != was:
+        give_all(st, e, key, v - was, ch, nch)
+
+
+@jit
 def measure(st, e, first):
     s = st.ai[e, A_SCEN]
     if st.sc_i[s, SI_SIM_ONLY]:
         return
     ring = st.ai[e, A_RING]
-    crew_delta(st, e, AF_CT_WALL, K_S_WALL, st.ai[e, A_WALL] / RING if ring else 0.0, first)
-    crew_delta(st, e, AF_CT_MOAT, K_S_MOAT, st.ai[e, A_MOAT] / MOAT, first)
+    bc = np.zeros((8, 5), np.int64)
+    nbc = 0
+    if st.ai[e, A_V4]:   # the wall's, the moat's, the gate's builders since the last measure: the causes of their change
+        nb_ = st.ai[e, A_N_BUILDERS]
+        b0 = st.ai[e, A_B_SEEN]
+        if nb_ - b0 > 8:
+            st.ai[e, A_OVERFLOW] += 1
+            b0 = nb_ - 8
+        for jj in range(b0, nb_):
+            bc[nbc, 0] = int(st.builders[e, jj % 8, 0])
+            nbc += 1
+        st.ai[e, A_B_SEEN] = nb_
+    crew_delta_c(st, e, AF_CT_WALL, K_S_WALL, st.ai[e, A_WALL] / RING if ring else 0.0, first, bc, nbc)
+    crew_delta_c(st, e, AF_CT_MOAT, K_S_MOAT, st.ai[e, A_MOAT] / MOAT, first, bc, nbc)
     crew_delta(st, e, AF_CT_LIGHT, K_S_LIGHT, min(1.0, st.ai[e, A_TORCHES] / 12), first)
     crew_delta(st, e, AF_CT_GATE, K_S_GATE, 1.0 if (st.ai[e, A_DOOR] and not st.ai[e, A_GATE_OPEN]) else 0.0, first)
     crew_delta(st, e, AF_CT_ETABLE, K_E_TABLE, 1.0 if st.ai[e, A_ENCH_TABLE] else 0.0, first)
@@ -2936,6 +3112,8 @@ def advance(st, e, until):
                 give0(st, e, i, K_TIME, dt)
         world(st, e, dt)
         measure(st, e, False)
+        if st.ai[e, A_V4]:
+            flush(st, e, dt)
         t = st.af[e, AF_T]
         if not sim_only:
             for i in range(st.ai[e, A_NAG]):
@@ -2968,6 +3146,23 @@ def emit_row(st, e, i, row, obs, mask, rew, facts_out, valid):
 def decide(st, e, ready, first, row, obs, mask, rew, facts_out, valid):
     if not first:
         measure(st, e, False)
+    if st.ai[e, A_V4]:
+        if st.ai[e, A_DONE] and st.sc_f[st.ai[e, A_SCEN], SF_NIGHT_M]:   # the night is over: its mobs leave (sim_env's dict order)
+            for r_ in range(st.ai[e, A_NIGHT_ORD]):
+                for i in range(st.ai[e, A_NAG]):
+                    if st.gi[e, i, GI_NIGHT_ORD] == r_ + 1:
+                        for q in range(st.gi[e, i, GI_NIGHT_N]):
+                            j = fev_new(st, e, E4_GONE)
+                            if j >= 0:
+                                st.fev_i[e, j, 1] = st.night[e, i, q]
+                                st.fev_i[e, j, 2] = 1   # despawn
+                        st.gi[e, i, GI_NIGHT_N] = 0
+                        st.gi[e, i, GI_NIGHT_ORD] = 0
+            st.ai[e, A_NIGHT_ORD] = 0
+        flush(st, e, 0.0)
+        for i in range(st.ai[e, A_NAG]):
+            if ready[i]:
+                st.gf[e, i, GF_ACC] = c4_take(st, e, i)
     for i in range(st.ai[e, A_NAG]):
         if ready[i]:
             emit_row(st, e, i, row, obs, mask, rew, facts_out, valid)
@@ -2996,6 +3191,8 @@ def step_one(st, e, acts, row, obs, mask, rew, facts_out, valid, assigned):
             continue
         if act == 0:
             give0(st, e, i, K_NOOP, 1.0)
+            if st.ai[e, A_V4]:
+                fall4(st, e, 0)
             st.gi[e, i, GI_LAST] = 0
             st.gi[e, i, GI_OUTCOME] = OUT_NONE
             st.ai[e, A_DONE] = 1
@@ -3004,6 +3201,8 @@ def step_one(st, e, acts, row, obs, mask, rew, facts_out, valid, assigned):
             return
         begin(st, e, i, act, row)
         assigned[e, i] = st.gi[e, i, GI_DID]
+    if st.ai[e, A_V4]:
+        flush(st, e, 0.0)
     ready = np.zeros(MA, np.bool_)
     while not st.ai[e, A_DONE]:
         t = st.af[e, AF_T]
@@ -3034,7 +3233,7 @@ def step_one(st, e, acts, row, obs, mask, rew, facts_out, valid, assigned):
 
 
 @jit
-def reset_one(st, e, scen, seed_key, crew, target, force, row, obs, mask, rew, facts_out, valid):
+def reset_one(st, e, scen, seed_key, crew, target, force, row, obs, mask, rew, facts_out, valid, seed4_key):
     from_seed(st, e, seed_key)
     mt = st.mt
     s = scen
@@ -3047,6 +3246,12 @@ def reset_one(st, e, scen, seed_key, crew, target, force, row, obs, mask, rew, f
         st.af[e, c] = 0.0
     st.ai[e, A_EPISODES] += 1
     st.ai[e, A_SCEN] = s
+    st.ai[e, A_ACTOR] = -1
+    st.ai[e, A_HURT_MOB] = -1
+    if st.flags[FL_V4] and not st.sc_i[s, SI_DELAY]:   # the reward v4 (not for delay:*): its events, its own draws, the core
+        st.ai[e, A_V4] = 1
+        from_key(st.mt4, st.gnext4, e, seed4_key)
+        c4_reset(st, e)
     st.ai[e, A_TARGET] = target
     st.ai[e, A_FORCE] = force
     st.ai[e, A_TREES] = 0
@@ -3141,6 +3346,7 @@ def reset_one(st, e, scen, seed_key, crew, target, force, row, obs, mask, rew, f
         st.gi[e, i, GI_F_LAST_FAILED] = -1
         st.gi[e, i, GI_F_GROUP] = -1
         st.gi[e, i, GI_OUTCOME] = OUT_NONE
+        st.gi[e, i, GI_C4_CUR] = -1
     for i in range(nag):
         for k in range(NIT):
             if st.kit[s, k]:
@@ -3185,12 +3391,34 @@ def step_batch(st, acts, active, obs, mask, rew, facts_out, valid, assigned):
             continue
         st.nev[e] = 0
         st.nlink[e] = 0
+        if st.flags[FL_REC]:
+            st.ai[e, A_REC_NF] = 0
+            st.ai[e, A_REC_NE] = 0
+            st.ai[e, A_REC_NL] = 0
         row = np.empty(R_W)
         step_one(st, e, acts[e], row, obs, mask, rew, facts_out, valid, assigned)
 
 
+@jit
+def c4_reset(st, e):
+    """a new RewardCore for the episode"""
+    st.ai[e, A_C4_EP_FIRST] = st.ai[e, A_DID_NEXT]
+    st.af[e, AF_C4_CALM_END] = np.nan
+    st.ai[e, A_C4_PREV_CALM] = -1
+    for i in range(MA):
+        for c in range(11):
+            st.c4ag[e, i, c] = 0.0
+        st.c4ag[e, i, CA_DANGER_AT] = -1.0
+    for c in range(NC4):
+        st.ep4[e, c] = 0.0
+    for q in range(FIND_CAP):
+        st.find_d[e, q] = -1
+    for q in range(6):
+        st.fq_n[e, q] = 0
+
+
 @nb.njit(cache=True, parallel=True)
-def reset_batch(st, which, scen, keys, nkeys, crew, target, force, obs, mask, rew, facts_out, valid):
+def reset_batch(st, which, scen, keys, nkeys, crew, target, force, obs, mask, rew, facts_out, valid, keys4, nkeys4):
     """reset the arenas which[j] (scenario, the seed's 32-bit words keys[j, :nkeys[j]], crew, target, force)"""
     n = which.shape[0]
     for j in nb.prange(n):
@@ -3199,5 +3427,1017 @@ def reset_batch(st, which, scen, keys, nkeys, crew, target, force, obs, mask, re
             valid[e * MA + i] = False
         st.nev[e] = 0
         st.nlink[e] = 0
+        if st.flags[FL_REC]:
+            st.ai[e, A_REC_NF] = 0
+            st.ai[e, A_REC_NE] = 0
+            st.ai[e, A_REC_NL] = 0
         row = np.empty(R_W)
-        reset_one(st, e, scen[j], keys[j, :nkeys[j]], crew[j], target[j], force[j], row, obs, mask, rew, facts_out, valid)
+        reset_one(st, e, scen[j], keys[j, :nkeys[j]], crew[j], target[j], force[j], row, obs, mask, rew, facts_out, valid,
+                  keys4[j, :nkeys4[j]])
+
+
+# ==== the reward v4 (docs/rl/REWARD-v4.md) ===========================================================================
+# The events sim_env gives under reward="v4" (its give4, flush, found4, wall4, kill4, gone4, night4, fall4: line by line,
+# their own draws from rng4 = Random(seed + 7919)) into a frame buffer, and tools/rl/reward_core.py's RewardCore over
+# each frame (c4_*: line by line too). A frame's events can be kept (st.flags[FL_REC]) for the Python core.
+
+@jit
+def fev_new(st, e, typ):
+    j = st.ai[e, A_N_FEV]
+    if j >= FEV_CAP:
+        st.ai[e, A_OVERFLOW] += 1
+        return -1
+    st.ai[e, A_N_FEV] = j + 1
+    for c in range(9):
+        st.fev_i[e, j, c] = 0
+    st.fev_i[e, j, 0] = typ
+    for c in range(3):
+        st.fev_f[e, j, c] = 0.0
+    return j
+
+
+@jit
+def fev_list(st, e, j, slot, vals, n):
+    """the event j's list slot (0: by/causes, 1: seen) := vals[:n]"""
+    s = st.ai[e, A_N_FEVL]
+    if s + n > FEVL_CAP:
+        st.ai[e, A_OVERFLOW] += 1
+        n = max(0, FEVL_CAP - s)
+    for q in range(n):
+        st.fev_l[e, s + q] = vals[q]
+    st.ai[e, A_N_FEVL] = s + n
+    st.fev_i[e, j, 5 + 2 * slot] = s
+    st.fev_i[e, j, 6 + 2 * slot] = n
+
+
+@jit
+def give4(st, e, i, key, n, ch, nch):
+    """sim_env.give4: v3's payments as v4's events (the outcomes and the scales; the rest is not paid)"""
+    if key == K_NOOP:
+        j = fev_new(st, e, E4_NOOP)
+        if j >= 0:
+            st.fev_i[e, j, 1] = i
+    elif key == K_GOAL:
+        if not st.ai[e, A_GOAL_SENT]:
+            st.ai[e, A_GOAL_SENT] = 1
+            fev_new(st, e, E4_GOAL)
+    elif key == K_DAMAGE:
+        j = fev_new(st, e, E4_DAMAGE)
+        if j >= 0:
+            st.fev_i[e, j, 1] = i
+            st.fev_i[e, j, 2] = st.ai[e, A_HURT_MOB]
+            st.fev_f[e, j, 0] = n
+    elif key == K_CUR_NOVEL:
+        j = fev_new(st, e, E4_NOVEL)
+        if j >= 0:
+            st.fev_i[e, j, 1] = i
+            st.fev_i[e, j, 2] = st.gi[e, i, GI_DID]
+    elif KEY_SCALE4[key] >= 0 and n != 0:
+        j = fev_new(st, e, E4_SCALE)
+        if j < 0:
+            return
+        st.fev_i[e, j, 1] = i
+        st.fev_i[e, j, 2] = KEY_SCALE4[key]
+        st.fev_i[e, j, 3] = -1
+        st.fev_f[e, j, 0] = n
+        if nch > 0:
+            ids = np.empty(nch, np.int64)
+            for q in range(nch):
+                ids[q] = ch[q, 0]
+            fev_list(st, e, j, 0, ids, nch)
+        q = FQ_OF_KEY[key]
+        if q >= 0 and n > 0 and st.fq_n[e, q] > 0:   # an ore the crew found: its finder's
+            st.fev_i[e, j, 3] = st.fq[e, q, 0]
+            st.fev_f[e, j, 1] = st.fq_kind[e, q, 0]
+            m = st.fq_n[e, q]
+            for z in range(m - 1):
+                st.fq[e, q, z] = st.fq[e, q, z + 1]
+                st.fq_kind[e, q, z] = st.fq_kind[e, q, z + 1]
+            st.fq_n[e, q] = m - 1
+
+
+@jit
+def phase4(st, e):
+    ph = st.ai[e, A_PHASE]
+    if ph == PH_PREP:
+        return P4_PREP
+    if ph == PH_WAVE:
+        return P4_WAVE
+    if ph == PH_BREAK:
+        return P4_BREAK
+    return P4_NIGHT if (night_or_wave(st, e) or st.sc_f[st.ai[e, A_SCEN], SF_NIGHT_M]) else P4_DAY
+
+
+@jit
+def perim(st, e):
+    return st.ai[e, A_RING] == 1 or (st.ai[e, A_V4] == 1 and st.sc_i[st.ai[e, A_SCEN], SI_WAVES] > 0)
+
+
+@jit
+def mob4(st, e):
+    st.ai[e, A_MOB_NEXT] += 1
+    return st.ai[e, A_MOB_NEXT]
+
+
+@jit
+def threat4(st, e, mob, target, stay):
+    """a threat event: target -1 the base (stay_s given), else an agent (no stay_s)"""
+    j = fev_new(st, e, E4_THREAT)
+    if j >= 0:
+        st.fev_i[e, j, 1] = mob
+        st.fev_i[e, j, 2] = target
+        st.fev_i[e, j, 3] = 1 if target < 0 else 0
+        st.fev_f[e, j, 0] = 3.0
+        st.fev_f[e, j, 1] = stay
+
+
+@jit
+def fall4(st, e, why):
+    s = st.ai[e, A_SCEN]
+    if not st.sc_i[s, SI_WAVES]:
+        j = fev_new(st, e, E4_FALL)
+        if j >= 0:
+            st.fev_i[e, j, 1] = why
+        return
+    if st.ai[e, A_PHASE] == PH_WAVE:
+        left = max(0, int(st.af[e, AF_ENEMIES])) - st.ai[e, A_N_OUT]
+    else:
+        left = 0
+    t, ph, until, n = st.af[e, AF_T], st.ai[e, A_PHASE], st.af[e, AF_PHASE_UNTIL], st.ai[e, A_WAVE_NUM]
+    for _ in range(max(0, left)):
+        threat4(st, e, mob4(st, e), -1, max(0.0, until - t))
+    end = st.sc_f[s, SF_SECONDS]
+    while True:
+        if ph == PH_WAVE:
+            ph, until = PH_BREAK, until + (60 if st.sc_i[s, SI_LONG] else 20)
+            continue
+        if until >= end:
+            break
+        n += 1
+        mult = 0.7 if st.sc_i[s, SI_WAVES] == 1 else 1.0
+        k = float(max(1, math.floor(mult * (2 + 1.6 * n + 0.12 * n * n))))
+        k = py_round(k * (1 - min(0.3, st.ai[e, A_TORCHES] / 40)))
+        stay = min(240.0, end - until)
+        for _ in range(int(k)):
+            threat4(st, e, mob4(st, e), -1, stay)
+        ph, until = PH_WAVE, until + 240
+    j = fev_new(st, e, E4_FALL)
+    if j >= 0:
+        st.fev_i[e, j, 1] = why
+
+
+@jit
+def found4(st, e, kind, n):
+    """kind: a FK index (-1: nothing the core values); the actor: the agent whose skill is ending"""
+    a = st.ai[e, A_ACTOR]
+    if kind < 0 or a < 0:
+        return
+    for _ in range(n):
+        st.ai[e, A_N_FOUND] += 1
+        res = st.ai[e, A_N_FOUND]
+        j = fev_new(st, e, E4_FOUND)
+        if j >= 0:
+            st.fev_i[e, j, 1] = a
+            st.fev_i[e, j, 2] = st.gi[e, a, GI_DID]
+            st.fev_i[e, j, 3] = res
+            st.fev_i[e, j, 4] = FK_COMP[kind]
+            st.fev_f[e, j, 0] = FK_AMOUNT[kind]
+            st.fev_f[e, j, 1] = kind
+        q = FK_FQ[kind]
+        if q >= 0:
+            m = st.fq_n[e, q]
+            if m < FQ_CAP:
+                st.fq[e, q, m] = res
+                st.fq_kind[e, q, m] = kind
+                st.fq_n[e, q] = m + 1
+            else:
+                st.ai[e, A_OVERFLOW] += 1
+
+
+@jit
+def wall4(st, e, m):
+    if not st.ai[e, A_RING] or st.ai[e, A_WALL] < RING // 2 or st.ai[e, A_N_BUILDERS] == 0:
+        return
+    nb_ = st.ai[e, A_N_BUILDERS]
+    mb = min(8, nb_)
+    by = np.empty(8, np.int64)
+    nby = 0
+    for jj in range(nb_ - mb, nb_):
+        d = int(st.builders[e, jj % 8, 0])
+        dup = False
+        for q in range(nby):
+            if by[q] == d:
+                dup = True
+                break
+        if not dup:
+            by[nby] = d
+            nby += 1
+    seen = np.empty(MA, np.int64)
+    ns = 0
+    for i in range(st.ai[e, A_NAG]):
+        if st.gi[e, i, GI_ALIVE] and st.gf[e, i, GF_DIST] < 10 and st.gi[e, i, GI_DEPTH] == 0:
+            seen[ns] = i
+            ns += 1
+    full = st.ai[e, A_WALL] >= RING - 2
+    j = fev_new(st, e, E4_PATH)
+    if j >= 0:
+        st.fev_i[e, j, 1] = m
+        st.fev_i[e, j, 2] = 0 if full else 1      # blocked, detour
+        st.fev_i[e, j, 3] = 1                     # on_route
+        st.fev_f[e, j, 0] = 0.0 if full else 20.0 * st.ai[e, A_WALL] / RING
+        fev_list(st, e, j, 0, by, nby)
+        fev_list(st, e, j, 1, seen, ns)
+
+
+@jit
+def pool_pop0(arr, n):
+    v = arr[0]
+    for q in range(n - 1):
+        arr[q] = arr[q + 1]
+    return v
+
+
+@jit
+def kill4(st, e, i, k, inside, d):
+    for _ in range(k):
+        if inside:
+            if st.ai[e, A_N_IN] == 0:
+                break
+            m = pool_pop0(st.mobs_in[e], st.ai[e, A_N_IN])
+            st.ai[e, A_N_IN] -= 1
+        else:
+            if st.ai[e, A_N_OUT] == 0:
+                break
+            m = pool_pop0(st.mobs_out[e], st.ai[e, A_N_OUT])
+            st.ai[e, A_N_OUT] -= 1
+            wall4(st, e, m)
+        j = fev_new(st, e, E4_KILL)
+        if j >= 0:
+            st.fev_i[e, j, 1] = m
+            st.fev_i[e, j, 2] = i
+            st.fev_i[e, j, 3] = d
+            seen = np.empty(1, np.int64)
+            seen[0] = i
+            fev_list(st, e, j, 1, seen, 1)
+
+
+@jit
+def gone4(st, e):
+    for q in range(st.ai[e, A_N_OUT]):
+        m = st.mobs_out[e, q]
+        wall4(st, e, m)
+        j = fev_new(st, e, E4_GONE)
+        if j >= 0:
+            st.fev_i[e, j, 1] = m
+            st.fev_i[e, j, 2] = 0   # wave_end
+    for q in range(st.ai[e, A_N_IN]):
+        j = fev_new(st, e, E4_GONE)
+        if j >= 0:
+            st.fev_i[e, j, 1] = st.mobs_in[e, q]
+            st.fev_i[e, j, 2] = 0
+    st.ai[e, A_N_OUT] = 0
+    st.ai[e, A_N_IN] = 0
+
+
+@jit
+def night4(st, e, i, m):
+    if st.gi[e, i, GI_NIGHT_ORD] == 0:
+        st.ai[e, A_NIGHT_ORD] += 1
+        st.gi[e, i, GI_NIGHT_ORD] = st.ai[e, A_NIGHT_ORD]
+    while st.gi[e, i, GI_NIGHT_N] < int(math.ceil(m)):
+        x = mob4(st, e)
+        nn = st.gi[e, i, GI_NIGHT_N]
+        if nn >= NIGHT_CAP:
+            st.ai[e, A_OVERFLOW] += 1
+            break
+        st.night[e, i, nn] = x
+        st.gi[e, i, GI_NIGHT_N] = nn + 1
+        threat4(st, e, x, i, 0.0)
+    return st.gi[e, i, GI_NIGHT_N]
+
+
+@jit
+def box_add(st, e, i, d):
+    n = st.gi[e, i, GI_BOX_N]
+    if n < BOX_CAP:
+        st.box[e, i, n] = d
+        st.gi[e, i, GI_BOX_N] = n + 1
+    else:
+        st.ai[e, A_OVERFLOW] += 1
+
+
+@jit
+def flush(st, e, dt):
+    """sim_env.flush: a frame (the agents' state, then the events since the last one) for the core"""
+    if st.flags[FL_REC]:
+        rec_frame(st, e, dt)
+    c4_frame(st, e, dt)
+    st.ai[e, A_N_FEV] = 0
+    st.ai[e, A_N_FEVL] = 0
+
+
+@jit
+def rec_frame(st, e, dt):
+    """the frame kept for Python (tools/rl/simbatch.py frames(): reward_core's input as sim_env makes it)"""
+    nf = st.ai[e, A_REC_NF]
+    if nf >= st.rec_ff.shape[1]:
+        st.ai[e, A_OVERFLOW] += 1
+        return
+    st.rec_ff[e, nf, 0] = st.af[e, AF_T]
+    st.rec_ff[e, nf, 1] = dt
+    st.rec_fi[e, nf, 0] = phase4(st, e)
+    s0 = st.ai[e, A_REC_NE]
+    st.rec_fi[e, nf, 1] = s0
+    n = st.ai[e, A_N_FEV]
+    nag = st.ai[e, A_NAG]
+    if s0 + nag + n > st.rec_ei.shape[1] or st.ai[e, A_REC_NL] + st.ai[e, A_N_FEVL] > st.rec_l.shape[1]:
+        st.ai[e, A_OVERFLOW] += 1
+        return
+    for i in range(nag):
+        q = s0 + i
+        for c in range(9):
+            st.rec_ei[e, q, c] = 0
+        st.rec_ei[e, q, 0] = E4_AGENT
+        st.rec_ei[e, q, 1] = i
+        st.rec_ei[e, q, 2] = st.gi[e, i, GI_ALIVE]
+        st.rec_ef[e, q, 0] = st.gf[e, i, GF_DIST]
+        st.rec_ef[e, q, 1] = 64.0 - 24.0 * st.gi[e, i, GI_DEPTH]
+        st.rec_ef[e, q, 2] = max(0.0, st.gf[e, i, GF_HEALTH])
+    l0 = st.ai[e, A_REC_NL]
+    for j in range(n):
+        q = s0 + nag + j
+        for c in range(9):
+            st.rec_ei[e, q, c] = st.fev_i[e, j, c]
+        for c in range(3):
+            st.rec_ef[e, q, c] = st.fev_f[e, j, c]
+        for sl in range(2):
+            if st.fev_i[e, j, 6 + 2 * sl] > 0:
+                st.rec_ei[e, q, 5 + 2 * sl] = st.fev_i[e, j, 5 + 2 * sl] + l0
+    for q in range(st.ai[e, A_N_FEVL]):
+        st.rec_l[e, l0 + q] = st.fev_l[e, q]
+    st.ai[e, A_REC_NL] = l0 + st.ai[e, A_N_FEVL]
+    st.rec_fi[e, nf, 2] = nag + n
+    st.ai[e, A_REC_NE] = s0 + nag + n
+    st.ai[e, A_REC_NF] = nf + 1
+
+
+# ---- reward_core.RewardCore over an arena's frames ---------------------------------------------------------------------
+@jit
+def dec_slot(st, e, d):
+    """the decision d's slot in the core's table, -1 when it is not there (not this episode's, or forgotten)"""
+    if d < st.ai[e, A_C4_EP_FIRST]:
+        return -1
+    s = d % DEC_CAP
+    if st.dec_id[e, s] != d:
+        return -1
+    return s
+
+
+@jit
+def c4_pay(st, e, a, comp, pts):
+    if pts == 0:
+        return
+    n = st.gi[e, a, GI_OPEN_N]
+    have = False
+    for q in range(n):
+        if st.open_ord[e, a, q] == comp:
+            have = True
+            break
+    if not have:
+        st.open_ord[e, a, n] = comp
+        st.gi[e, a, GI_OPEN_N] = n + 1
+        st.open4[e, a, comp] = 0.0
+    st.open4[e, a, comp] += pts
+    st.ep4[e, comp] += pts
+    st.af[e, AF_C4_TOTAL] += pts
+
+
+@jit
+def c4_take(st, e, a):
+    s = 0.0
+    for q in range(st.gi[e, a, GI_OPEN_N]):
+        s += st.open4[e, a, st.open_ord[e, a, q]]
+    st.gi[e, a, GI_OPEN_N] = 0
+    return s
+
+
+@jit
+def c4_progress(st, e, a):
+    st.c4ag[e, a, CA_IDLE] = 0.0
+
+
+@jit
+def c4_productive(st, e, d):
+    s = dec_slot(st, e, d)
+    if s >= 0:
+        st.dec_prod[e, s] = True
+
+
+@jit
+def c4_move(st, e, a, comp, pts, d):
+    s = dec_slot(st, e, d)
+    if s >= 0:
+        ag, t0, kind = st.dec_agent[e, s], st.dec_t[e, s], st.dec_kind[e, s]
+    else:
+        ag, t0, kind = a, st.af[e, AF_C4_T], -1
+    # one move a frame for each (agent, component, decision): summed into the first
+    n = st.ai[e, A_C4_MOVES_N]
+    for q in range(n):
+        if st.mv_i[e, q, 0] == a and st.mv_i[e, q, 1] == comp and st.mv_i[e, q, 2] == d:
+            st.mv_f[e, q] += pts
+            return
+    if n >= MV_CAP:
+        st.ai[e, A_OVERFLOW] += 1
+        return
+    st.mv_i[e, n, 0] = a
+    st.mv_i[e, n, 1] = comp
+    st.mv_i[e, n, 2] = d
+    st.mv_i[e, n, 3] = ag
+    st.mv_i[e, n, 4] = int(np.rint(t0 * 20))
+    st.mv_i[e, n, 5] = kind
+    st.mv_f[e, n] = pts
+    st.ai[e, A_C4_MOVES_N] = n + 1
+
+
+@jit
+def c4_transfer(st, e, frm, to, comp, pts, d):
+    if pts == 0:
+        return
+    c4_pay(st, e, frm, comp, -pts)
+    c4_pay(st, e, to, comp, pts)
+    c4_move(st, e, to, comp, pts, d)
+
+
+@jit
+def c4_witness(st, e, a, seen_s, seen_n):
+    if seen_n == 0:
+        return False
+    for q in range(seen_n):
+        if st.fev_l[e, seen_s + q] == a:
+            return True
+    if not st.c4ag[e, a, CA_EXISTS]:
+        return False
+    r2 = NEAR_R * NEAR_R
+    for q in range(seen_n):
+        x = st.fev_l[e, seen_s + q]
+        if 0 <= x < MA and st.c4ag[e, x, CA_EXISTS]:
+            dx = st.c4ag[e, x, CA_X] - st.c4ag[e, a, CA_X]
+            dy = st.c4ag[e, x, CA_Y] - st.c4ag[e, a, CA_Y]
+            dz = st.c4ag[e, x, CA_Z] - st.c4ag[e, a, CA_Z]
+            if dx ** 2 + dy ** 2 + dz ** 2 <= r2:
+                return True
+    return False
+
+
+@jit
+def c4_loss(st, e, a, comp, pts):
+    c4_pay(st, e, a, comp, pts)
+    if pts >= 0 or CALM4[st.ai[e, A_C4_PHASE]] or np.isnan(st.af[e, AF_C4_CALM_END]):
+        return
+    calm_end = st.af[e, AF_C4_CALM_END]
+    nd = st.ai[e, A_C4_DAY_N]
+    cd = np.empty(nd, np.int64)
+    cdur = np.empty(nd)
+    nc = 0
+    for q in range(nd):
+        d = st.day4[e, q]
+        s = dec_slot(st, e, d)
+        if s < 0:
+            st.ai[e, A_C4_ERR] += 1   # sim_env's core would know it: the table forgot it
+            continue
+        if st.dec_prod[e, s]:
+            continue
+        end = st.dec_end[e, s] if not np.isnan(st.dec_end[e, s]) else calm_end
+        dur = min(end, calm_end) - st.dec_t[e, s]
+        if dur > 0:
+            cd[nc] = d
+            cdur[nc] = dur
+            nc += 1
+    tot = 0.0
+    for q in range(nc):
+        tot += cdur[q]
+    if tot <= 0:
+        return
+    for q in range(nc):
+        x = WD_SHARE * pts * cdur[q] / tot
+        c4_transfer(st, e, a, st.dec_agent[e, dec_slot(st, e, cd[q])], C4_WASTED, x, cd[q])
+
+
+@jit
+def thr_find(st, e, mob):
+    for q in range(st.ai[e, A_C4_THR_N]):
+        if st.thr_mob[e, q] == mob:
+            return q
+    return -1
+
+
+@jit
+def thr_has_target(st, e, q, tg):
+    for z in range(st.thr_nt[e, q]):
+        if st.thr_tg[e, q, z] == tg:
+            return True
+    return False
+
+
+@jit
+def thr_remove(st, e, q):
+    """the threat q out of the list (the order of the rest kept, as a dict's pop), its contributions out of the pool"""
+    mob = st.thr_mob[e, q]
+    n = st.ai[e, A_C4_THR_N]
+    for z in range(q, n - 1):
+        st.thr_mob[e, z] = st.thr_mob[e, z + 1]
+        st.thr_dmg[e, z] = st.thr_dmg[e, z + 1]
+        st.thr_until[e, z] = st.thr_until[e, z + 1]
+        st.thr_inside[e, z] = st.thr_inside[e, z + 1]
+        st.thr_nt[e, z] = st.thr_nt[e, z + 1]
+        for c in range(MA + 1):
+            st.thr_tg[e, z, c] = st.thr_tg[e, z + 1, c]
+        for c in range(MA):
+            st.thr_taken[e, z, c] = st.thr_taken[e, z + 1, c]
+    st.ai[e, A_C4_THR_N] = n - 1
+    pool_drop(st, e, mob)
+
+
+@jit
+def pool_drop(st, e, mob):
+    n = st.ai[e, A_C4_POOL_N]
+    k = 0
+    for q in range(n):
+        if st.pool_i[e, q, 0] != mob:
+            if k != q:
+                for c in range(4):
+                    st.pool_i[e, k, c] = st.pool_i[e, q, c]
+                st.pool_w[e, k] = st.pool_w[e, q]
+            k += 1
+    st.ai[e, A_C4_POOL_N] = k
+
+
+@jit
+def c4_contrib(st, e, mob, d, agent, reason, w):
+    if w <= 0:
+        return
+    n = st.ai[e, A_C4_POOL_N]
+    for q in range(n):
+        if st.pool_i[e, q, 0] == mob and st.pool_i[e, q, 1] == d:
+            if st.pool_w[e, q] < w:
+                st.pool_i[e, q, 2] = agent
+                st.pool_i[e, q, 3] = reason
+                st.pool_w[e, q] = w
+            return
+    if n >= POOL_CAP:
+        st.ai[e, A_OVERFLOW] += 1
+        return
+    st.pool_i[e, n, 0] = mob
+    st.pool_i[e, n, 1] = d
+    st.pool_i[e, n, 2] = agent
+    st.pool_i[e, n, 3] = reason
+    st.pool_w[e, n] = w
+    st.ai[e, A_C4_POOL_N] = n + 1
+
+
+@jit
+def c4_value(st, e, q):
+    wd = abs(O_DMG)
+    v = 0.0
+    t = st.af[e, AF_C4_T]
+    for z in range(st.thr_nt[e, q]):
+        tg = st.thr_tg[e, q, z]
+        if tg == TG_BASE4:
+            stay = max(0.0, st.thr_until[e, q] - t)
+            v = max(v, (0.0 if st.thr_inside[e, q] else abs(O_BREACH)) + abs(O_MOB_S) * stay)
+        else:
+            v = max(v, AGENT_HITS * st.thr_dmg[e, q] * wd - st.thr_taken[e, q, tg] * wd)
+    return max(0.0, v)
+
+
+@jit
+def c4_resolve(st, e, mob, share):
+    q = thr_find(st, e, mob)
+    if q < 0:
+        return
+    pie = share * c4_value(st, e, q)
+    # the threat's contributions in their order (taken before the threat goes)
+    n = st.ai[e, A_C4_POOL_N]
+    cd = np.empty(n, np.int64)
+    ca = np.empty(n, np.int64)
+    cr = np.empty(n, np.int64)
+    cw = np.empty(n)
+    nc = 0
+    for z in range(n):
+        if st.pool_i[e, z, 0] == mob:
+            cd[nc], ca[nc], cr[nc], cw[nc] = st.pool_i[e, z, 1], st.pool_i[e, z, 2], st.pool_i[e, z, 3], st.pool_w[e, z]
+            nc += 1
+    thr_remove(st, e, q)
+    if nc == 0:
+        return
+    tot = 0.0
+    for z in range(nc):
+        tot += cw[z]
+    if pie <= 0 or tot <= 0:
+        return
+    t = st.af[e, AF_C4_T]
+    for z in range(nc):
+        pts = pie * cw[z] / tot
+        comp = C4_CREDIT0 + cr[z]
+        c4_pay(st, e, ca[z], comp, pts)
+        c4_move(st, e, ca[z], comp, pts, cd[z])
+        c4_productive(st, e, cd[z])
+        s = dec_slot(st, e, cd[z])
+        if s >= 0 and t - st.dec_t[e, s] <= AFK_ACTIVE:
+            c4_progress(st, e, ca[z])
+
+
+@jit
+def c4_state(st, e, a):
+    if not st.c4ag[e, a, CA_EXISTS]:
+        st.c4ag[e, a, CA_EXISTS] = 1.0
+        st.c4ag[e, a, CA_X] = 0.0
+        st.c4ag[e, a, CA_Y] = 0.0
+        st.c4ag[e, a, CA_Z] = 0.0
+        st.c4ag[e, a, CA_HP] = 20.0
+        st.c4ag[e, a, CA_ALIVE] = 1.0
+        st.c4ag[e, a, CA_BASE] = 0.0
+        st.c4ag[e, a, CA_IDLE] = 0.0
+        st.c4ag[e, a, CA_TRIP] = 0.0
+        st.c4ag[e, a, CA_DANGER] = 0.0
+        st.c4ag[e, a, CA_DANGER_AT] = -1.0
+        st.gi[e, a, GI_DANGER_N] = 0
+
+
+@jit
+def c4_alive(st, e, out):
+    n = 0
+    for a in range(MA):
+        if st.c4ag[e, a, CA_EXISTS] and st.c4ag[e, a, CA_ALIVE]:
+            out[n] = a
+            n += 1
+    return n
+
+
+@jit
+def c4_event(st, e, j):
+    """reward_core's ev_<type> for the frame event j"""
+    typ = st.fev_i[e, j, 0]
+    t = st.af[e, AF_C4_T]
+    if typ == E4_DECISION:
+        k = st.fev_i[e, j, 1]
+        d = st.fev_i[e, j, 2]
+        c4_state(st, e, k)
+        cur = st.gi[e, k, GI_C4_CUR]
+        if cur >= 0:
+            s = dec_slot(st, e, cur)
+            if s >= 0:
+                st.dec_end[e, s] = t
+        s = d % DEC_CAP
+        if st.dec_id[e, s] >= st.ai[e, A_C4_EP_FIRST] and st.dec_id[e, s] != d:
+            st.ai[e, A_C4_FORGOT] += 1
+        st.dec_id[e, s] = d
+        st.dec_agent[e, s] = k
+        st.dec_t[e, s] = t
+        st.dec_kind[e, s] = st.fev_i[e, j, 3]
+        st.dec_prod[e, s] = False
+        st.dec_end[e, s] = np.nan
+        st.gi[e, k, GI_C4_CUR] = d
+        n = st.gi[e, k, GI_REC_N]
+        if n >= REC4_CAP:
+            for z in range(n - 1):
+                st.rec4[e, k, z, 0] = st.rec4[e, k, z + 1, 0]
+                st.rec4[e, k, z, 1] = st.rec4[e, k, z + 1, 1]
+            n -= 1
+            st.ai[e, A_OVERFLOW] += 1
+        st.rec4[e, k, n, 0] = t
+        st.rec4[e, k, n, 1] = d
+        n += 1
+        drop = 0
+        while drop < n and st.rec4[e, k, drop, 0] < t - DODGE_S:
+            drop += 1
+        if drop:
+            for z in range(n - drop):
+                st.rec4[e, k, z, 0] = st.rec4[e, k, z + drop, 0]
+                st.rec4[e, k, z, 1] = st.rec4[e, k, z + drop, 1]
+            n -= drop
+        st.gi[e, k, GI_REC_N] = n
+        if CALM4[st.ai[e, A_C4_PHASE]]:
+            nd = st.ai[e, A_C4_DAY_N]
+            if nd < DAY_CAP:
+                st.day4[e, nd] = d
+                st.ai[e, A_C4_DAY_N] = nd + 1
+            else:
+                st.ai[e, A_C4_DAYFULL] += 1
+        if st.c4ag[e, k, CA_DANGER]:
+            n = st.gi[e, k, GI_DANGER_N]
+            if n < DANGER_CAP:
+                st.danger[e, k, n] = d
+                st.gi[e, k, GI_DANGER_N] = n + 1
+            else:
+                st.ai[e, A_OVERFLOW] += 1
+    elif typ == E4_NOOP:
+        c4_pay(st, e, st.fev_i[e, j, 1], C4_NOOP, O_NOOP)
+    elif typ == E4_FALL:
+        alive = np.empty(MA, np.int64)
+        while st.ai[e, A_C4_THR_N] > 0:
+            q = 0
+            if thr_has_target(st, e, q, TG_BASE4):
+                stay = max(0.0, st.thr_until[e, q] - t)
+                na = c4_alive(st, e, alive)
+                for z in range(na):
+                    c4_pay(st, e, alive[z], C4_SURRENDER, (0.0 if st.thr_inside[e, q] else O_BREACH) + O_MOB_S * stay)
+            else:
+                wd = abs(O_DMG)
+                for z in range(st.thr_nt[e, q]):
+                    tg = st.thr_tg[e, q, z]
+                    if st.c4ag[e, tg, CA_EXISTS] and st.c4ag[e, tg, CA_ALIVE]:
+                        v = max(0.0, AGENT_HITS * st.thr_dmg[e, q] * wd - st.thr_taken[e, q, tg] * wd)
+                        c4_pay(st, e, tg, C4_SURRENDER, -v)
+            thr_remove(st, e, q)
+    elif typ == E4_GOAL:
+        for k in range(MA):
+            if st.c4ag[e, k, CA_EXISTS]:
+                c4_pay(st, e, k, C4_GOAL, O_GOAL)
+                c4_progress(st, e, k)
+                if st.gi[e, k, GI_C4_CUR] >= 0:
+                    c4_productive(st, e, st.gi[e, k, GI_C4_CUR])
+    elif typ == E4_DAMAGE:
+        k = st.fev_i[e, j, 1]
+        hp = st.fev_f[e, j, 0]
+        c4_loss(st, e, k, C4_DMG, O_DMG * hp)
+        mob = st.fev_i[e, j, 2]
+        if mob >= 0:
+            q = thr_find(st, e, mob)
+            if q >= 0:
+                st.thr_taken[e, q, k] += hp
+    elif typ == E4_DEATH:
+        k = st.fev_i[e, j, 1]
+        c4_state(st, e, k)
+        wdeath = abs(O_DEATH)
+        x = ACCIDENT_X if (st.fev_i[e, j, 2] == 1 and ACCIDENT_IS) else 1.0
+        far = min(FAR_CAP, max(0.0, st.fev_f[e, j, 0] - BASE_R) * FAR_PER)
+        soft = min(SOFTEN_CAP * wdeath, FINDS_SOFTEN * st.c4ag[e, k, CA_TRIP])
+        c4_loss(st, e, k, C4_DEATH, -(wdeath * x * (1 + far)) + soft)
+        st.c4ag[e, k, CA_ALIVE] = 0.0
+        st.c4ag[e, k, CA_TRIP] = 0.0
+        st.c4ag[e, k, CA_DANGER] = 0.0
+    elif typ == E4_BREACH:
+        alive = np.empty(MA, np.int64)
+        na = c4_alive(st, e, alive)
+        for z in range(na):
+            c4_loss(st, e, alive[z], C4_BREACH, O_BREACH)
+        q = thr_find(st, e, st.fev_i[e, j, 1])
+        if q >= 0:
+            st.thr_inside[e, q] = True
+            pool_drop(st, e, st.fev_i[e, j, 1])
+    elif typ == E4_INSIDE:
+        ms = st.fev_f[e, j, 0]
+        alive = np.empty(MA, np.int64)
+        na = c4_alive(st, e, alive)
+        for z in range(na):
+            c4_loss(st, e, alive[z], C4_MOB_S, O_MOB_S * ms)
+    elif typ == E4_SCALE:
+        c4_scale(st, e, j)
+    elif typ == E4_FOUND:
+        res = st.fev_i[e, j, 3]
+        if res < FIND_CAP and st.find_d[e, res] == -1:
+            comp = st.fev_i[e, j, 4]
+            v = abs(SW4_C[comp]) * st.fev_f[e, j, 0] if comp >= 0 else 0.0
+            d = st.fev_i[e, j, 2]
+            k = st.fev_i[e, j, 1]
+            st.find_d[e, res] = d
+            st.find_a[e, res] = k
+            st.find_v[e, res] = v
+            c4_state(st, e, k)
+            st.c4ag[e, k, CA_TRIP] += v
+            c4_productive(st, e, d)
+            c4_progress(st, e, k)
+        elif res >= FIND_CAP:
+            st.ai[e, A_OVERFLOW] += 1
+    elif typ == E4_THREAT:
+        mob = st.fev_i[e, j, 1]
+        q = thr_find(st, e, mob)
+        if q < 0:
+            q = st.ai[e, A_C4_THR_N]
+            if q >= THR_CAP:
+                st.ai[e, A_OVERFLOW] += 1
+                return
+            st.ai[e, A_C4_THR_N] = q + 1
+            st.thr_mob[e, q] = mob
+            st.thr_dmg[e, q] = 0.0
+            st.thr_until[e, q] = t
+            st.thr_inside[e, q] = False
+            st.thr_nt[e, q] = 0
+            for c in range(MA):
+                st.thr_taken[e, q, c] = 0.0
+        stay = st.fev_f[e, j, 1] if st.fev_i[e, j, 3] else 0.0
+        st.thr_until[e, q] = max(st.thr_until[e, q], t + stay)
+        tg = st.fev_i[e, j, 2]
+        tg = TG_BASE4 if tg < 0 else tg
+        if not thr_has_target(st, e, q, tg):
+            st.thr_tg[e, q, st.thr_nt[e, q]] = tg
+            st.thr_nt[e, q] += 1
+        st.thr_dmg[e, q] = max(st.thr_dmg[e, q], st.fev_f[e, j, 0])
+    elif typ == E4_PATH:
+        mob = st.fev_i[e, j, 1]
+        q = thr_find(st, e, mob)
+        if q < 0 or not st.fev_i[e, j, 3]:
+            return
+        eff = st.fev_i[e, j, 2]
+        w = W_BLOCKED if eff == 0 else W_DETOUR
+        if eff == 1:
+            dl = max(0.0, st.fev_f[e, j, 0])
+            w *= dl / (dl + DELAY_TAU) if dl > 0 else 0.0
+        bs, bn = st.fev_i[e, j, 5], st.fev_i[e, j, 6]
+        ss, sn = st.fev_i[e, j, 7], st.fev_i[e, j, 8]
+        by = np.empty(max(1, bn), np.int64)
+        nby = 0
+        for z in range(bn):
+            d = st.fev_l[e, bs + z]
+            if dec_slot(st, e, d) >= 0:
+                by[nby] = d
+                nby += 1
+            elif d >= st.ai[e, A_C4_EP_FIRST] and d < st.ai[e, A_DID_NEXT]:
+                st.ai[e, A_C4_ERR] += 1
+        if nby == 0:
+            return
+        for z in range(nby):
+            ag = st.dec_agent[e, dec_slot(st, e, by[z])]
+            if c4_witness(st, e, ag, ss, sn):
+                c4_contrib(st, e, mob, by[z], ag, R4_BLOCK, w / nby)
+    elif typ == E4_ATTACK_FAILED:
+        mob = st.fev_i[e, j, 1]
+        q = thr_find(st, e, mob)
+        if q < 0:
+            return
+        bs, bn = st.fev_i[e, j, 5], st.fev_i[e, j, 6]
+        ss, sn = st.fev_i[e, j, 7], st.fev_i[e, j, 8]
+        by = np.empty(max(1, bn), np.int64)
+        nby = 0
+        for z in range(bn):
+            d = st.fev_l[e, bs + z]
+            if dec_slot(st, e, d) >= 0:
+                by[nby] = d
+                nby += 1
+            elif d >= st.ai[e, A_C4_EP_FIRST] and d < st.ai[e, A_DID_NEXT]:
+                st.ai[e, A_C4_ERR] += 1
+        for z in range(nby):
+            ag = st.dec_agent[e, dec_slot(st, e, by[z])]
+            if c4_witness(st, e, ag, ss, sn):
+                c4_contrib(st, e, mob, by[z], ag, R4_COVER, W_COVER / nby)
+    elif typ == E4_KILL:
+        mob = st.fev_i[e, j, 1]
+        if thr_find(st, e, mob) < 0:
+            return
+        d = st.fev_i[e, j, 3]
+        if dec_slot(st, e, d) >= 0:
+            c4_contrib(st, e, mob, d, st.fev_i[e, j, 2], R4_KILL, W_KILL4)
+        c4_resolve(st, e, mob, TH_KILL)
+    elif typ == E4_GONE:
+        c4_resolve(st, e, st.fev_i[e, j, 1], TH_DETER)
+    elif typ == E4_NOVEL:
+        if NOCUR4[st.ai[e, A_C4_PHASE]]:
+            return
+        pts = SW4_C[C4_NOVEL] * FAC4[st.ai[e, A_SCEN], C4_NOVEL]
+        c4_pay(st, e, st.fev_i[e, j, 1], C4_NOVEL, pts)
+
+
+@jit
+def c4_scale(st, e, j):
+    k = st.fev_i[e, j, 1]
+    comp = st.fev_i[e, j, 2]
+    if not SW4_HAS[comp]:
+        st.ai[e, A_C4_ERR] += 1   # reward_core: KeyError (no scale weight)
+        return
+    raw_ = SW4_C[comp] * st.fev_f[e, j, 0]
+    pts = raw_ * FAC4[st.ai[e, A_SCEN], comp]
+    if raw_ == 0:
+        return
+    cs, cn = st.fev_i[e, j, 5], st.fev_i[e, j, 6]
+    causes = np.empty(max(1, cn), np.int64)
+    nc = 0
+    for z in range(cn):
+        d = st.fev_l[e, cs + z]
+        if dec_slot(st, e, d) >= 0:
+            causes[nc] = d
+            nc += 1
+        elif d >= st.ai[e, A_C4_EP_FIRST] and d < st.ai[e, A_DID_NEXT]:
+            st.ai[e, A_C4_ERR] += 1
+    res = st.fev_i[e, j, 3]
+    fd = -1
+    if res >= 0 and res < FIND_CAP and st.find_d[e, res] != -1:
+        fd = res
+    c4_pay(st, e, k, comp, pts)
+    if raw_ > 0:
+        c4_progress(st, e, k)   # the simulator names the agent ("*" never): progress, its running decision productive
+        if st.gi[e, k, GI_C4_CUR] >= 0:
+            c4_productive(st, e, st.gi[e, k, GI_C4_CUR])
+        if pts > 0:
+            if fd >= 0:
+                c4_transfer(st, e, k, st.find_a[e, fd], C4_SCOUT, SCOUT_SHARE * pts, st.find_d[e, fd])
+            elif nc > 0:
+                m = SCALE_MOVE * pts / nc
+                for z in range(nc):
+                    c4_transfer(st, e, k, st.dec_agent[e, dec_slot(st, e, causes[z])], C4_SCALE, m, causes[z])
+    if raw_ > 0:
+        for z in range(nc):
+            c4_productive(st, e, causes[z])
+            c4_progress(st, e, st.dec_agent[e, dec_slot(st, e, causes[z])])
+
+
+@jit
+def afk_integral(x):
+    if x <= AFK_GRACE:
+        return 0.0
+    if AFK_RAMP <= 0:
+        return AFK_RATE * (x - AFK_GRACE)
+    if x < AFK_GRACE + AFK_RAMP:
+        return AFK_RATE * (x - AFK_GRACE) ** 2 / (2 * AFK_RAMP)
+    return AFK_RATE * (AFK_RAMP / 2 + (x - AFK_GRACE - AFK_RAMP))
+
+
+@jit
+def c4_end_frame(st, e, dt):
+    for k in range(MA):
+        if not st.c4ag[e, k, CA_EXISTS]:
+            continue
+        if not st.c4ag[e, k, CA_ALIVE]:
+            st.c4ag[e, k, CA_DANGER] = 0.0
+            continue
+        if not st.c4ag[e, k, CA_DANGER]:
+            if st.c4ag[e, k, CA_HP] <= HP_LOW:
+                anyt = False
+                for q in range(st.ai[e, A_C4_THR_N]):
+                    if thr_has_target(st, e, q, k):
+                        anyt = True
+                        break
+                if anyt:
+                    st.c4ag[e, k, CA_DANGER] = 1.0
+                    st.gi[e, k, GI_DANGER_N] = 0
+                    st.c4ag[e, k, CA_DANGER_AT] = float(st.gi[e, k, GI_C4_CUR])
+        elif st.c4ag[e, k, CA_HP] >= HP_SAFE:
+            n = st.gi[e, k, GI_DANGER_N]
+            st.c4ag[e, k, CA_DANGER] = 0.0
+            if n == 0 and st.c4ag[e, k, CA_DANGER_AT] >= 0:
+                st.danger[e, k, 0] = int(st.c4ag[e, k, CA_DANGER_AT])
+                n = 1
+            if n:
+                pts = SURV_SHARE * abs(O_DEATH) / n
+                for z in range(n):
+                    d = st.danger[e, k, z]
+                    c4_pay(st, e, k, C4_SURVIVE, pts)
+                    c4_move(st, e, k, C4_SURVIVE, pts, d)
+                    c4_productive(st, e, d)
+    if dt <= 0:
+        return
+    for k in range(MA):
+        if not st.c4ag[e, k, CA_EXISTS] or not st.c4ag[e, k, CA_ALIVE]:
+            continue
+        i0 = st.c4ag[e, k, CA_IDLE]
+        st.c4ag[e, k, CA_IDLE] = i0 + dt
+        pen = afk_integral(i0 + dt) - afk_integral(i0)
+        c4_pay(st, e, k, C4_AFK, -pen)
+
+
+@jit
+def c4_frame(st, e, dt):
+    t = st.af[e, AF_T]
+    st.af[e, AF_C4_T] = t
+    ph = phase4(st, e)
+    st.ai[e, A_C4_PHASE] = ph
+    calm = CALM4[ph]
+    prev = st.ai[e, A_C4_PREV_CALM]
+    if calm and prev != 1:
+        st.ai[e, A_C4_DAY_N] = 0
+        st.af[e, AF_C4_CALM_END] = np.nan
+    elif not calm and prev == 1:
+        st.af[e, AF_C4_CALM_END] = t - dt
+    st.ai[e, A_C4_PREV_CALM] = 1 if calm else 0
+    st.ai[e, A_C4_MOVES_N] = 0
+    for i in range(st.ai[e, A_NAG]):   # the agent events, first
+        c4_state(st, e, i)
+        st.c4ag[e, i, CA_X] = st.gf[e, i, GF_DIST]
+        st.c4ag[e, i, CA_Y] = 64.0 - 24.0 * st.gi[e, i, GI_DEPTH]
+        st.c4ag[e, i, CA_Z] = 0.0
+        st.c4ag[e, i, CA_HP] = max(0.0, st.gf[e, i, GF_HEALTH])
+        st.c4ag[e, i, CA_ALIVE] = 1.0 if st.gi[e, i, GI_ALIVE] else 0.0
+        st.c4ag[e, i, CA_BASE] = st.gf[e, i, GF_DIST]
+        if st.gf[e, i, GF_DIST] <= BASE_R:
+            st.c4ag[e, i, CA_TRIP] = 0.0
+    for j in range(st.ai[e, A_N_FEV]):
+        c4_event(st, e, j)
+    c4_end_frame(st, e, dt)
+    for q in range(st.ai[e, A_C4_MOVES_N]):   # the moves into the step's events: reward events with move 1
+        ch = np.empty((1, 5), np.int64)
+        ch[0, 0] = st.mv_i[e, q, 2]
+        ch[0, 1] = st.mv_i[e, q, 3]
+        ch[0, 2] = st.mv_i[e, q, 4]
+        ch[0, 3] = st.mv_i[e, q, 5]
+        ch[0, 4] = V_CREDIT
+        if st.flags[FL_MERGE]:   # for training: a step's moves to one (agent, component, decision) summed into one event
+            hit = -1
+            for z in range(st.nev[e]):
+                if st.ev_i[e, z, 0] == EV_MOVE and st.ev_i[e, z, 1] == st.mv_i[e, q, 0] and st.ev_i[e, z, 2] == st.mv_i[e, q, 1] \
+                        and st.links[e, st.ev_i[e, z, 5], 0] == st.mv_i[e, q, 2]:
+                    hit = z
+                    break
+            if hit >= 0:
+                st.ev_f[e, hit] += st.mv_f[e, q]
+                continue
+        emit(st, e, EV_MOVE, st.mv_i[e, q, 0], st.mv_i[e, q, 1], st.mv_f[e, q], 0, ch, 1)

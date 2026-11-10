@@ -363,7 +363,7 @@ def main():
             a.sim_threads = 2 if league_running() else max(1, (os.cpu_count() or 2) // 2)
         import train_batch
         epoch, total_dec = train_batch.run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, _cpu_copy, save, ppo_loss,
-                                           COMPONENTS, SNAP, OB_KEYS)
+                                           COMPONENTS_V4 if a.reward == "v4" else COMPONENTS, SNAP, OB_KEYS)
         save(out / "final.pt", pol, opt, {"epoch": epoch, "curriculum": cur.cur})
         write_policy(_cpu_copy(pol, a), out / "snapshots" / f"policy-epoch-{epoch}.bin")
         write_policy(_cpu_copy(pol, a), out / "final.bin")

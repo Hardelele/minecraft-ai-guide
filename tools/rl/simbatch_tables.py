@@ -237,6 +237,7 @@ def scen_tables(curiosity: float = -1.0):
     f["pasture"] = np.array([s == "pasture" for s in SCENS], np.bool_)
     f["many_animals"] = np.array([s in ("food", "pasture") for s in SCENS], np.bool_)
     f["long"] = np.array([S.ALL_SCEN[s]["seconds"] > 1200 for s in SCENS], np.bool_)
+    f["delay"] = np.array([s.startswith("delay:") for s in SCENS], np.bool_)
     kit = np.zeros((n, NIT), np.int64)
     w = np.zeros((n, NKEY))
     fac = np.ones((n, NKEY))
@@ -449,7 +450,7 @@ ACT_DUR = np.array([DU[_dur(n)] for n in ACTIONS], np.int64)
 CRAFT_SMALL_DUR = float(S.SK["craft_small"]["dur_ok"])
 
 # ---- the links' vias and the effects (RlCause.novel's pairs) --------------------------------------------------------
-VIAS = ["hit", "block:lava", "block:fire", "block:water", "block:cobblestone", "step"] + ["item:" + k for k in ITEMS]   # item:wheat among them
+VIAS = ["hit", "block:lava", "block:fire", "block:water", "block:cobblestone", "step", "credit"] + ["item:" + k for k in ITEMS]   # item:wheat among them
 VIA = {k: i for i, k in enumerate(VIAS)}
 VIA_ITEM0 = VIAS.index("item:" + ITEMS[0])
 EFFECTS = ["mob_hurt", "mob_killed", "animal_killed", "agent_saved"]
