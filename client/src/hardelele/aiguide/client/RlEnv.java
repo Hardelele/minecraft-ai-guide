@@ -396,6 +396,122 @@ public class RlEnv {
     final List<RlCause.Link> worldChanges = new ArrayList<RlCause.Link>();
     /** the step's events: rewards with their chains (by agent, key, the chain's head), achievements, discoveries */
     final Map<String, JsonObject> rewardEvents = new LinkedHashMap<String, JsonObject>();
+
+    // ---- the reward v4 (docs/rl/REWARD-v4.md): -Daiguide.rl.reward4=true (or a file of rl/reward-v4.json's form) ----
+    // the step's reward is RlReward4's from the events below; v3's weights still measure (info.measured)
+    static final String REWARD4 = System.getProperty("aiguide.rl.reward4", "");
+    RlReward4 r4;
+    final List<JsonObject> fev = new ArrayList<JsonObject>();
+    final Set<Integer> mobs4 = new HashSet<Integer>(), killed4 = new HashSet<Integer>(), in4 = new HashSet<Integer>();
+    final Set<String> aimed4 = new HashSet<String>();
+    boolean goal4;
+
+    static JsonObject params4() {
+        if (REWARD4.isEmpty() || REWARD4.equals("true")) return RlReward4.defaults();
+        try { return new JsonParser().parse(new String(java.nio.file.Files.readAllBytes(new File(REWARD4).toPath()), StandardCharsets.UTF_8)).getAsJsonObject(); }
+        catch (Exception ex) { Events.log("rl: the reward v4 file " + REWARD4 + " not read: " + ex + " (the built-in)"); return RlReward4.defaults(); }
+    }
+
+    JsonObject ev4(String type) {
+        JsonObject o = new JsonObject();
+        o.addProperty("type", type);
+        fev.add(o);
+        return o;
+    }
+
+    String phase4(WorldServer w) {
+        if (sc != null && sc.waves != null) {
+            WaveCycle.Phase ph = Waves.state().phase;
+            if (ph == WaveCycle.Phase.WAVE) return "wave";
+            if (ph == WaveCycle.Phase.BREAK) return "break";
+            if (ph == WaveCycle.Phase.PREP) return "prep";
+        }
+        long tm = w == null ? 1000 : w.getWorldTime() % 24000;
+        return tm >= 13000 && tm < 23000 ? "night" : "day";
+    }
+
+    /** the seconds a mob of the wave would stay in the base once in: the rest of its wave */
+    static double stay4() {
+        WaveCycle cy = Waves.cycle;
+        return Math.max(0, cy.cfg.waveMaxTicks - cy.waveTicks) / 20.0;
+    }
+
+    /** a frame for RlReward4: the agents' state and the events since the last; its moves into info.events */
+    void flush4(WorldServer w, double dt) {
+        if (r4 == null) return;
+        Crew c = Crew.instance;
+        List<JsonObject> evs = new ArrayList<JsonObject>();
+        if (c != null)
+            for (Agent a : c.agents) {
+                JsonObject o = new JsonObject();
+                o.addProperty("type", "agent");
+                o.addProperty("agent", id(a));
+                o.addProperty("x", a.posX);
+                o.addProperty("y", a.posY);
+                o.addProperty("z", a.posZ);
+                o.addProperty("hp", a.isDead ? 0 : a.getHealth());
+                o.addProperty("alive", !a.isDead);
+                o.addProperty("base_dist", c.base == null ? 0 : Math.hypot(a.posX - c.base[0] - 0.5, a.posZ - c.base[2] - 0.5));
+                evs.add(o);
+            }
+        evs.addAll(fev);
+        fev.clear();
+        JsonArray arr = new JsonArray();
+        for (JsonObject o : evs) arr.add(o);
+        JsonObject fr = new JsonObject();
+        fr.addProperty("t", ticks / 20.0);
+        fr.addProperty("dt", dt);
+        fr.addProperty("phase", phase4(w));
+        fr.add("events", arr);
+        for (JsonObject m : r4.frame(fr)) { m.addProperty("ticks", ticks); events.add(m); }
+    }
+
+    /** once a second: the wave's mobs as threats (to the base from their coming, to an agent when they go for it), the ones in the base, the ones gone */
+    void mobs4(Crew c) {
+        if (r4 == null || sc.waves == null) return;
+        Set<Integer> now = new HashSet<Integer>();
+        Defense.Perimeter p = DefenseWorld.ring;
+        double ms = 0;
+        for (EntityLiving m : Waves.enemies()) {
+            int idn = m.getEntityId();
+            now.add(idn);
+            if (mobs4.add(idn)) {
+                JsonObject o = ev4("threat");
+                o.addProperty("mob", idn);
+                o.addProperty("kind", m.getClass().getSimpleName());
+                o.addProperty("target", "base");
+                o.addProperty("dmg", 3.0);
+                o.addProperty("stay_s", stay4());
+            }
+            if (m.getAttackTarget() instanceof Agent && aimed4.add(idn + "|" + id((Agent) m.getAttackTarget()))) {
+                JsonObject o = ev4("threat");
+                o.addProperty("mob", idn);
+                o.addProperty("kind", m.getClass().getSimpleName());
+                o.addProperty("target", id((Agent) m.getAttackTarget()));
+                o.addProperty("dmg", 3.0);
+            }
+            if (p != null && p.inside(m.posX, m.posZ)) {
+                ms += 1;
+                if (in4.add(idn)) ev4("breach").addProperty("mob", idn);
+            }
+        }
+        if (ms > 0) ev4("inside").addProperty("mob_s", ms);
+        for (Integer idn : new ArrayList<Integer>(mobs4))
+            if (!now.contains(idn)) {
+                mobs4.remove(idn);
+                if (!killed4.remove(idn)) {
+                    JsonObject o = ev4("mob_gone");
+                    o.addProperty("mob", idn);
+                    o.addProperty("why", "despawn");
+                }
+            }
+    }
+
+    /** the base given up or lost: the threats open now count as done */
+    void fall4(String why) {
+        if (r4 == null) return;
+        ev4("fall").addProperty("why", why);
+    }
     final List<JsonObject> events = new ArrayList<JsonObject>();
     /** the decisions given to the actions of the last step: agent -> decision_id */
     final JsonObject assigned = new JsonObject();
@@ -779,6 +895,13 @@ public class RlEnv {
         lim.steps = lim.seconds = lim.tokens = lim.badCalls = lim.sameFailure = Integer.MAX_VALUE;
         for (Agent a : c.agents) AgentMind.minds.put(a.skin(), new AgentMind(a.skin(), new Mind(a.who(), g, lim, System.currentTimeMillis()), w));
         reward = new RlReward(weights, s);
+        r4 = REWARD4.isEmpty() ? null : RlReward4.of(params4(), weights, s);
+        fev.clear();
+        mobs4.clear();
+        killed4.clear();
+        in4.clear();
+        aimed4.clear();
+        goal4 = false;
         done = false;
         doneReason = "";
         ticks = 0;
@@ -978,6 +1101,7 @@ public class RlEnv {
 
     void finish(String why) {
         if (done) return;
+        if (why.equals("lost") || why.equals("noop")) fall4(why);
         done = true;
         doneReason = why;
         if (Waves.cycle.active()) Waves.stop("rl_" + why);
@@ -1086,7 +1210,8 @@ public class RlEnv {
             for (EntityLiving m : Waves.enemies()) if (!m.isDead && p.inside(m.posX, m.posZ)) in.add(m.getEntityId());
             pm = perimeter.second(in, 1);
         }
-        if (base) return;
+        if (base) { flush4(w, 0); return; }
+        mobs4(c);
         for (Agent a : alive) {
             String k = id(a);
             pay(k, "stock.value", dStock, null);
@@ -1102,6 +1227,7 @@ public class RlEnv {
             pay(k, "perimeter.mob_seconds", pm[0], null);
             pay(k, "perimeter.breach", pm[1], null);
         }
+        flush4(w, 1.0);
     }
 
     static int count(Map<String, Integer> bag, String base) {
@@ -1151,6 +1277,12 @@ public class RlEnv {
         if (n == 0 || reward == null) return 0;
         if (outcomes() && key.equals("curiosity.novel") && sc != null && sc.waves != null && Waves.cycle.phase == WaveCycle.Phase.WAVE
                 && !Waves.enemies().isEmpty()) return 0;   // (3.1) no curiosity while a wave's mobs live
+        if (r4 != null) {   // v4: the outcomes and the scales as events; v3's weights only measure (no reward events of theirs)
+            pay4(agent, key, n, chain);
+            reward.add(agent, key, n);
+            reward.open.remove(agent);
+            return 0;
+        }
         double p = reward.add(agent, key, n);
         if (p == 0) return 0;
         String comp = RlSpec.component(key);
@@ -1177,6 +1309,26 @@ public class RlEnv {
         }
         e.addProperty("points", RlReward.round(e.get("points").getAsDouble() + p));
         return p;
+    }
+
+    void pay4(String agent, String key, double n, List<RlCause.Link> chain) {
+        String comp = RlSpec.component(key);
+        if (key.equals("noop")) ev4("noop").addProperty("agent", agent);
+        else if (key.equals("goal")) { if (!goal4) { goal4 = true; ev4("goal"); } }
+        else if (key.equals("human")) { JsonObject o = ev4("human"); o.addProperty("agent", agent); o.addProperty("rating", n); }
+        else if (key.equals("curiosity.novel")) ev4("novel").addProperty("agent", agent);
+        else if (RlSpec.isScale(comp) && !comp.equals("perimeter") && !comp.equals("curiosity")) {
+            JsonObject o = ev4("scale");
+            o.addProperty("agent", agent);
+            o.addProperty("key", key);
+            o.addProperty("delta", n);
+            if (chain != null && !chain.isEmpty()) {
+                JsonArray ids = new JsonArray();
+                for (RlCause.Link l : chain) if (l != null) ids.add(new JsonPrimitive(l.id));
+                o.add("causes", ids);
+            }
+        }
+        // damage, death, kills, breaches, mob-seconds: their own events where they happen; time, stall, skill_*, perimeter.*: not paid
     }
 
     /** the tiers by the tool's material (wood and gold 1, stone 2, iron 3, diamond 4): the best pickaxe and sword it has */
@@ -1410,6 +1562,13 @@ public class RlEnv {
         RlEnv e = instance;
         if (e == null || e.reward == null || e.state == State.IDLE || e.done) return;
         String k = id(a);
+        if (e.r4 != null) {
+            JsonObject o = e.ev4("death");
+            o.addProperty("agent", k);
+            o.addProperty("cause", cause == null ? "mob" : cause);
+            Crew c = Crew.instance;
+            o.addProperty("base_dist", c == null || c.base == null ? 0 : Math.hypot(a.posX - c.base[0] - 0.5, a.posZ - c.base[2] - 0.5));
+        }
         Mine m = e.mine(a);
         double soft = e.outcomes() && m.finds != null ? m.finds.soft(e.ticks / 20.0) : 0;   // (3.1) it found something worth it first: a death costs less
         e.pay(k, "accident".equals(cause) || "starve".equals(cause) ? "accident" : "death", 1 - soft, null);
@@ -1571,6 +1730,22 @@ public class RlEnv {
             Events.log("rl: discovery " + n[0] + (head == null ? "" : " by agent " + head.agent + " (" + head.kind + ")") + ((Boolean) n[2] ? " — first ever" : ""));
             if ((Boolean) n[2]) discovery((String) n[0], head == null ? "" : head.agent, chain);
         }
+        if (r4 != null && kind.equals("mob_killed") && head != null) {
+            JsonObject o = ev4("kill");
+            o.addProperty("mob", v.getEntityId());
+            o.addProperty("agent", head.agent);
+            o.addProperty("decision", head.id);
+            JsonArray seen = new JsonArray();
+            seen.add(new JsonPrimitive(head.agent));
+            o.add("seen", seen);
+            killed4.add(v.getEntityId());
+        }
+        if (r4 != null && kind.equals("agent_hurt") && v instanceof Agent) {
+            JsonObject o = ev4("damage");
+            o.addProperty("agent", id((Agent) v));
+            o.addProperty("hp", amount);
+            if (s != null && s.getEntity() != null && !(s.getEntity() instanceof Agent)) o.addProperty("mob", s.getEntity().getEntityId());
+        }
         if ((kind.equals("mob_hurt") || kind.equals("mob_killed")) && by != null) mine(by).real = true;   // a hit on a mob: no idling
         if (outcomes() && by != null && v != null && head != null && ("hit".equals(head.via) || "shot".equals(head.via))) {   // (3.1) the trade
             Mine fm = mine(by);
@@ -1663,6 +1838,7 @@ public class RlEnv {
         if (done && c != null) { for (Agent a : c.agents) if (!a.isDead) who.add(a); }
         else who.addAll(waiting);
         Set<String> paid = new HashSet<String>();
+        flush4(w, 0);
         for (Agent a : who) {
             Map<String, Double> r = facts(c, a, w);
             int[] mk = space.mask(r);
@@ -1671,16 +1847,16 @@ public class RlEnv {
             mask.add(id(a), ints(mk));
             if (raw) rawOut.add(id(a), map(r));
             JsonObject cp = new JsonObject();
-            rew.addProperty(id(a), RlReward.round(reward.take(id(a), cp)));
+            rew.addProperty(id(a), RlReward.round(r4 != null ? r4.take(id(a), cp) : reward.take(id(a), cp)));
             comps.add(id(a), cp);
             paid.add(id(a));
             if (!done) asked.add(a.skin());
         }
         if (done)   // the dead at the end (between death and coming back) and whatever is left: paid too
-            for (String k : new ArrayList<String>(reward.open.keySet())) {
+            for (String k : new ArrayList<String>(r4 != null ? r4.open.keySet() : reward.open.keySet())) {
                 if (paid.contains(k)) continue;
                 JsonObject cp = new JsonObject();
-                rew.addProperty(k, RlReward.round(reward.take(k, cp)));
+                rew.addProperty(k, RlReward.round(r4 != null ? r4.take(k, cp) : reward.take(k, cp)));
                 comps.add(k, cp);
             }
         waiting.clear();
@@ -1713,7 +1889,7 @@ public class RlEnv {
         info.addProperty("reset_ms", resetMs);
         if (done) {
             info.addProperty("done_reason", doneReason);
-            info.add("episode_reward", reward.episodeJson());
+            info.add("episode_reward", r4 != null ? r4.episodeJson() : reward.episodeJson());
             info.add("measured", reward.measuredJson());
             JsonObject ach = new JsonObject();
             if (c != null)
@@ -1773,10 +1949,17 @@ public class RlEnv {
         for (String k : new ArrayList<String>(assignedKeys())) assigned.remove(k);
         boolean nightNow = nightNow(w);
         for (Map.Entry<Integer, Integer> e : got.entrySet()) {   // each a decision of its own: its id (the chains' and the answer's)
-            long did = cause.decide(String.valueOf(e.getKey()), ticks, RlSpec.ACTIONS.get(e.getValue()).id).id;
+            RlCause.Link l = cause.decide(String.valueOf(e.getKey()), ticks, RlSpec.ACTIONS.get(e.getValue()).id);
+            long did = l.id;
             assigned.addProperty(String.valueOf(e.getKey()), did);
             Mine mm = mine.get(e.getKey());
             if (mm != null && mm.wd != null && outcomes()) mm.wd.decide(did, ticks / 20.0, nightNow);   // (3.1) the day's stretches
+            if (r4 != null) {
+                JsonObject o = ev4("decision");
+                o.addProperty("agent", String.valueOf(e.getKey()));
+                o.addProperty("id", l.id);
+                o.addProperty("kind", l.kind);
+            }
         }
         boolean noop = false;
         for (Map.Entry<Integer, Integer> e : got.entrySet())

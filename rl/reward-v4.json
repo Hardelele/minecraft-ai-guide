@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "contract": "reward-v4",
+  "note": "docs/rl/REWARD-v4.md: the reward by outcomes only plus the general causal credit. The scales' weights (safety.*, equipment.*, mine.*, enchant.*, sustain.*, stock.*, achievement.*, curiosity.*) and the scenarios' factors stay rl/reward.json's ('weights', 'scenarioScales'); everything else of rl/reward.json's weights is not paid under v4. tools/rl/reward_core.py and RlReward4.java read this file.",
+  "outcomes": {
+    "noop": -1.0,
+    "goal": 5.0,
+    "human": 2.0,
+    "crew.damage": -0.01,
+    "crew.death": -1.0,
+    "base.breach": -0.5,
+    "base.mob_seconds": -0.02
+  },
+  "death": {
+    "accident_x": 1.5,
+    "accident_causes": ["accident", "starve", "fall", "lava", "fire", "drown"],
+    "base_r": 10.0,
+    "far_per_block": 0.01,
+    "far_cap": 1.0,
+    "finds_soften": 0.5,
+    "soften_cap": 0.5
+  },
+  "afk": {
+    "rate": 0.01,
+    "grace_s": 30.0,
+    "ramp_s": 120.0,
+    "active_s": 20.0
+  },
+  "sight": {
+    "near_r": 6.0
+  },
+  "threat": {
+    "agent_hits": 3.0,
+    "kill": 1.0,
+    "deter": 0.5,
+    "delay_tau_s": 5.0,
+    "dodge_s": 3.0,
+    "w": {
+      "kill": 2.0,
+      "blocked": 1.0,
+      "stuck": 1.0,
+      "fell": 1.0,
+      "detour": 1.0,
+      "cover": 1.0,
+      "moved": 1.0
+    }
+  },
+  "survive": {
+    "hp_low": 6.0,
+    "hp_safe": 14.0,
+    "share": 0.1
+  },
+  "scout": {
+    "share": 0.3
+  },
+  "wasted_day": {
+    "share": 0.25
+  },
+  "scale_move": 0.5,
+  "calm_phases": ["day", "prep", "break"],
+  "no_curiosity_phases": ["wave", "night"]
+}

@@ -47,6 +47,9 @@ CREW = {"wood": (1, 2), "pickaxe": (1, 2), "sword": (1, 2), "iron": (1, 2), "foo
         "waves:easy": (2, 4), "waves:normal": (2, 4), "waves:long": (2, 4), "armor": (1, 2), "bow": (1, 2), "mine_trip": (1, 2),
         "diamond": (1, 2), "farm": (1, 2), "pasture": (1, 2), "enchant": (1, 2), "achievements": (1, 3), "night:shelter": (1, 2)}
 COMPONENTS = sorted({k.split(".")[0] for k in spec.WEIGHTS} | {"shaping", "novel_effect"})
+# the reward v4's (docs/rl/REWARD-v4.md): its outcomes and each cause of credit apart (the scales keep their parts' names)
+COMPONENTS_V4 = ["noop", "goal", "afk", "surrender", "crew.damage", "crew.death", "base.breach", "base.mob_seconds", "credit.kill", "credit.block",
+                 "credit.cover", "credit.dodge", "credit.survive", "credit.scout", "credit.wasted_day", "credit.scale", "curiosity.novel"]
 OB_KEYS = ("hang", "hang_logs", "ditch_met", "ditch_bridged", "lava_met", "lava_passed", "shelter_s", "switch_ok", "retry_fail", "pit_stuck")
 SNAP = {1, 2, 3, 5, 10, 15, 20, 30, 50, 75, 100, 150, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000}
 
@@ -322,7 +325,10 @@ def main():
     ap.add_argument("--curiosity", type=float, default=-1.0, help="the simulator's curiosity.novel weight (-1: the contract's, 0: off)")
     ap.add_argument("--recurrent", type=int, default=0, help="a GRU memory of this size in the policy (0: the MLP); no Java export")
     ap.add_argument("--chunk", type=int, default=16, help="--recurrent: decisions a training sequence")
+    ap.add_argument("--reward", default="v3", choices=["v3", "v4"], help="the simulator's reward: v3 rl/reward.json's weights, v4 the outcomes and "
+                    "the causal credit (docs/rl/REWARD-v4.md; its credits' moves are applied whatever --credit)")
     a = ap.parse_args()
+    os.environ["AIGUIDE_REWARD"] = a.reward   # the simulator's workers read it
 
     below_normal()
     torch.set_num_threads(a.threads)
@@ -528,7 +534,7 @@ def main():
                 ev_by: dict = collections.defaultdict(list)   # the step's reward events with causes, by agent
                 for ev in inf0.get("events") or ():
                     if ev.get("type") == "reward" and ev.get("chain"):
-                        ev_by[int(ev["agent"])].append({"key": ev["key"], "points": float(ev["points"]),
+                        ev_by[int(ev["agent"])].append({"key": ev["key"], "points": float(ev["points"]), "move": ev.get("move"),
                                                         "t": ev.get("ticks", inf0.get("ticks", 0)) / 20.0,
                                                         "causes": [int(c["decision_id"]) for c in ev["chain"]
                                                                    if isinstance(c, dict) and "decision_id" in c and c.get("via") != "step"]})   # step: no cause traced
@@ -619,7 +625,7 @@ def main():
             sim_s += time.perf_counter() - ts
         phase("update")
         # ---- delayed credit on the raw rewards: by the named causes, then the learned redistribution -------------
-        cst = CR.redistribute(streams, a.credit, a.credit_tau) if a.credit else {}
+        cst = CR.redistribute(streams, a.credit, a.credit_tau) if a.credit or a.reward == "v4" else {}
         if rud is not None:
             pol.eval()
             rud.train()
@@ -785,7 +791,7 @@ def main():
         ren = sum(x[12][0] for x in eps if x[0] in ("farm", "pasture", "waves:long"))
         use = sum(x[12][1] for x in eps if x[0] in ("farm", "pasture", "waves:long"))
         row["sustain"] = round(ren / use, 4) if use > 0 else ""   # renewable food eaten / food used (the hunger scenarios)
-        for c in COMPONENTS:   # the reward by component, a mean an agent an episode
+        for c in (COMPONENTS_V4 if a.reward == "v4" else COMPONENTS):   # the reward by component, a mean an agent an episode
             got = [x[6].get(c, 0.0) / max(1, x[8]) for x in eps]
             row["comp_" + c] = round(float(np.mean(got)), 4) if got else ""
         if mw is None:
