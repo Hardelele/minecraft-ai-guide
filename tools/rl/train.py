@@ -47,6 +47,14 @@ OB_KEYS = ("hang", "hang_logs", "ditch_met", "ditch_bridged", "lava_met", "lava_
 SNAP = {1, 2, 3, 5, 10, 15, 20, 30, 50, 75, 100, 150, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000}
 
 
+def league_running() -> bool:
+    if os.name != "nt":
+        return False
+    import subprocess
+    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq League*", "/NH"], capture_output=True, text=True).stdout
+    return "League" in out
+
+
 def below_normal():
     """This process and its children at below-normal priority (Windows), so the owner's PC does not lag."""
     if os.name == "nt":
@@ -54,9 +62,7 @@ def below_normal():
         k = ctypes.windll.kernel32
         k.GetCurrentProcess.restype = ctypes.c_void_p   # the pseudo-handle -1: an int return would cut it
         k.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
-        import subprocess
-        lol = "League of Legends.exe" in subprocess.run(["tasklist", "/FI", "IMAGENAME eq League of Legends.exe", "/NH"], capture_output=True, text=True).stdout
-        k.SetPriorityClass(k.GetCurrentProcess(), 0x40 if lol else 0x4000)   # IDLE while League of Legends runs, else BELOW_NORMAL
+        k.SetPriorityClass(k.GetCurrentProcess(), 0x40 if league_running() else 0x4000)   # IDLE while League of Legends runs, else BELOW_NORMAL
     else:
         os.nice(5)
 
@@ -245,9 +251,11 @@ def save(path, pol, opt, extra):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="sim1")
-    ap.add_argument("--env", default="sim", choices=["sim", "real", "engine"],
-                    help="sim: the Python simulator; real: rl/env's servers (--url); engine: the game's engine, --envs arenas in one JVM "
+    ap.add_argument("--env", default="sim", choices=["sim", "simbatch", "real", "engine"],
+                    help="sim: the Python simulator; simbatch: the same world, --envs arenas at once in this process (tools/rl/simbatch.py, "
+                         "numba on --sim-threads threads); real: rl/env's servers (--url); engine: the game's engine, --envs arenas in one JVM "
                          "(tools/rl/engine_env.py, started here and stopped at the end unless --url names running ones)")
+    ap.add_argument("--sim-threads", type=int, default=0, help="simbatch: the simulator's threads (0: half the cores, 2 while League of Legends runs)")
     ap.add_argument("--url", default=None, help="real: host:port[,host:port...] of rl/env's servers")
     ap.add_argument("--engine-port", type=int, default=26200, help="engine: the first arena's port")
     ap.add_argument("--engine-xmx", default="", help="engine: the JVM's heap (default 600M an arena + 1G)")
@@ -322,7 +330,7 @@ def main():
             engine_env.stop(ports)
             sys.exit("the engine's arenas did not start")
         a.url = ",".join("127.0.0.1:%d" % p for p in ports)
-    envs = Envs(a.envs, a.workers, a.env, a.seed, a.shaping, a.url, a.curiosity)
+    envs = None if a.env == "simbatch" else Envs(a.envs, a.workers, a.env, a.seed, a.shaping, a.url, a.curiosity)
     retnorm = RetNorm(a.gamma_s ** 20 if a.gamma_s else a.gamma)
     import credit as CR
     rud = CR.RudderTrainer(spec.D, spec.A, dev) if a.rudder else None
@@ -342,6 +350,23 @@ def main():
             target = near[int(rng.integers(len(near)))] if near else None
         return sc, int(rng.integers(1 << 30)), int(rng.integers(lo, hi + 1)), target
 
+    if a.env == "simbatch":   # the batch simulator in this process (tools/rl/train_batch.py)
+        if a.recurrent or a.rudder or a.shaping:
+            sys.exit("--env simbatch: no --recurrent, --rudder, --shaping (the old path has them)")
+        if not a.sim_threads:
+            a.sim_threads = 2 if league_running() else max(1, (os.cpu_count() or 2) // 2)
+        import train_batch
+        epoch, total_dec = train_batch.run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, _cpu_copy, save, ppo_loss,
+                                           COMPONENTS, SNAP, OB_KEYS)
+        save(out / "final.pt", pol, opt, {"epoch": epoch, "curriculum": cur.cur})
+        write_policy(_cpu_copy(pol, a), out / "snapshots" / f"policy-epoch-{epoch}.bin")
+        write_policy(_cpu_copy(pol, a), out / "final.bin")
+        summary = {"epochs": epoch, "decisions": total_dec, "stage": cur.stages[cur.cur], "rates": {s: cur.rate(s) for s in cur.stages},
+                   "curriculum": cur.log}
+        (out / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
+        print(json.dumps(summary, indent=1))
+        chains_f.close()
+        return
     res = envs.reset_all([job() for _ in range(envs.n)])
     ep_info = [{"ret": 0.0, "dec": 0, "noop": 0} for _ in range(envs.n)]
     # a transition: [obs, mask, act, logp, val, rew (raw until the batch), done, next_val, t (game s at its decision),
