@@ -75,6 +75,7 @@ class BatchSim:
                 tg[j] = T.ACH_IX[job[3]]
             if len(job) > 4:
                 fo[j] = FORCES[job[4]]
+        self.assigned[which] = -1
         KN.reset_batch(self.ref, which, sc, keys, nk, crew, tg, fo, self.obs, self.mask, self.rew, self.facts, self.valid)
 
     def step(self, acts, active=None):

@@ -600,3 +600,55 @@ STOCK_KEYS = list(S.STOCK)
 STOCK_IT = np.array([IT[k] if k != "food" else -1 for k in STOCK_KEYS], np.int64)
 STOCK_CAP = np.array([S.STOCK[k][0] for k in STOCK_KEYS], np.float64)
 STOCK_VAL = np.array([S.STOCK[k][1] for k in STOCK_KEYS], np.float64)
+
+
+# ---- the reward v4 (docs/rl/REWARD-v4.md, tools/rl/reward_core.py): its parameters, components, scale weights ------------
+import reward_core as RC  # noqa: E402
+
+P4, (SW4, _SS4, _SCALES4) = RC.defaults()
+C4 = ["noop", "goal", "human", "crew.damage", "crew.death", "base.breach", "base.mob_seconds", "surrender", "afk", "credit.kill",
+      "credit.block", "credit.cover", "credit.dodge", "credit.survive", "credit.scout", "credit.wasted_day", "credit.scale", "curiosity.novel"]
+for _k in SW4:
+    if _k not in C4:
+        C4.append(_k)
+C4X = {k: i for i, k in enumerate(C4)}
+NC4 = len(C4)
+# a key of the simulator's -> the v4 component of its scale event (-1: not a scale v4 pays: perimeter and curiosity are events)
+KEY_SCALE4 = np.array([C4X.get(k, -1) if (k.split(".")[0] in spec.SCALES and k.split(".")[0] not in ("perimeter", "curiosity")) else -1
+                       for k in KEYS], np.int64)
+SW4_C = np.array([SW4.get(k, 0.0) for k in C4], np.float64)          # a component's scale weight (rl/reward.json's)
+SW4_HAS = np.array([k in SW4 for k in C4], np.bool_)
+FAC4 = np.ones((NSC, NC4))                                            # the core's factor by scenario (None for the sim's own: 1)
+for _i, _s in enumerate(SCENS):
+    _f = None if _s in S.SIM_SCEN else dict(_SS4.get(_s, {}))
+    for _j, _k in enumerate(C4):
+        _comp = _k.split(".")[0]
+        if _f is None or _comp not in _SCALES4:
+            FAC4[_i, _j] = 1.0
+        elif _k in _f:
+            FAC4[_i, _j] = float(_f[_k])
+        else:
+            FAC4[_i, _j] = float(_f.get(_comp, 0.0))
+_o = P4["outcomes"]
+P4F = {"noop": _o["noop"], "goal": _o["goal"], "human": _o["human"], "dmg": _o["crew.damage"], "death": _o["crew.death"],
+       "breach": _o["base.breach"], "mob_s": _o["base.mob_seconds"], "accident_x": P4["death"]["accident_x"], "base_r": P4["death"]["base_r"],
+       "far_per": P4["death"]["far_per_block"], "far_cap": P4["death"]["far_cap"], "finds_soften": P4["death"]["finds_soften"],
+       "soften_cap": P4["death"]["soften_cap"], "afk_rate": P4["afk"]["rate"], "afk_grace": P4["afk"]["grace_s"], "afk_ramp": P4["afk"]["ramp_s"],
+       "afk_active": P4["afk"]["active_s"], "near_r": P4["sight"]["near_r"], "agent_hits": P4["threat"]["agent_hits"],
+       "th_kill": P4["threat"]["kill"], "th_deter": P4["threat"]["deter"], "delay_tau": P4["threat"]["delay_tau_s"],
+       "dodge_s": P4["threat"]["dodge_s"], "w_kill": P4["threat"]["w"]["kill"], "w_blocked": P4["threat"]["w"]["blocked"],
+       "w_stuck": P4["threat"]["w"]["stuck"], "w_fell": P4["threat"]["w"]["fell"], "w_detour": P4["threat"]["w"]["detour"],
+       "w_cover": P4["threat"]["w"]["cover"], "w_moved": P4["threat"]["w"]["moved"], "hp_low": P4["survive"]["hp_low"],
+       "hp_safe": P4["survive"]["hp_safe"], "surv_share": P4["survive"]["share"], "scout_share": P4["scout"]["share"],
+       "wd_share": P4["wasted_day"]["share"], "scale_move": P4["scale_move"]}
+PHASES4 = ["day", "night", "prep", "wave", "break"]
+CALM4 = np.array([p in P4.get("calm_phases", ("day", "prep", "break")) for p in PHASES4], np.bool_)
+NOCUR4 = np.array([p in P4.get("no_curiosity_phases", ("wave", "night")) for p in PHASES4], np.bool_)
+ACCIDENT_IS = "accident" in P4["death"]["accident_causes"]
+# the events (rl/events.json) as the kernel keeps them
+EV4 = ["agent", "decision", "noop", "goal", "human", "damage", "death", "breach", "inside", "scale", "found", "threat", "fall",
+       "path_changed", "attack_failed", "kill", "mob_gone", "novel"]
+ACT_BOX = np.array([n in S.PUT31 or n.startswith("place:block@") or n == "pillar:up" for n in ACTIONS], np.bool_)
+# found4: a kind seen -> the scale it may give and how much (the simulator's ores and trees)
+FOUND4 = {"coal": ("mine.coal", 3), "iron": ("mine.iron", 3), "gold": ("mine.gold", 2), "redstone": ("mine.redstone", 4),
+          "diamond": ("mine.diamond", 1), "obsidian": ("mine.obsidian", 1), "trees": ("stock.value", 0.125)}

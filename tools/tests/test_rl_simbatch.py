@@ -32,8 +32,13 @@ def check(ok, what):
         bad += 1
 
 
+def norm_id(d, off):
+    """an old decision id as the arena's: by a constant offset (one SimEnv) or by the ids' map (several)"""
+    return off.get(d, -999) if isinstance(off, dict) else d - off
+
+
 def norm_chain(ch, off):
-    return [(c["decision_id"] - off, c["agent"], c["tick"], c["kind"], c["via"]) for c in ch]
+    return [(norm_id(c["decision_id"], off), c["agent"], c["tick"], c["kind"], c["via"]) for c in ch]
 
 
 def norm_events(evs, off):
@@ -78,10 +83,9 @@ def compare(o, b, step, off, where):
             return f"{where} step {step}: info {k} {oi.get(k)} vs {bi.get(k)}"
     if abs(oi["goal_progress"] - bi["goal_progress"]) > 1e-12:
         return f"{where} step {step}: goal_progress {oi['goal_progress']} vs {bi['goal_progress']}"
-    if {int(k): v - off for k, v in oi["assigned"].items()} != {int(k): v for k, v in bi["assigned"].items()} and oi["assigned"]:
-        oa = {int(k): v - off for k, v in oi["assigned"].items()}
-        if oa != bi["assigned"]:
-            return f"{where} step {step}: assigned {oa} vs {bi['assigned']}"
+    oa = {int(k): norm_id(v, off) for k, v in oi["assigned"].items()}
+    if oa != {int(k): v for k, v in bi["assigned"].items()}:
+        return f"{where} step {step}: assigned {oa} vs {bi['assigned']}"
     if norm_events(oi["events"], off) != norm_events(bi["events"], 0):
         return f"{where} step {step}: events\n  {norm_events(oi['events'], off)}\n  {norm_events(bi['events'], 0)}"
     if o["done"]:
@@ -152,7 +156,7 @@ def run_multi(n_arenas, steps, seed0):
     jobs = [(scen[e % len(scen)], seed0 * 1000 + e, 1 + e % 3) for e in range(n_arenas)]
     outs = [env.reset(*j) for env, j in zip(envs, jobs)]
     sim.reset(np.arange(n_arenas), jobs)
-    offs = [None] * n_arenas
+    maps = [{} for _ in range(n_arenas)]   # an arena's old decision ids -> its own
     ep = n_arenas
     dec = 0
     for step in range(steps):
@@ -170,10 +174,10 @@ def run_multi(n_arenas, steps, seed0):
         for e in range(n_arenas):
             o = envs[e].step(acts[e])
             b = sim.result(e)
-            if offs[e] is None and o["info"]["assigned"]:
-                k0 = next(iter(o["info"]["assigned"]))
-                offs[e] = o["info"]["assigned"][k0] - b["info"]["assigned"][int(k0)]
-            msg = compare(o, b, step, offs[e] or 0, f"arena {e} ({o['info']['scenario']})")
+            for k_, v_ in o["info"]["assigned"].items():
+                if int(k_) in b["info"]["assigned"]:
+                    maps[e][v_] = b["info"]["assigned"][int(k_)]
+            msg = compare(o, b, step, maps[e], f"arena {e} ({o['info']['scenario']})")
             if msg:
                 return dec, msg
             outs[e] = o
@@ -185,10 +189,10 @@ def run_multi(n_arenas, steps, seed0):
             for e, j in zip(done, jobs):
                 outs[e] = envs[e].reset(*j)
                 b = sim.result(e)
-                msg = compare(outs[e], b, 0, offs[e] or 0, f"arena {e} reset")
+                msg = compare(outs[e], b, 0, maps[e], f"arena {e} reset")
                 if msg:
                     return dec, msg
-                offs[e] = None
+                maps[e] = {}
     return dec, ""
 
 
