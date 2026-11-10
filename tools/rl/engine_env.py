@@ -79,6 +79,8 @@ def ours():
 def jvm_args(xmx, opt, jfr, extra=()):
     a = [JAVA, "-Xms512M", "-Xmx" + xmx, "-XX:+UseG1GC", "-Dfile.encoding=UTF-8", "-Daiguide.rl.fast=true", "-Daiguide.rl.contract=3.1",
          "-Daiguide.places=false", "-Daiguide.record=false"]
+    if os.environ.get("AIGUIDE_REWARD") == "v4":   # the reward v4 (docs/rl/REWARD-v4.md): train.py --reward v4
+        a.append("-Daiguide.rl.reward4=true")
     if opt:
         a.append("-Daiguide.rl.engine=true")
     if CHECK:
