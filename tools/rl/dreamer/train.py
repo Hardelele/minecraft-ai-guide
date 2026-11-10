@@ -159,9 +159,10 @@ def main():
     ap.add_argument("--small", action="store_true", help="a small model (the smoke test)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--threads", type=int, default=2)
-    ap.add_argument("--out", default="build/rl/open/runs/run")
+    ap.add_argument("--out", default="build/rl/runs/run")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--init", default="")
+    ap.add_argument("--resume", action="store_true", help="--init is this run's own checkpoint: the updates and the owner's minutes go on")
     ap.add_argument("--async", dest="asyn", action="store_true", help="the collector in its own process, all the arenas at once (run_async.py)")
     ap.add_argument("--stage", default="pickaxe", choices=["pickaxe", "night"])
     ap.add_argument("--lead", type=int, default=20, help="--async: updates the collector may run ahead of (train-every steps each)")
@@ -175,8 +176,12 @@ def main():
     if a.small:
         cfg.update({"embed": 128, "deter": 128, "stoch": 8, "classes": 8, "hidden": 128, "imag_starts": 256})
     agent = Dreamer(cfg, a.device)
+    start_updates = 0
     if a.init:
-        agent.load_state_dict(torch.load(a.init, map_location=a.device, weights_only=False)["model"])
+        ck = torch.load(a.init, map_location=a.device, weights_only=False)
+        agent.load_state_dict(ck["model"])
+        if a.resume:   # the same run again from its checkpoint: its count of updates goes on (the BC weight's decay too)
+            start_updates = int(ck.get("updates", 0))
     print(f"model: {params(agent) / 1e6:.1f} M parameters on {a.device}", flush=True)
     (out / "args.json").write_text(json.dumps({**vars(a), "cfg": cfg}, indent=1))
     rep = Replay(a.capacity, a.seed)
@@ -188,7 +193,7 @@ def main():
     mf = open(out / "updates.csv", "a", newline="")
     mw = None
     ef = open(out / "episodes.jsonl", "a")
-    updates, t0 = 0, time.time()
+    updates, t0 = start_updates, time.time()
 
     def log(m, phase, steps=None, upd=None):
         nonlocal mw

@@ -43,7 +43,7 @@ class Arena:
         return self.stream[a]
 
 
-def run(ports, kinds, cfg, q_out, q_w, stage_val, stop, seed, device, allowed=None):
+def run(ports, kinds, cfg, q_out, q_w, stage_val, stop, seed, device, allowed=None, active=None):
     from dreamer import spaces as S
     from dreamer.agent import Dreamer
     torch.set_num_threads(1)
@@ -62,6 +62,7 @@ def run(ports, kinds, cfg, q_out, q_w, stage_val, stop, seed, device, allowed=No
     list(pool.map(lambda a: a.reset(STAGES[stage_val.value]), envs))
     sent = 0
     while not stop.is_set():
+        n = len(envs) if active is None else max(1, min(len(envs), active.value))   # the governor's arenas (League: one)
         if allowed is not None and sent > allowed.value:   # the trainer is behind (its replay ratio kept): wait for it
             time.sleep(0.02)
             continue
@@ -72,7 +73,7 @@ def run(ports, kinds, cfg, q_out, q_w, stage_val, stop, seed, device, allowed=No
             pass
         # the rewards of what came, the agents' obs of every arena in one batch
         rows, out = [], []
-        for ar in envs:
+        for ar in envs[:n]:
             o = ar.o
             pts = ar.reward.frame(o["frame"], o["agents"])
             for e in o["frame"]["events"]:
@@ -108,9 +109,9 @@ def run(ports, kinds, cfg, q_out, q_w, stage_val, stop, seed, device, allowed=No
             ar.o = ar.env.step(acts.get(id(ar), {}))
             ar.steps += 1
             return ar
-        list(pool.map(advance, envs))
+        list(pool.map(advance, envs[:n]))
         ends = []
-        for ar in envs:
+        for ar in envs[:n]:
             if not ar.o["done"]:
                 continue
             o = ar.o

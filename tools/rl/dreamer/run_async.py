@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import time
 from pathlib import Path
 
@@ -31,6 +32,11 @@ class Progress:
         if new:
             self.w.writeheader()
         self.eps, self.firsts = [], set()
+        self.m0 = self.d0 = 0.0   # a resumed run: its minutes and decisions go on from the last row
+        if not new:
+            rows = list(csv.DictReader(open(self.dir / "metrics.csv", encoding="utf8")))
+            if rows:
+                self.m0, self.d0 = float(rows[-1]["minutes"] or 0), float(rows[-1]["decisions"] or 0)
         cl = self.dir / "curriculum.log"
         for line in cl.read_text(encoding="utf8").splitlines() if cl.exists() else []:
             for k in ("wood", "pickaxe", "night"):
@@ -57,7 +63,7 @@ class Progress:
             f.write(line + " — " + time.strftime("%Y-%m-%d %H:%M") + "\n")
 
     def row(self, updates, minutes, steps, stage, sps, ups, m):
-        r = {"epoch": updates // 100, "minutes": round(minutes, 1), "decisions": steps, "stage": stage, "noop_end_frac": 0.0, "updates": updates,
+        r = {"epoch": updates // 100, "minutes": round(self.m0 + minutes, 1), "decisions": int(self.d0 + steps), "stage": stage, "noop_end_frac": 0.0, "updates": updates,
              "env_steps_per_s": round(sps, 1), "updates_per_s": round(ups, 2), "wm_loss": round(m.get("wm/loss", 0), 3),
              "bc_nll": round(m.get("bc/nll", 0), 3), "entropy": round(m.get("ac/entropy", 0), 3)}
         for k in ("wood", "pickaxe", "night"):
@@ -87,9 +93,10 @@ def main_async(a, agent, cfg, rep, teach, out, t0, updates, log):
     ctx = mp.get_context("spawn")
     q_out, q_w = ctx.Queue(maxsize=256), ctx.Queue(maxsize=1)
     stage_val, stop = ctx.Value("i", collect.STAGES.index(a.stage)), ctx.Event()
-    allowed = ctx.Value("q", a.warmup + a.lead * a.train_every)   # the collector's steps the trainer allows (warmup, then a lead of updates)
+    allowed = ctx.Value("q", a.warmup + a.lead * a.train_every)
+    active = ctx.Value("i", len(a.ports.split(",")))   # the arenas stepped (the governor's advice)   # the collector's steps the trainer allows (warmup, then a lead of updates)
     ports = [int(p) for p in a.ports.split(",")]
-    proc = ctx.Process(target=collect.run, args=(ports, [a.env] * len(ports), cfg, q_out, q_w, stage_val, stop, a.seed, a.device, allowed), daemon=True)
+    proc = ctx.Process(target=collect.run, args=(ports, [a.env] * len(ports), cfg, q_out, q_w, stage_val, stop, a.seed, a.device, allowed, active), daemon=True)
     push_weights(agent, q_w)
     proc.start()
     prog = Progress(out.name)
@@ -99,7 +106,17 @@ def main_async(a, agent, cfg, rep, teach, out, t0, updates, log):
     last_row = last_snap = rate_t = time.time()
     rate_steps, rate_upd = 0, updates
     pick = []
+    adv_file, adv_t, duty = os.environ.get("AIGUIDE_GOVERNOR"), 0.0, 1.0
     while env_steps < a.steps:
+        if adv_file and time.time() - adv_t > 10:   # the governor's advice: threads, arenas, the GPU's duty (League: Idle, 1 thread, 1 arena, a quarter)
+            adv_t = time.time()
+            try:
+                adv = json.load(open(adv_file, encoding="utf-8"))
+                torch.set_num_threads(max(1, int(adv.get("threads", 1))))
+                active.value = max(1, min(len(ports), int(adv.get("arenas", len(ports)))))
+                duty = max(0.05, float(adv.get("gpu_duty", 1.0)))
+            except Exception:
+                pass
         got = 0
         while got < 400:   # what the collector sent
             try:
@@ -136,8 +153,11 @@ def main_async(a, agent, cfg, rep, teach, out, t0, updates, log):
                 k = updates - a.bc_steps
                 w = a.bc_final + (a.bc_weight - a.bc_final) * max(0.0, 1 - k / max(1, a.bc_decay)) if teach is not None else 0.0
                 bb = teach.sample(a.bc_batch, a.seq) if teach is not None else None
+                tu = time.time()
                 m = agent.train_step(b, bc_batch=bb, bc_weight=w)
                 m["bc/weight"] = w
+                if duty < 1.0:   # the GPU a part of the time only
+                    time.sleep(min(5.0, (time.time() - tu) * (1 / duty - 1)))
                 updates += 1
                 allowed.value = max(allowed.value, a.warmup + (updates - upd0 + a.lead) * a.train_every)
                 if updates % 10 == 0:
