@@ -53,6 +53,11 @@ from spec import ACTIONS, IDX, RECIPES, SCEN, WEIGHTS  # noqa: E402
 
 RING, MOAT, POSTS = 64, 80, 4      # a ring of radius 8, height 2 (cells), its moat, its posts
 CAL = json.loads((spec.ROOT / "rl" / "sim-calibration.json").read_text(encoding="utf-8"))
+# the waves' fight fitted to the engine (tools/rl/calibrate_waves.py): the kills' and the hits' multipliers, the leak of
+# the gate's opening while no door shuts it (absent: 1, 1, 0 - the simulator as it was)
+WCAL = {"kill": 1.0, "hurt": 1.0, "gate_leak": 0.0, **CAL.get("waves", {})}
+LOSSES_PER_WAVE = 6   # the game's: WaveCycle.Config.lossesPerWave (-Daiguide.waves.losses)
+RESPAWN_S = 1.0       # the game's: Crew.respawn, a second after the death
 SK = CAL["skills"]
 V2 = spec.VERSION >= 2
 V31 = "pillar:up" in IDX   # contract 3.1: digging and building round itself, the memory of failures (sim_near)
@@ -1840,10 +1845,15 @@ class SimEnv:
                 self.done, self.reason = True, "time"
 
     def world(self, dt: float):
+        self.respawn()
         wave = self.phase == "wave"
-        open_ = 2 if self.gate_open else 0
+        gateway = self.gate_open or not self.door   # the gate's 1x2 opening stands open until a door is in it (as in the game)
+        open_ = 2 if gateway else 0
         wallf = max(0.0, self.wall - open_) / RING if self.ring else 0.0
-        leak = (1 - wallf) * (1 - 0.4 * self.moat / MOAT) * (0.7 if self.moat_liquid else 1.0)
+        leak = 1 - wallf
+        if self.ring and gateway:   # the mobs find the opening: most of a wave comes in through it (WCAL: from the engine)
+            leak = max(leak, WCAL["gate_leak"])
+        leak *= (1 - 0.4 * self.moat / MOAT) * (0.7 if self.moat_liquid else 1.0)
         if self.crops:   # crops, saplings, young animals grow
             ripe = [c for c in self.crops if c[0] <= self.t]
             if ripe:
@@ -1918,23 +1928,23 @@ class SimEnv:
                 continue
             inside = a.dist < 8 and self.ring
             if a.dist > 10:   # out in the field during a wave
-                self.hurt(a, 0.08 * math.sqrt(e), dt)
+                self.hurt(a, WCAL["hurt"] * 0.08 * math.sqrt(e), dt)
             elif a.holding and a.post:
-                self.hurt(a, 0.025 * math.sqrt(e) * (0.4 + leak), dt)
+                self.hurt(a, WCAL["hurt"] * 0.025 * math.sqrt(e) * (0.4 + leak), dt)
                 unarmed = 1.0 if a.held else self.sc.get("unarmed", 1.0)
-                k = min(self.poisson((0.05 + 0.04 * a.held) * unarmed * dt * min(1.0, e / 2)), int(math.ceil(self.enemies)))
+                k = min(self.poisson(WCAL["kill"] * (0.05 + 0.04 * a.held) * unarmed * dt * min(1.0, e / 2)), int(math.ceil(self.enemies)))
                 if k:
                     self.kill(a, k)
             else:
-                self.hurt(a, 0.025 * e * (leak if inside else 1.0), dt, inside=bool(inside))
+                self.hurt(a, WCAL["hurt"] * 0.025 * e * (leak if inside else 1.0), dt, inside=bool(inside))
                 if leak > 0.3 or not self.ring:
                     unarmed = 1.0 if a.held else self.sc.get("unarmed", 1.0)
-                    k = min(self.poisson(0.012 * (1 + a.held) * unarmed * dt), int(math.ceil(self.enemies)))
+                    k = min(self.poisson(WCAL["kill"] * 0.012 * (1 + a.held) * unarmed * dt), int(math.ceil(self.enemies)))
                     if k:
                         self.kill(a, k)
             if inside and self.inside > 0:   # what got in hits the agents inside, they fight it
-                self.hurt(a, 0.05 * self.inside, dt, inside=True)
-                k = min(self.poisson(0.04 * (1 + a.held) * (1.0 if a.held else self.sc.get("unarmed", 1.0)) * dt), int(math.ceil(self.inside)))
+                self.hurt(a, WCAL["hurt"] * 0.05 * self.inside, dt, inside=True)
+                k = min(self.poisson(WCAL["kill"] * 0.04 * (1 + a.held) * (1.0 if a.held else self.sc.get("unarmed", 1.0)) * dt), int(math.ceil(self.inside)))
                 if k:
                     self.kill(a, k, inside=True)
             if a.health <= 0:
@@ -1971,7 +1981,7 @@ class SimEnv:
                         self.give(a, "perimeter.clean_wave", causes=[self.link(next(x for x in self.agents if x.i == b[2]), b[0], b[1], b[3],
                                                                                "block:cobblestone") for b in self.builders[-8:]])
                 self.phase, self.phase_until = "break", self.t + (60 if self.sc["seconds"] > 1200 else 20)
-            elif self.wave_losses >= len(self.agents):
+            elif self.wave_losses >= LOSSES_PER_WAVE:   # the game's rule (WaveCycle.lossesPerWave): the crew's deaths in one wave
                 self.done, self.reason = True, "lost"
 
     def die(self, a: Agent, out: bool, accident: bool = False):
@@ -1999,6 +2009,14 @@ class SimEnv:
             a.pending = None
             self.ended(a, act, "DIED", self.t - began)
         a.free_at = self.t + 10.0
+        a.respawn_at = self.t + RESPAWN_S
+
+    def respawn(self):
+        """as the game's crew (Crew.respawn): a second after its death the agent is back at the base, full health, an empty bag"""
+        for a in self.agents:
+            at = getattr(a, "respawn_at", None)
+            if not a.alive and at is not None and self.t >= at:
+                a.alive, a.health, a.dist, a.free_at, a.respawn_at = True, 20.0, 0.0, self.t, None
 
     def next_phase(self):
         if self.phase in ("prep", "break"):
