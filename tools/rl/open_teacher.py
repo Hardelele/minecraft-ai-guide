@@ -37,6 +37,7 @@ ACTS = SPEC["heads"]["act"]
 
 
 def load_teacher(path):
+    torch.set_num_threads(1)   # (a small net: one thread, the PC is shared)
     c = torch.load(path, map_location="cpu", weights_only=False)
     p = Policy(c["d"], c["a"], c["hidden"])
     p.load_state_dict(c["model"])
