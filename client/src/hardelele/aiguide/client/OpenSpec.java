@@ -167,9 +167,48 @@ final class OpenSpec {
         return sector[s];
     }
 
-    /** the turns quantized with the error carried on: the learner's head stays within half a grid step of the teacher's */
+    /** a player's walk on the ground, a tick: the push of the keys (0.98 x 0.1) and what of the speed is kept (0.6 x 0.91) */
+    static final double PUSH = 0.098, KEEP = 0.546;
+    /** blocks a step of the legs takes a body from standing (for the checks: 0.63) */
+    static final double STEP_WAY = way(0, 1)[0];
+
+    /** a step of the legs on flat ground from a speed (vx, along the push): { the way, the speed after }; push 0 or 1 */
+    static double[] way(double v, double push) {
+        double d = 0;
+        for (int t = 0; t < STEP; t++) { v += PUSH * push; d += v; v *= KEEP; }
+        return new double[] { d, v };
+    }
+
+    /** the turns and the legs quantized with the error carried on: the learner's head and feet keep near the teacher's */
     static final class Labeler {
-        double yawDebt, pitchDebt;
+        double yawDebt, pitchDebt, wayX, wayZ, vx, vz;
+
+        /**
+         * The legs' head for the step's way in the world (dx, dz) with the look's yaw at its start (degrees, the game's:
+         * forward is (-sin, cos)): the move whose step, as a player's walk goes on from the learner's speed (its
+         * momentum kept, PUSH and KEEP a tick), comes nearest the way and what was left over before; what it misses
+         * is carried on. A slow walk comes out as a step now and then.
+         */
+        int move(double dx, double dz, double yawDeg) {
+            double wx = dx + wayX, wz = dz + wayZ;
+            double y = Math.toRadians(yawDeg), fx = -Math.sin(y), fz = Math.cos(y), lx = fz, lz = -fx;   // forward; left (strafe +)
+            int best = -1;
+            double bd = 1e18, bx = 0, bz = 0, bvx = 0, bvz = 0;
+            for (int k = 0; k < MOVES.length; k++) {
+                double f = MOVES[k][0], l = MOVES[k][1], n = Math.max(1, Math.hypot(f, l));
+                double ux = (f * fx + l * lx) / n, uz = (f * fz + l * lz) / n;
+                double px = 0, pz = 0, qx = vx, qz = vz;
+                for (int t = 0; t < STEP; t++) { qx += PUSH * ux; qz += PUSH * uz; px += qx; pz += qz; qx *= KEEP; qz *= KEEP; }
+                double d = Math.hypot(wx - px, wz - pz);
+                if (d < bd - 1e-9) { bd = d; best = k; bx = px; bz = pz; bvx = qx; bvz = qz; }
+            }
+            wayX = wx - bx;
+            wayZ = wz - bz;
+            vx = bvx;
+            vz = bvz;
+            if (Math.hypot(wayX, wayZ) > 2) wayX = wayZ = vx = vz = 0;   // (pushed, fallen, back from death: not the legs' doing)
+            return best;
+        }
 
         /** the step's turn (degrees, yaw + right, pitch + down): { yaw head, pitch head } */
         int[] turn(double dYaw, double dPitch) {

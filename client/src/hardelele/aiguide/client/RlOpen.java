@@ -75,7 +75,7 @@ public final class RlOpen {
         maxSteps = msg.has("max_steps") ? msg.get("max_steps").getAsInt() : 0;
         level = msg.has("waves") ? msg.get("waves").getAsString() : "normal";
         waves = !level.equals("off");
-        startTime = msg.has("time") ? msg.get("time").getAsLong() : 0;
+        startTime = msg.has("time") ? msg.get("time").getAsLong() : msg.has("scenario") ? env.sc.time : 0;   // (a scenario's: its time, for a teacher's replay)
         w.getGameRules().setOrCreateGameRule("doDaylightCycle", "true");
         w.setWorldTime(startTime);
         if (Waves.cycle.active()) Waves.stop("rl_open_reset");
@@ -482,53 +482,53 @@ public final class RlOpen {
             ctx.base = c.base;
             WaveCycle.Phase ph = Waves.cycle.phase;
             ctx.phase = ph == WaveCycle.Phase.PREP ? "prep" : ph == WaveCycle.Phase.WAVE ? "wave" : ph == WaveCycle.Phase.BREAK ? "break" : "none";
-            if (inStep == 0) {
-                for (Agent a : c.agents) {
-                    if (a.isDead) continue;
-                    OpenEyes e = eyes.get(a.skin());
-                    if (e == null) eyes.put(a.skin(), e = new OpenEyes());
-                    int sel = a.bag.indexOf(a.getHeldItem());
-                    JsonObject ob = e.observe(a, w, ctx, null, sel < 0 ? a.bag.size() : sel);
-                    start.put(a.skin(), new Object[] { ob, RlEnv.ints(OpenBody.mask(a, w)), a.body.yawNow(), a.body.pitchNow(), a.posX, a.posY, a.posZ, a.getHeldItem(), a.jumpedAt });
-                    OpenRec.acc(a.skin()).clear();
-                }
-            }
-            if (++inStep < OpenSpec.STEP) return;
-            inStep = 0;
-            steps++;
+            if (inStep++ % OpenSpec.STEP != 0) return;
+            // a step's end and the next one's start at the same tick: the label of the 4 ticks gone, then what is seen now
             for (Agent a : c.agents) {
                 Object[] s = start.remove(a.skin());
-                if (s == null || a.isDead) continue;
-                OpenSpec.Labeler lab = labs.get(a.skin());
-                if (lab == null) labs.put(a.skin(), lab = new OpenSpec.Labeler());
-                float dy = net.minecraft.util.MathHelper.wrapAngleTo180_float(a.body.yawNow() - (Float) s[2]), dp = a.body.pitchNow() - (Float) s[3];
-                int[] turn = lab.turn(dy, dp);
-                double y0 = Math.toRadians((Float) s[2]), dx = a.posX - (Double) s[4], dz = a.posZ - (Double) s[6];
-                double fwd = -Math.sin(y0) * dx + Math.cos(y0) * dz, left = Math.cos(y0) * dx + Math.sin(y0) * dz;
-                int move = OpenSpec.move(fwd, left);
-                int jump = a.jumpedAt > (Integer) s[8] ? 1 : a.isSneaking() ? 2 : 0;
-                OpenRec.Acc acc = OpenRec.acc(a.skin());
-                int slot = -1;
-                boolean unrep = acc.unrep;
-                if (a.getHeldItem() != s[7]) {   // the hand changed: a slot of the hotbar, or bare hands as an empty slot
-                    int i = a.getHeldItem() == null ? a.bag.size() : a.bag.indexOf(a.getHeldItem());
-                    if (i >= 0 && i < OpenSpec.HOTBAR) slot = i; else unrep = true;
-                }
-                int act = OpenSpec.Labeler.act(acc.recipe, acc.furnace, acc.used, acc.attacked, slot, acc.dropped);
-                RlEnv.Mine mm = env.mine(a);
-                String macro = mm.last >= 0 && mm.last < RlSpec.ACTIONS.size() ? RlSpec.ACTIONS.get(mm.last).id : "";
-                for (String u : UNREP) if (macro.startsWith(u)) unrep = true;
-                JsonObject f = new JsonObject();
-                f.addProperty("agent", RlEnv.id(a));
-                f.addProperty("t", round(env.ticks / 20.0));
-                f.add("obs", (JsonObject) s[0]);
-                f.add("mask", (JsonArray) s[1]);
-                f.add("act", RlEnv.ints(new int[] { move, jump, turn[0], turn[1], act }));
-                f.addProperty("unrep", unrep);
-                f.addProperty("macro", macro);
-                if (!acc.what.isEmpty()) f.addProperty("what", acc.what);
-                out.add(f);
+                if (s != null && !a.isDead) label(a, s);
             }
+            steps++;
+            for (Agent a : c.agents) {
+                if (a.isDead) continue;
+                OpenEyes e = eyes.get(a.skin());
+                if (e == null) eyes.put(a.skin(), e = new OpenEyes());
+                int sel = a.bag.indexOf(a.getHeldItem());
+                JsonObject ob = e.observe(a, w, ctx, null, sel < 0 ? a.bag.size() : sel);
+                start.put(a.skin(), new Object[] { ob, RlEnv.ints(OpenBody.mask(a, w)), a.body.yawNow(), a.body.pitchNow(), a.posX, a.posY, a.posZ, a.getHeldItem(), a.jumpedAt });
+                OpenRec.acc(a.skin()).clear();
+            }
+        }
+
+        void label(Agent a, Object[] s) {
+            OpenSpec.Labeler lab = labs.get(a.skin());
+            if (lab == null) labs.put(a.skin(), lab = new OpenSpec.Labeler());
+            float dy = net.minecraft.util.MathHelper.wrapAngleTo180_float(a.body.yawNow() - (Float) s[2]), dp = a.body.pitchNow() - (Float) s[3];
+            int[] turn = lab.turn(dy, dp);
+            int move = lab.move(a.posX - (Double) s[4], a.posZ - (Double) s[6], (Float) s[2]);
+            int jump = a.jumpedAt > (Integer) s[8] ? 1 : a.isSneaking() ? 2 : 0;
+            OpenRec.Acc acc = OpenRec.acc(a.skin());
+            int slot = -1;
+            boolean unrep = acc.unrep;
+            if (a.getHeldItem() != s[7]) {   // the hand changed: a slot of the hotbar, or bare hands as an empty slot
+                int i = a.getHeldItem() == null ? a.bag.size() : a.bag.indexOf(a.getHeldItem());
+                if (i >= 0 && i < OpenSpec.HOTBAR) slot = i; else unrep = true;
+            }
+            int act = OpenSpec.Labeler.act(acc.recipe, acc.furnace, acc.used, acc.attacked, slot, acc.dropped);
+            RlEnv.Mine mm = env.mine(a);
+            String macro = mm.last >= 0 && mm.last < RlSpec.ACTIONS.size() ? RlSpec.ACTIONS.get(mm.last).id : "";
+            for (String u : UNREP) if (macro.startsWith(u)) unrep = true;
+            JsonObject f = new JsonObject();
+            f.addProperty("agent", RlEnv.id(a));
+            f.addProperty("t", round(env.ticks / 20.0));
+            f.add("obs", (JsonObject) s[0]);
+            f.add("mask", (JsonArray) s[1]);
+            f.add("act", RlEnv.ints(new int[] { move, jump, turn[0], turn[1], act }));
+            f.addProperty("unrep", unrep);
+            f.addProperty("macro", macro);
+            f.add("pos", RlEnv.floats(new float[] { (float) (double) (Double) s[4], (float) (double) (Double) s[5], (float) (double) (Double) s[6] }));   // (where the step began: for the checks, not seen)
+            if (!acc.what.isEmpty()) f.addProperty("what", acc.what);
+            out.add(f);
         }
 
         JsonArray drain() {
