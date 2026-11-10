@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "contract": "reward-v4",
+  "note": "docs/rl/REWARD-v4.md: the stream of a step's events that the reward is computed from (tools/rl/reward_core.py, RlReward4.java). A frame: {t, dt, phase, events}; t the game seconds at the frame's end, dt its length, phase one of 'phases'. Events are handled in their order in the list. Field types: int, float, str, bool, ids (a list of decision ids), agents (a list of agent ids). 'agent' is the agent's id as the environment names it (an int in the simulators, its string in the game); 'mob' an id unique in the episode. A field marked ? may be absent.",
+  "phases": ["day", "night", "prep", "wave", "break"],
+  "frame": {"t": "float", "dt": "float", "phase": "str", "events": "list"},
+  "events": {
+    "agent":         {"agent": "agent", "x": "float", "y": "float", "z": "float", "hp": "float", "alive": "bool", "base_dist": "float"},
+    "decision":      {"agent": "agent", "id": "int", "kind": "str"},
+    "noop":          {"agent": "agent"},
+    "goal":          {},
+    "human":         {"agent": "agent", "rating": "float"},
+    "damage":        {"agent": "agent", "hp": "float", "mob?": "int", "cause?": "str"},
+    "death":         {"agent": "agent", "cause": "str", "base_dist": "float"},
+    "breach":        {"mob": "int"},
+    "inside":        {"mob_s": "float"},
+    "scale":         {"agent": "agent or '*' (the crew: every agent alive)", "key": "str (a scale's part of rl/reward.json)", "delta": "float", "causes?": "ids", "res?": "str"},
+    "found":         {"agent": "agent", "decision": "int", "res": "str", "key": "str", "amount": "float"},
+    "threat":        {"mob": "int", "kind": "str", "target": "'base' or agent", "dmg": "float"},
+    "path_changed":  {"mob": "int", "effect": "detour|stuck|fell|blocked", "delay_s": "float", "on_route": "bool", "by": "ids", "seen": "agents"},
+    "attack_failed": {"mob": "int", "target": "agent", "reason": "moved|cover|reach", "by?": "ids", "seen": "agents"},
+    "kill":          {"mob": "int", "agent": "agent", "decision": "int", "seen?": "agents"},
+    "mob_gone":      {"mob": "int", "why": "despawn|wave_end|other"},
+    "novel":         {"agent": "agent", "decision?": "int"}
+  },
+  "components": ["noop", "goal", "human", "crew.damage", "crew.death", "base.breach", "base.mob_seconds", "surrender", "afk",
+                 "credit.kill", "credit.block", "credit.cover", "credit.dodge", "credit.survive", "credit.scout", "credit.wasted_day", "credit.scale",
+                 "<a scale's part: safety.wall, equipment.armor, ...>", "curiosity.novel"],
+  "move_event": {"type": "reward", "agent": "agent (whose step got the points)", "key": "component", "points": "float", "move": "float (the share train.py moves to the cause: 1 for credit)", "chain": "[{decision_id, agent, tick, kind, via: 'credit'}]"}
+}
