@@ -16,6 +16,7 @@ import collections
 import csv
 import json
 import math
+import os
 import time
 
 import numpy as np
@@ -147,6 +148,35 @@ def run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, cpu_copy,
     N = a.envs
     v4 = getattr(a, "reward", "v3") == "v4"
     sim = BatchSim(N, curiosity=a.curiosity, threads=a.sim_threads, reward="v4" if v4 else "v3", merge=True)
+    # the resource governor (tools/rl/governor.py): the simulator's threads, torch's, pauses, the GPU's duty by what the PC has
+    # spare (League of Legends: Idle, 1 + 1 threads, the GPU a quarter)
+    import numba
+    gov = None
+    gov_file = os.environ.get("AIGUIDE_GOVERNOR")
+    if not getattr(a, "no_governor", False) and not gov_file:
+        import governor as GOV
+        gov = GOV.Governor(log=str(out / "governor.jsonl"), max_threads=max(1, a.threads), max_arenas=a.sim_threads).start()
+
+    def advice():
+        if gov is not None:
+            return gov.advice()
+        if gov_file:
+            import governor as GOV
+            return GOV.read_advice(gov_file) or {}
+        return {}
+
+    def govern():
+        """the advice applied between steps: a pause waits; the threads follow it"""
+        d = advice()
+        while d.get("pause"):
+            time.sleep(1.0)
+            d = advice()
+        if d:
+            numba.set_num_threads(int(max(1, min(a.sim_threads, d.get("arenas", a.sim_threads) or 1))))
+            torch.set_num_threads(int(max(1, min(a.threads, d.get("threads", 1)))))
+        return d
+    adv = govern()
+    adv_t = time.time()
     sim.reset(np.arange(N), [job() for _ in range(N)])
     rows = N * MA
     last = np.full(rows, -1, np.int64)        # a slot's transition waiting for its reward or its next value
@@ -178,6 +208,8 @@ def run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, cpu_copy,
         n_done = int(buf.complete[:buf.n].sum())
         pol.eval()
         while n_done < a.rollout:
+            if time.time() - adv_t > 2.0:
+                adv, adv_t = govern(), time.time()
             vrows = np.flatnonzero(sim.valid)
             m = len(vrows)
             ti = time.perf_counter()
@@ -352,12 +384,18 @@ def run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, cpu_copy,
         for _ in range(a.epochs):
             perm = torch.randperm(nb, device=dev)
             for s0 in range(0, nb, a.minibatch):
+                duty = float(adv.get("gpu_duty", 1.0) or 0.0)
+                t_mb = time.perf_counter()
                 idx = perm[s0:s0 + a.minibatch]
                 loss, pg, vl, ent, ratio = ppo_loss(pol, bo[idx], bm[idx], ba[idx], blp[idx], badv[idx], bret[idx], a.clip, a.vf, ent_coef)
                 opt.zero_grad()
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(pol.parameters(), a.max_grad)
                 opt.step()
+                if duty < 1.0:   # the governor's GPU duty: the update sleeps between its minibatches
+                    if dev.type == "cuda":
+                        torch.cuda.synchronize()
+                    time.sleep((time.perf_counter() - t_mb) * (1.0 / max(duty, 0.05) - 1.0))
                 with torch.no_grad():
                     lst["pg"].append(pg.item())
                     lst["vl"].append(vl.item())
@@ -420,4 +458,6 @@ def run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, cpu_copy,
         (out / "curriculum.log").write_text("\n".join(cur.log) + "\n", encoding="utf-8")
     mcsv.close()
     ecsv.close()
+    if gov is not None:
+        gov.stop()
     return epoch, total_dec

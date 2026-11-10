@@ -258,6 +258,7 @@ def main():
                     help="sim: the Python simulator; simbatch: the same world, --envs arenas at once in this process (tools/rl/simbatch.py, "
                          "numba on --sim-threads threads); real: rl/env's servers (--url); engine: the game's engine, --envs arenas in one JVM "
                          "(tools/rl/engine_env.py, started here and stopped at the end unless --url names running ones)")
+    ap.add_argument("--no-governor", action="store_true", help="simbatch: without the resource governor (tools/rl/governor.py)")
     ap.add_argument("--sim-threads", type=int, default=0, help="simbatch: the simulator's threads (0: half the cores, 2 while League of Legends runs)")
     ap.add_argument("--url", default=None, help="real: host:port[,host:port...] of rl/env's servers")
     ap.add_argument("--engine-port", type=int, default=26200, help="engine: the first arena's port")
@@ -360,7 +361,7 @@ def main():
         if a.recurrent or a.rudder or a.shaping:
             sys.exit("--env simbatch: no --recurrent, --rudder, --shaping (the old path has them)")
         if not a.sim_threads:
-            a.sim_threads = 2 if league_running() else max(1, (os.cpu_count() or 2) // 2)
+            a.sim_threads = 1 if league_running() else max(1, (os.cpu_count() or 2) // 2 - a.threads)   # half the cores, torch's in it
         import train_batch
         epoch, total_dec = train_batch.run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, _cpu_copy, save, ppo_loss,
                                            COMPONENTS_V4 if a.reward == "v4" else COMPONENTS, SNAP, OB_KEYS)

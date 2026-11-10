@@ -44,6 +44,7 @@ class BatchSim:
         import numba
         if threads:
             numba.set_num_threads(max(1, min(threads, numba.config.NUMBA_NUM_THREADS)))
+        numba.set_parallel_chunksize(8)   # the arenas handed to the threads 8 at a time: their steps differ much in work
         self.n = n
         self.tables = T.scen_tables(curiosity)
         import types

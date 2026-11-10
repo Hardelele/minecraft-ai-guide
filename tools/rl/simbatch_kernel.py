@@ -974,19 +974,27 @@ def ledger(st, e, kind, amount):
 
 
 @jit
-def recent(st, e, out):
+def recent(st, e):
+    """-> the window's food_renew, food_eaten, wood_renew, wood_used (no array: no allocation in the hot path)"""
     t = st.af[e, AF_T]
     while st.ai[e, A_N_SUSWIN] > 0 and st.suswin[e, st.ai[e, A_SUSWIN_HEAD], 0] < t - WINDOW_S:
         st.ai[e, A_SUSWIN_HEAD] = (st.ai[e, A_SUSWIN_HEAD] + 1) % CAP_SUSWIN
         st.ai[e, A_N_SUSWIN] -= 1
-    out[0] = 0.0
-    out[1] = 0.0
-    out[2] = 0.0
-    out[3] = 0.0
+    o0, o1, o2, o3 = 0.0, 0.0, 0.0, 0.0
     h = st.ai[e, A_SUSWIN_HEAD]
     for j in range(st.ai[e, A_N_SUSWIN]):
         jj = (h + j) % CAP_SUSWIN
-        out[int(st.suswin[e, jj, 1])] += st.suswin[e, jj, 2]
+        k = int(st.suswin[e, jj, 1])
+        v = st.suswin[e, jj, 2]
+        if k == 0:
+            o0 += v
+        elif k == 1:
+            o1 += v
+        elif k == 2:
+            o2 += v
+        else:
+            o3 += v
+    return o0, o1, o2, o3
 
 
 @jit
@@ -1329,12 +1337,11 @@ def raw(st, e, i, r):
     r[C_breaches] = st.ai[e, A_WAVE_BREACHES]
     r[C_mob_seconds] = st.af[e, AF_WAVE_MOB_S]
     r[C_clean_waves] = st.ai[e, A_CLEAN]
-    rec = np.zeros(4)
-    recent(st, e, rec)
-    r[C_food_renew] = rec[0]
-    r[C_food_eaten] = rec[1]
-    r[C_wood_renew] = rec[2]
-    r[C_wood_used] = rec[3]
+    r0, r1, r2, r3 = recent(st, e)
+    r[C_food_renew] = r0
+    r[C_food_eaten] = r1
+    r[C_wood_renew] = r2
+    r[C_wood_used] = r3
     r[C_sources] = sources(st, e)
     r[C_stock_value] = stock(st, e)
     r[C_stall] = min(STALL_S, t - st.gf[e, i, GF_PROGRESS_T])
@@ -1487,10 +1494,10 @@ def cmp(op, a, b):
 
 
 @jit
-def allowed(r, act):
+def allowed(r, act, stack):
+    """stack: a scratch of 64 (the caller's: one for all the actions of a row)"""
     if act == 0:
         return True
-    stack = np.empty(64, np.bool_)
     sp = 0
     s0 = MP_START[act]
     for j in range(s0, s0 + MP_LEN[act]):
@@ -1515,8 +1522,9 @@ def allowed(r, act):
 
 @jit
 def mask_of(r, out):
+    stack = np.empty(64, np.bool_)
     for a in range(A):
-        out[a] = allowed(r, a)
+        out[a] = allowed(r, a, stack)
 
 
 # ---- skills (sim_env.begin, blocked31, finish, moved31, ended) -------------------------------------------------------
@@ -1551,7 +1559,7 @@ def begin(st, e, i, act, row):
             st.fev_i[e, j, 2] = st.gi[e, i, GI_DID]
             st.fev_i[e, j, 3] = act
     raw(st, e, i, row)
-    if not allowed(row, act):
+    if not allowed(row, act, np.empty(64, np.bool_)):
         st.gi[e, i, GI_PEND] = 1
         st.gi[e, i, GI_PEND_ACT] = act
         st.gi[e, i, GI_PEND_OK] = 0
@@ -3042,9 +3050,9 @@ def measure(st, e, first):
     if st.sc_i[s, SI_SIM_ONLY]:
         return
     ring = st.ai[e, A_RING]
-    bc = np.zeros((8, 5), np.int64)
-    nbc = 0
     if st.ai[e, A_V4]:   # the wall's, the moat's, the gate's builders since the last measure: the causes of their change
+        bc = np.zeros((8, 5), np.int64)
+        nbc = 0
         nb_ = st.ai[e, A_N_BUILDERS]
         b0 = st.ai[e, A_B_SEEN]
         if nb_ - b0 > 8:
@@ -3054,8 +3062,11 @@ def measure(st, e, first):
             bc[nbc, 0] = int(st.builders[e, jj % 8, 0])
             nbc += 1
         st.ai[e, A_B_SEEN] = nb_
-    crew_delta_c(st, e, AF_CT_WALL, K_S_WALL, st.ai[e, A_WALL] / RING if ring else 0.0, first, bc, nbc)
-    crew_delta_c(st, e, AF_CT_MOAT, K_S_MOAT, st.ai[e, A_MOAT] / MOAT, first, bc, nbc)
+        crew_delta_c(st, e, AF_CT_WALL, K_S_WALL, st.ai[e, A_WALL] / RING if ring else 0.0, first, bc, nbc)
+        crew_delta_c(st, e, AF_CT_MOAT, K_S_MOAT, st.ai[e, A_MOAT] / MOAT, first, bc, nbc)
+    else:
+        crew_delta(st, e, AF_CT_WALL, K_S_WALL, st.ai[e, A_WALL] / RING if ring else 0.0, first)
+        crew_delta(st, e, AF_CT_MOAT, K_S_MOAT, st.ai[e, A_MOAT] / MOAT, first)
     crew_delta(st, e, AF_CT_LIGHT, K_S_LIGHT, min(1.0, st.ai[e, A_TORCHES] / 12), first)
     crew_delta(st, e, AF_CT_GATE, K_S_GATE, 1.0 if (st.ai[e, A_DOOR] and not st.ai[e, A_GATE_OPEN]) else 0.0, first)
     crew_delta(st, e, AF_CT_ETABLE, K_E_TABLE, 1.0 if st.ai[e, A_ENCH_TABLE] else 0.0, first)
