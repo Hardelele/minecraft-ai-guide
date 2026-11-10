@@ -322,6 +322,12 @@ final class MindSkills {
 
     /** the trunks the crew has seen within r: { x, y (the lowest log seen), z }, nearest first; others' reserved left out unless asked */
     static List<int[]> trunks(Crew c, Agent a, WorldServer w, double r, boolean reservedToo) {
+        // the logs it remembers near looked at again (a felled tree is forgotten, #1053), and a forgotten trunk's
+        // failed walks with it (the crew's "not reached" and the agent's own): nothing to go back to
+        for (int[] g : Exploration.recheck(a, w, LOGS, 10, 48)) {
+            crewUnreached.remove(Crew.key(g[0], g[1], g[2]));
+            a.walks.forget(Crew.key(g[0], g[1], g[2]));
+        }
         Map<Long, int[]> col = new LinkedHashMap<Long, int[]>();
         for (Block b : new Block[] { Blocks.log, Blocks.log2 })
             for (int[] p : Exploration.knownBlocks(w, b)) {
@@ -343,6 +349,8 @@ final class MindSkills {
         nearestFirst(l, a);
         return l;
     }
+
+    static final java.util.Set<String> LOGS = new java.util.HashSet<String>(java.util.Arrays.asList("minecraft:log", "minecraft:log2"));
 
     /** a cache of the path finder's answers: agent and trunk -> { tick, 1 reached / 0 not } (10 s) */
     static final Map<Long, long[]> reachCache = new java.util.HashMap<Long, long[]>();
@@ -436,6 +444,11 @@ final class MindSkills {
         }
         Skill s = wrap(new TaskBoard.Seq(new Crew.Chop(base[0], base[1], base[2]), new Crew.Collect(base[0] + 0.5, base[1], base[2] + 0.5, 5)), r -> {
             if (r != Result.NO_PATH) return null;
+            Exploration.recheck(a, w, LOGS, 10, 48);   // there now: is it still standing? (a felled tree is no failure to remember, #1053)
+            boolean still = false;
+            for (int[] p : Exploration.knownBlocks(w, Blocks.log)) if (p[0] == trunk[0] && p[2] == trunk[2]) still = true;
+            for (int[] p : Exploration.knownBlocks(w, Blocks.log2)) if (p[0] == trunk[0] && p[2] == trunk[2]) still = true;
+            if (!still) return new String[] { "GONE", "the tree at " + base[0] + " " + base[1] + " " + base[2] + " is not there any more" };
             a.walks.failed(Crew.key(trunk[0], trunk[1], trunk[2]), Crew.key((int) Math.floor(a.posX), (int) Math.floor(a.posY), (int) Math.floor(a.posZ)), w.getTotalWorldTime());   // not this one again soon
             unreached(trunk, w.getTotalWorldTime());   // nor by the others
             return new String[] { "NO_PATH", "no spot beside the tree at " + base[0] + " " + base[1] + " " + base[2] + " to chop it from" };

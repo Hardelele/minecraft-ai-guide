@@ -244,6 +244,13 @@ final class Reflexes {
             if (t != null && now - t > FORGET) { last.remove(goal); retry.ok(goal); }
         }
 
+        /** the goal is no more (a felled tree): its failed walks forgotten at once */
+        void forget(long goal) {
+            last.remove(goal);
+            retry.ok(goal);
+            for (Map<Long, Long> m : from.values()) m.remove(goal);
+        }
+
         /** may a walk to it be tried now */
         boolean mayTry(long goal, long now) {
             forget(goal, now);
