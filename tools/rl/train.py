@@ -4,6 +4,7 @@ progress bonus (the simulator's, gamma*phi' - phi: it does not change which poli
 
     python tools/rl/train.py --minutes 30 --run sim1                       # the simulator, on the GPU
     python tools/rl/train.py --minutes 30 --run real1 --env real --init build/rl/runs/sim1/final.pt   # rl/env's servers
+    python tools/rl/train.py --minutes 30 --run eng1 --env engine --envs 8 --init ...   # the game's engine: 8 arenas in one JVM
 
 Everything goes to build/rl/runs/<run>/: metrics.csv (a row an epoch), episodes.csv, curriculum.log, ckpt.pt,
 final.pt, snapshots/policy-epoch-N.bin (the weights after epoch N, for "the agent after epoch 1 / 10").
@@ -53,7 +54,9 @@ def below_normal():
         k = ctypes.windll.kernel32
         k.GetCurrentProcess.restype = ctypes.c_void_p   # the pseudo-handle -1: an int return would cut it
         k.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
-        k.SetPriorityClass(k.GetCurrentProcess(), 0x4000)   # BELOW_NORMAL_PRIORITY_CLASS
+        import subprocess
+        lol = "League of Legends.exe" in subprocess.run(["tasklist", "/FI", "IMAGENAME eq League of Legends.exe", "/NH"], capture_output=True, text=True).stdout
+        k.SetPriorityClass(k.GetCurrentProcess(), 0x40 if lol else 0x4000)   # IDLE while League of Legends runs, else BELOW_NORMAL
     else:
         os.nice(5)
 
@@ -148,9 +151,9 @@ class Envs:
 
     def __init__(self, n: int, workers: int, kind: str, seed: int, shaping: float, url=None, curiosity: float = -1.0):
         addrs = []
-        if kind == "real":   # one env a server
+        if kind in ("real", "engine"):   # one env a server (engine: an arena of the engine, each in a worker of its own)
             addrs = [x.strip() for x in (url or "").split(",") if x.strip()]
-            n, workers = len(addrs), max(1, min(workers, len(addrs)))
+            n, workers = len(addrs), (len(addrs) if kind == "engine" else max(1, min(workers, len(addrs))))
         self.n, self.w = n, workers
         ctx = mp.get_context("spawn")
         self.conns, self.procs = [], []
@@ -242,8 +245,13 @@ def save(path, pol, opt, extra):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="sim1")
-    ap.add_argument("--env", default="sim", choices=["sim", "real"])
+    ap.add_argument("--env", default="sim", choices=["sim", "real", "engine"],
+                    help="sim: the Python simulator; real: rl/env's servers (--url); engine: the game's engine, --envs arenas in one JVM "
+                         "(tools/rl/engine_env.py, started here and stopped at the end unless --url names running ones)")
     ap.add_argument("--url", default=None, help="real: host:port[,host:port...] of rl/env's servers")
+    ap.add_argument("--engine-port", type=int, default=26200, help="engine: the first arena's port")
+    ap.add_argument("--engine-xmx", default="", help="engine: the JVM's heap (default 600M an arena + 1G)")
+    ap.add_argument("--engine-plain", action="store_true", help="engine: without -Daiguide.rl.engine (the game's path finder and chunk map)")
     ap.add_argument("--minutes", type=float, default=30)
     ap.add_argument("--max-epochs", type=int, default=100000)
     ap.add_argument("--envs", type=int, default=96)
@@ -303,6 +311,15 @@ def main():
     rng = np.random.default_rng(a.seed)
     cur = Curriculum(a.stages.split(","), a.threshold, a.window, start=a.start_stage, rng=rng, peek=a.peek, stage_max=a.stage_max)
     cur.uniform = a.uniform
+    engine = None
+    if a.env == "engine" and not a.url:   # the arenas: started here, stopped at the end
+        import engine_env
+        ports = [a.engine_port + i for i in range(a.envs)]
+        engine = engine_env.start_engine(ports, a.engine_xmx or "%dM" % (1024 + 600 * a.envs), not a.engine_plain, None)
+        if not engine_env.wait_ready(ports):
+            engine_env.stop(ports)
+            sys.exit("the engine's arenas did not start")
+        a.url = ",".join("127.0.0.1:%d" % p for p in ports)
     envs = Envs(a.envs, a.workers, a.env, a.seed, a.shaping, a.url, a.curiosity)
     retnorm = RetNorm(a.gamma_s ** 20 if a.gamma_s else a.gamma)
     import credit as CR
@@ -671,6 +688,9 @@ def main():
     (out / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
     print(json.dumps(summary, indent=1))
     envs.close()
+    if engine is not None:
+        import engine_env
+        engine_env.stop([a.engine_port + i for i in range(a.envs)])
     mcsv.close()
     ecsv.close()
     chains_f.close()

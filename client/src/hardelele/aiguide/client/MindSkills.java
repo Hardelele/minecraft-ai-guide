@@ -232,7 +232,7 @@ final class MindSkills {
         return l.isEmpty() ? null : l.get(0);
     }
 
-    /** a free cell beside the agent to put a block in: room, firm ground under it, nobody standing in it */
+    /** a free cell beside the agent to put a block in: room, firm ground under it, nobody standing in it, a face seen to put it against */
     static int[] beside(Crew c, Agent a, WorldServer w) {
         int[] f = Ground.feet(w, a.posX, a.posY, a.posZ);
         for (int r = 1; r <= 2; r++)
@@ -246,7 +246,8 @@ final class MindSkills {
                                 || a.boundingBox.intersectsWith(net.minecraft.util.AxisAlignedBB.getBoundingBox(x, y - 1, z, x + 1, y, z + 1));   // its own body (on stairs too)
                         for (Doer d : c.doers())
                             if (d.alive() && Math.floor(d.px()) == x && Math.floor(d.pz()) == z && Math.abs(Math.floor(d.py()) - y) <= 1) taken = true;
-                        if (!taken) return new int[] { x, y, z };
+                        // and a face to put it against that the eyes see from here (else place finds none: NOT_VISIBLE under the ground)
+                        if (!taken && a.body.seesFace(w, x, y, z)) return new int[] { x, y, z };
                     }
                 }
         return null;
@@ -382,7 +383,7 @@ final class MindSkills {
         long now = w.getTotalWorldTime(), key = Crew.key(p[0], p[1], p[2]) * 31 + a.skin();
         long[] c = reachCache.get(key);
         if (c != null && now - c[0] < 200 && now >= c[0]) return c[1] == 1;
-        net.minecraft.pathfinding.PathEntity path = a.getNavigator().getPathToXYZ(p[0] + 0.5, p[1], p[2] + 0.5);
+        net.minecraft.pathfinding.PathEntity path = RlEngine.pathTo(a, p[0] + 0.5, p[1], p[2] + 0.5);
         net.minecraft.pathfinding.PathPoint end = path == null ? null : path.getFinalPathPoint();
         boolean ok = end != null && Math.abs(end.xCoord - p[0]) + Math.abs(end.zCoord - p[2]) <= 2 && Math.abs(end.yCoord - p[1]) <= 3;
         if (reachCache.size() > 4096) reachCache.clear();

@@ -113,6 +113,38 @@ final class DefenseSkills {
         return put(c, a, w, "build", open, item, mat, avoid, p.cells.size());
     }
 
+    /**
+     * The wall's work would start: of the open cells of the planned walls the first few put would take (bottom first,
+     * nearest), one takes a block (soft, a face to go against) from a place this agent gets to and sees it from
+     * (PlaceFrom's own plan, pillar and all). No wall planned yet: true (build_wall plans it first). For the mask
+     * (wall_blocks): build_wall and repair_wall allowed only when they can put something.
+     */
+    static boolean canPut(Crew c, Agent a, WorldServer w, String mat) {
+        if (DefenseWorld.walls().isEmpty()) return true;
+        Object[] it = mat == null ? null : MindSkills.item(mat);
+        if (it == null) return false;
+        List<int[]> open = new ArrayList<int[]>();
+        Set<Long> avoid = new HashSet<Long>();
+        for (Defense.Perimeter p : DefenseWorld.walls()) {
+            for (int[] k : p.cells) {
+                avoid.add(Crew.key(k[0], k[1], k[2]));
+                if (DefenseWorld.open(w, k[0], k[1], k[2]) && !c.board.reserved(a, k[0], k[1], k[2])) open.add(k);
+            }
+            for (int[] k : p.gateCells) avoid.add(Crew.key(k[0], k[1], k[2]));
+        }
+        final Agent me = a;
+        Collections.sort(open, (p, q) -> p[1] != q[1] ? p[1] - q[1] : Double.compare(Crew.dist(me, p[0] + 0.5, p[1], p[2] + 0.5), Crew.dist(me, q[0] + 0.5, q[1], q[2] + 0.5)));
+        int looked = 0;
+        for (int[] k : open) {
+            if (!Crew.soft(w, k[0], k[1], k[2]) || Skills.supports(w, k[0], k[1], k[2], false).isEmpty()) continue;
+            if (looked++ >= 6) break;   // as many as put tries before it gives up
+            Skills.PlaceFrom pf = new Skills.PlaceFrom(k[0], k[1], k[2], (Item) it[0], -1);
+            pf.avoid(avoid);
+            if (pf.plan(a, w) != null) return true;
+        }
+        return false;
+    }
+
     static Skill repair(Crew c, Agent a, WorldServer w) {
         if (DefenseWorld.walls().isEmpty()) return MindSkills.failed("NO_PERIMETER", "no wall is planned: build_wall first");
         List<int[]> h = DefenseWorld.holes(w);

@@ -368,6 +368,7 @@ public final class RlTest {
         check(r.get("nb_below_solid") == 1 && r.get("nb_front_air") == 1 && r.get("nb_above_air") == 1 && r.get("walls_around") == 0 && r.get("enclosed") == 0, "flat ground: open round");
         check(r.get("nb_below_dig") == 1 && r.get("nb_front_dig") == 0 && r.get("pillar_ok") == 1 && r.get("nb_left_free") == 1 && r.get("nb_above_free") == 0,
                 "flat: dig down yes, nothing ahead to dig, a pillar yes; a block at the left (the floor holds it), over the head nothing to hold it");
+        check(r.get("nb_front_down_dig") == 1, "flat: the ground in front is seen over the open cell in front: it may be dug");
         check(on(r, "dig@below") && !on(r, "dig@front") && !on(r, "pillar:up"), "the masks read the same facts (no block in hand: no pillar)");
         r.put("slot_block", 5.0);
         check(on(r, "pillar:up") && on(r, "place:block@left") && !on(r, "place:block@above"), "with blocks: a pillar, a block at the left");
@@ -385,6 +386,7 @@ public final class RlTest {
         RlNear.facts(r, grid(s, lava, -1), 0, 61, 0, 0, 1, true);
         check(r.get("walls_around") == 4 && r.get("enclosed") == 0 && r.get("nb_above_air") == 1, "in its pit: walls round, open over the head");
         check(r.get("nb_front_dig") == 1 && r.get("nb_below_dig") == 1 && r.get("nb_above_free") == 1, "in the pit: the walls may be dug, down again, a block over its head (the walls hold it)");
+        check(r.get("nb_front_down_dig") == 0, "in the pit: the block in front and down is under the wall in front, not seen (the game: NOT_VISIBLE)");
         s.add(RlCause.key(0, 63, 0));   // a block over the head: shut in
         r.clear();
         RlNear.facts(r, grid(s, lava, -1), 0, 61, 0, 0, 1, true);

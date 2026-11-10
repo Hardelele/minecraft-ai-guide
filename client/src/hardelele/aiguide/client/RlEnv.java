@@ -75,6 +75,7 @@ public class RlEnv {
             throw new IllegalStateException("the learning environment's minds take no model");
         };
         FMLCommonHandler.instance().bus().register(e);
+        RlEngine.start();
         e.listen();
         Events.log("rl: the environment on port " + port + (e.fast ? ", fast ticks" : "") + "; " + RlSpec.ACTIONS.size() + " actions (" + RlSpec.hash() + "), "
                 + RlSpec.FEATURES.size() + " features (" + RlSpec.obsHash() + ")");
@@ -130,6 +131,7 @@ public class RlEnv {
                     Socket s = server.accept();
                     s.setTcpNoDelay(true);
                     final Conn c = new Conn(s);
+                    for (int i = 0; i < 40 && conn != null; i++) Thread.sleep(50);   // the last policy's going may be on its way
                     if (conn != null) {
                         JsonObject e = new JsonObject();
                         e.addProperty("error", "busy: another policy is connected");
@@ -166,6 +168,7 @@ public class RlEnv {
         } catch (Exception ex) {
             // the policy went
         }
+        if (conn == c) conn = null;   // free for the next at once (the server thread drops its episode at _gone)
         JsonObject gone = new JsonObject();
         gone.addProperty("op", "_gone");
         inbox.add(new Req(c, gone));
@@ -230,8 +233,11 @@ public class RlEnv {
                 state = done ? State.IDLE : State.WAIT;
             }
         }
+        long spinUntil = RlEngine.ON ? System.nanoTime() + RlEngine.SPIN_NS : 0;
         while (state != State.RUN && s.isServerRunning()) {
-            Req r = inbox.poll(state == State.IDLE ? 200 : 1000, TimeUnit.MILLISECONDS);
+            Req r = inbox.poll();   // the engine: the next request looked for a while before the thread sleeps (a woken thread is late)
+            if (r == null && System.nanoTime() < spinUntil) { Thread.yield(); continue; }
+            if (r == null) r = inbox.poll(state == State.IDLE ? 200 : 1000, TimeUnit.MILLISECONDS);
             if (r == null) {
                 if (state == State.IDLE) break;   // nothing to do: a tick goes by (the server stays alive, its console too)
                 continue;
@@ -248,6 +254,12 @@ public class RlEnv {
                 if (r.conn == replyTo) { replyTo = null; if (state != State.IDLE) { Events.log("rl: the policy went; episode " + episode + " dropped"); state = State.IDLE; } }
                 return;
             case "info": r.conn.send(info()); return;
+            case "audit": {   // the mask against the skill (ended): what the allowed actions came to
+                JsonObject o = auditJson();
+                if (r.msg.has("reset") && r.msg.get("reset").getAsBoolean()) audit.clear();
+                r.conn.send(o);
+                return;
+            }
             case "reset":
                 try {
                     reset(w, r.msg);
@@ -321,6 +333,7 @@ public class RlEnv {
         o.addProperty("fast", fast);
         o.addProperty("episodes", episode);
         o.addProperty("model_calls", modelCalls);
+        o.add("engine", RlEngine.info());
         if (arena != null) o.addProperty("arena", arena.x + " " + arena.y + " " + arena.z + " (" + arena.picked + ")");
         return o;
     }
@@ -402,6 +415,7 @@ public class RlEnv {
         crewSize = Math.max(1, Math.min(RlSpec.MAX_AGENTS, msg.has("crew") ? msg.get("crew").getAsInt() : 1));
         raw = msg.has("raw") && msg.get("raw").getAsBoolean();
         w.disableLevelSaving = true;   // the region files stay as generated: the arena is put back from memory
+        RlEngine.install(MinecraftServer.getServer());
         if (Waves.cycle.active()) Waves.stop("rl_reset");
         clearCrew();
         RlCauseHooks.start(w);
@@ -971,6 +985,10 @@ public class RlEnv {
         mm.repeated = m.mind.repeated();
         mm.lastTool = tool;
         String k = id(a);
+        if (mm.last >= 0) {   // the mask against the skill: what an allowed action came to
+            int[] mk = e.masks.get(a.skin());
+            if (mk != null && mm.last < mk.length && mk[mm.last] == 1) e.audit(mm.last, result, seconds);
+        }
         if (mm.last >= 0) {   // (3.1) the memory of failures; the retry's penalty and the change of approach's bonus in a 3.1 episode
             double[] fr = mm.fails.step(mm.last, "OK".equals(result), result);
             if (e.space == RlSpec.V2) { e.pay(k, "retry_fail", fr[0], null); e.pay(k, "switch_ok", fr[1], null); }
@@ -983,6 +1001,35 @@ public class RlEnv {
             int logs = count(before, "log") + count(before, "log2") - count(after, "log") - count(after, "log2");
             if (logs > 0) e.sustain.add(e.ticks / 20.0, RlScore.WOOD_USED, logs);
         }
+    }
+
+    /**
+     * The mask against the skill ("audit" of the protocol): for each action the mask allowed, what its skill came to,
+     * by the result's code ("OK", "NO_ITEMS", …), a failure within a game second apart ("NO_ITEMS@0": the skill did not
+     * even start). Kept over the server's life; "audit" with "reset": true clears it.
+     */
+    final Map<String, Map<String, Integer>> audit = new java.util.TreeMap<String, Map<String, Integer>>();
+
+    void audit(int action, String result, double seconds) {
+        String id = action < space.actions() ? RlSpec.ACTIONS.get(action).id : String.valueOf(action);
+        String code = result == null ? "?" : result.split("[:\\s]", 2)[0];
+        if (!"OK".equals(code) && seconds <= 1.0) code += "@0";
+        Map<String, Integer> m = audit.get(id);
+        if (m == null) audit.put(id, m = new java.util.TreeMap<String, Integer>());
+        m.put(code, (m.containsKey(code) ? m.get(code) : 0) + 1);
+    }
+
+    JsonObject auditJson() {
+        JsonObject o = new JsonObject();
+        o.addProperty("ok", true);
+        JsonObject by = new JsonObject();
+        for (Map.Entry<String, Map<String, Integer>> e : audit.entrySet()) {
+            JsonObject x = new JsonObject();
+            for (Map.Entry<String, Integer> c : e.getValue().entrySet()) x.addProperty(c.getKey(), c.getValue());
+            by.add(e.getKey(), x);
+        }
+        o.add("audit", by);
+        return o;
     }
 
     /** a step OK that changed something one can check: the bag (contract 2: no pay for an OK of words alone) */
@@ -1433,7 +1480,8 @@ public class RlEnv {
         put(r, "food_items", food);
         Map<String, Integer> ids = MindSkills.bag(a);
         String mat = Defense.material("any", ids);
-        put(r, "wall_blocks", mat == null ? 0 : Defense.count(ids, mat));
+        // (mask only) blocks for the wall, if its work would start: some open cell it can put one in (the take of 9 November: 238 build_wall and 316 repair_wall BLOCKED in a row)
+        put(r, "wall_blocks", mat == null ? 0 : !DefenseSkills.canPut(c, a, w, mat) ? 0 : Defense.count(ids, mat));
         // what the crew has seen near
         List<int[]> trees = MindSkills.trunks(c, a, w, 40, true);
         put(r, "trees_seen", trees.size());
@@ -1642,10 +1690,18 @@ public class RlEnv {
     static int lightSpots(Crew c, Agent a, WorldServer w) {
         int[] o = DefenseWorld.centre(c, w);
         if (o == null) return 0;
-        int n = 0;
+        List<int[]> spots = new ArrayList<int[]>();
         for (int[] s : Defense.lights(DefenseWorld.ring, o[0], o[2], 12, 5, DefenseWorld.floor(w, o[1])))
-            if (Crew.soft(w, s[0], s[1], s[2]) && Crew.solid(w, s[0], s[1] - 1, s[2]) && w.getSavedLightValue(EnumSkyBlock.Block, s[0], s[1], s[2]) < 8 && !c.board.reserved(a, s[0], s[1], s[2])) n++;
-        return n;
+            if (Crew.soft(w, s[0], s[1], s[2]) && Crew.solid(w, s[0], s[1] - 1, s[2]) && w.getSavedLightValue(EnumSkyBlock.Block, s[0], s[1], s[2]) < 8 && !c.board.reserved(a, s[0], s[1], s[2])) spots.add(s);
+        // (mask only) and light_area's work would start: one of the nearest it tries has a place it gets to and sees it from
+        final Agent me = a;
+        java.util.Collections.sort(spots, (p, q) -> Double.compare(Crew.dist(me, p[0] + 0.5, p[1], p[2] + 0.5), Crew.dist(me, q[0] + 0.5, q[1], q[2] + 0.5)));
+        Item torch = Item.getItemFromBlock(Blocks.torch);
+        for (int i = 0; i < spots.size() && i < 6; i++) {
+            int[] s = spots.get(i);
+            if (new Skills.PlaceFrom(s[0], s[1], s[2], torch, -1).plan(a, w) != null) return spots.size();
+        }
+        return 0;
     }
 
     /** equip would change something: a better weapon than the one held, or armour better than what is worn */

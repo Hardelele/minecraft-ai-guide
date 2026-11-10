@@ -85,6 +85,7 @@ final class RlNear {
                 int[][] side = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
                 for (int[] s : side) if (g.at(x + s[0], y - 1, z + s[1]) == LAVA) ok = false;   // lava beside the hole flows in
             }
+            if (d.equals("front_down") && solid(g.at(x + fx, y, z + fz))) ok = false;   // hidden under the block in front: the eyes do not see it (the game: NOT_VISIBLE)
             r.put("nb_" + d + "_dig", any && ok ? 1.0 : 0.0);
         }
         for (String d : PUT) {

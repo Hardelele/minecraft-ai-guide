@@ -243,8 +243,22 @@ class Body {
      * the item's own use happens on the point the aim meets. NOT_VISIBLE / OUT_OF_REACH: no such face from here (the
      * task goes and stands where one is, Sight finds where); BLOCKED: nothing to put it against, or the use failed.
      */
+    /** a face to put a block in x y z against, seen from the eyes within reach (place's own test, from where it stands) */
+    boolean seesFace(WorldServer w, int x, int y, int z) {
+        Sight.Space s = space(w);
+        for (int[] c : Skills.supports(w, x, y, z, false))
+            if (Sight.seeFace(s, eyeX(), eyeY(), eyeZ(), c[0], c[1], c[2], c[3], Crew.REACH) != null) return true;
+        return false;
+    }
+
+    /** a cell a block can go into: soft (air, plants) or a flowing liquid (replaced as a player's block replaces it) */
+    static boolean takes(WorldServer w, int x, int y, int z) {
+        if (Crew.soft(w, x, y, z)) return true;
+        return w.getBlock(x, y, z).getMaterial().isLiquid() && w.getBlockMetadata(x, y, z) != 0;
+    }
+
     Result place(WorldServer w, int x, int y, int z, Item item, int meta) {
-        if (!Crew.soft(w, x, y, z)) { placeWait = 0; return Result.GONE; }
+        if (!takes(w, x, y, z)) { placeWait = 0; return Result.GONE; }
         ItemStack in = stack(item, meta);
         if (in == null) { placeWait = 0; return Result.NO_ITEMS; }
         boolean door = item instanceof net.minecraft.item.ItemDoor;
@@ -314,7 +328,7 @@ class Body {
     // ---- the legs ---------------------------------------------------------------------------------------
 
     /** walk there by the game's path finder */
-    boolean walkTo(double x, double y, double z, double speed) { return a.getNavigator().tryMoveToXYZ(x, y, z, speed); }
+    boolean walkTo(double x, double y, double z, double speed) { return RlEngine.moveTo(a, x, y, z, speed); }
 
     boolean walkTo(Entity e, double speed) { return a.getNavigator().tryMoveToEntityLiving(e, speed); }
 

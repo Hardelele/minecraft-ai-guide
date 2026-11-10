@@ -138,6 +138,8 @@ class Near:
             for sx, sz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 if self.at((sx, y - 1, sz)) == LAVA:
                     ok = False
+        if d == "front_down" and solid(self.at((0, self.y, 1))):   # hidden under the block in front (RlNear: not seen, NOT_VISIBLE)
+            ok = False
         return anyc and ok
 
     # ---- the primitives -------------------------------------------------------------------------------

@@ -75,11 +75,7 @@ final class PrimSkills {
     }
 
     /** free to put into: air, a plant, a flowing liquid (not a source: a bucket's water would only be the same) */
-    static boolean free(WorldServer w, int[] p) {
-        Block b = w.getBlock(p[0], p[1], p[2]);
-        if (b.getMaterial().isLiquid()) return w.getBlockMetadata(p[0], p[1], p[2]) != 0;
-        return Crew.soft(w, p[0], p[1], p[2]);
-    }
+    static boolean free(WorldServer w, int[] p) { return Body.takes(w, p[0], p[1], p[2]); }
 
     static boolean water(WorldServer w, int[] p) { return w.getBlock(p[0], p[1], p[2]).getMaterial() == Material.water; }
     static boolean lava(WorldServer w, int[] p) { return w.getBlock(p[0], p[1], p[2]).getMaterial() == Material.lava; }
@@ -124,12 +120,22 @@ final class PrimSkills {
         long time = w.getWorldTime() % 24000;
         RlNear.facts(r, grid(a, w), MathHelper.floor_double(a.posX), MathHelper.floor_double(a.boundingBox.minY + 0.1), MathHelper.floor_double(a.posZ), fc[0], fc[1],
                 time >= 13000 && time < 23000 || wv.phase == WaveCycle.Phase.WAVE);
+        // the grid takes what is not solid for air (a torch, a rail): a block does not go there (Body.place: GONE); and the
+        // face to put it against must be seen from here (else NOT_VISIBLE at once: the cell is round the agent, no walk helps)
+        for (String d : new String[] { "left", "right", "back", "above" }) {
+            int[] p = target(c, a, w, d);
+            if (RlSpec.g(r, "nb_" + d + "_free") > 0.5 && (!free(w, p) || !a.body.seesFace(w, p[0], p[1], p[2]))) r.put("nb_" + d + "_free", 0.0);
+        }
         for (String t : RlSpec.TARGETS) {
             int[] p = target(c, a, w, t);
             r.put("tgt_" + t, p == null ? 0.0 : 1.0);
             r.put("tgt_" + t + "_dist", p == null ? 16 : Crew.dist(a, p[0] + 0.5, p[1], p[2] + 0.5));
             if (p == null) continue;
-            r.put("tgt_" + t + "_free", free(w, p) ? 1.0 : 0.0);
+            // free: a block may go in (soft, a flowing liquid) and has a firm face to go against (Body.place: else BLOCKED at once);
+            // its own feet's cell has the ground under it (a block goes there by a jump: place's below is pillar's)
+            boolean ok = free(w, p) && (t.equals("below") ? Crew.soft(w, p[0], p[1] + 2, p[2])   // room over the head for the jump (pillar: else BLOCKED at once)
+                    : !Skills.supports(w, p[0], p[1], p[2], false).isEmpty());
+            r.put("tgt_" + t + "_free", ok ? 1.0 : 0.0);
             r.put("tgt_" + t + "_water", water(w, p) ? 1.0 : 0.0);
             r.put("tgt_" + t + "_lava", lava(w, p) ? 1.0 : 0.0);
             r.put("tgt_" + t + "_water_src", water(w, p) && source(w, p) ? 1.0 : 0.0);
@@ -157,6 +163,18 @@ final class PrimSkills {
 
     // ---- place ------------------------------------------------------------------------------------------------------
 
+    /** the bag's stack of the building material slot_block counts (Defense.material "any"), any kind of it; null: none */
+    static ItemStack blockStack(Agent a) {
+        String mat = Defense.material("any", MindSkills.bag(a));
+        if (mat == null) return null;
+        for (ItemStack s : a.bag) {
+            if (s == null || s.getItem() == null || s.stackSize <= 0) continue;
+            String id = MindSkills.id(s);
+            if (id.equals(mat) || id.startsWith(mat + ":")) return s;
+        }
+        return null;
+    }
+
     static MindSkills.Skill place(Crew c, Agent a, WorldServer w, String slot, String t) {
         int[] p = target(c, a, w, t);
         if (p == null) return MindSkills.failed("NOT_SEEN", "no " + t + " target now");
@@ -166,15 +184,15 @@ final class PrimSkills {
             if (Skills.count(a.bag, full, -1) == 0) return MindSkills.failed("NO_ITEMS", "no " + MindSkills.id(full, 0) + " in the bag");
             return new Pour(p, full);
         }
+        if (slot.equals("block") && t.equals("below")) return pillar(c, a, w);   // into its own feet's cell: as a player does it, a jump and the block under it
         Item item;
         int meta = 0;
         if (slot.equals("torch")) item = Item.getItemFromBlock(Blocks.torch);
-        else {
-            String mat = Defense.material("any", MindSkills.bag(a));
-            Object[] it = mat == null ? null : MindSkills.item(mat);
-            if (it == null) return MindSkills.failed("NO_ITEMS", "no block in the bag to put");
-            item = (Item) it[0];
-            meta = Math.max(0, (Integer) it[1]);
+        else {   // a stack of the bag of the material slot_block counts (its own kind: birch logs are log:2, not the oak's log:0)
+            ItemStack st = blockStack(a);
+            if (st == null) return MindSkills.failed("NO_ITEMS", "no block in the bag to put");
+            item = st.getItem();
+            meta = st.getMetadata();
         }
         if (Skills.count(a.bag, item, -1) == 0) return MindSkills.failed("NO_ITEMS", "no " + MindSkills.id(item, meta) + " in the bag");
         final int[] at = p;
