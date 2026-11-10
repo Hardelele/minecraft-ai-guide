@@ -60,7 +60,10 @@ final class DefenseSkills {
             case "take_post": return takePost(c, a, w, call.arg("where"));
             case "hold_line": return hold(c, a, w, MindSkills.clamp(call.num("radius", Defense.LEASH), 1, 8), MindSkills.clamp(call.num("seconds", 120), 5, 600));
             case "guard_ally": return guardAlly(c, a, w, call.arg("ally"), MindSkills.clamp(call.num("seconds", 120), 5, 600));
-            case "retreat": return MindSkills.upFirst(c, a, w, retreat(c, a, w, call.arg("where")));   // home is on the surface
+            case "retreat": {   // home is on the surface
+                final String where = call.arg("where");
+                return MindSkills.upFirst(c, a, w, () -> retreat(c, a, w, where));
+            }
             case "eat": case "heal": return eat(a, MindSkills.clamp(call.num("count", 64), 1, 64));
             default: return MindSkills.failed("UNKNOWN_TOOL", call.tool);
         }

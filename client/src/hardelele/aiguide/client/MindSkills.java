@@ -70,28 +70,38 @@ final class MindSkills {
     }
 
     /**
-     * A skill whose goal is on the surface (the base, home) taken from under the ground: up first (ascend's way: the
-     * stairs, else steps dug up over itself), then the skill. On the surface already: the skill as it is.
+     * A skill whose goal is on the surface (the base, home) from under the ground: the skill as it is first; if its walk
+     * finds no way (NO_PATH) and the agent is under the ground, up (ascend's way: the stairs, else steps dug up over
+     * itself), then the skill again, made anew from up there. On the surface, or no mine: the skill as it is.
      */
-    static Skill upFirst(Crew c, Agent a, WorldServer w, final Skill then) {
-        if (c == null || then.result != null || RlWorld.now.mouth == null || RlWorld.now.stairs.isEmpty() || !MineSkills.underground(c, a)) return then;
-        final Skill up = MineSkills.ascend(c, a, w);
-        if (up.result != null) return then;
+    static Skill upFirst(final Crew c, Agent a, WorldServer w, final java.util.function.Supplier<Skill> make) {
+        final Skill first = make.get();
+        if (c == null || first.result != null || RlWorld.now.mouth == null || RlWorld.now.stairs.isEmpty() || !MineSkills.underground(c, a)) return first;
         Skill s = new Skill() {
-            boolean upDone;
+            Skill cur = first, up;
+            boolean again;
             Result run(Agent ag, WorldServer ww) {
-                if (!upDone) {
+                if (up != null) {
                     Result r = up.step(ag, ww);
                     if (r == Result.RUNNING) return r;
-                    if (r.failed()) { reason = up.reason; detail = "under the ground, no way up: " + up.detail; return r; }
-                    upDone = true;
+                    if (r.failed()) { reason = up.reason; detail = "no way on foot, and no way up from under the ground: " + up.detail; return r; }
+                    up = null;
+                    cur = make.get();
+                    again = true;
                 }
-                Result r = then.step(ag, ww);
-                if (r.done()) { reason = then.reason; detail = "up from the mine, then: " + then.detail; }
+                Result r = cur.step(ag, ww);
+                if (r == Result.RUNNING) return r;
+                if (!again && r == Result.NO_PATH && MineSkills.underground(c, ag)) {   // no way from down here: up first, then again
+                    up = MineSkills.ascend(c, ag, ww);
+                    if (up.result == null) { lease += up.lease; return Result.RUNNING; }
+                    up = null;
+                }
+                reason = cur.reason;
+                detail = (again ? "up from the mine, then: " : "") + cur.detail;
                 return r;
             }
         };
-        s.lease = up.lease + then.lease;
+        s.lease = first.lease;
         return s;
     }
 
@@ -126,8 +136,9 @@ final class MindSkills {
             case "look_around": return new Look();
             case "go_to": {
                 String tg = call.arg("target") == null ? "" : call.arg("target").trim().toLowerCase(Locale.ROOT);
-                Skill g = goTo(c, a, w, call.arg("target"));
-                return tg.startsWith("base") || tg.startsWith("home") ? upFirst(c, a, w, g) : g;   // the base is on the surface
+                if (!tg.startsWith("base") && !tg.startsWith("home")) return goTo(c, a, w, call.arg("target"));
+                final String target = call.arg("target");
+                return upFirst(c, a, w, () -> goTo(c, a, w, target));   // the base is on the surface
             }
             case "chop_tree": return chop(c, a, w, call.arg("at"));
             case "mine": return mine(c, a, w, call.arg("block"), clamp(n, 1, 32));
