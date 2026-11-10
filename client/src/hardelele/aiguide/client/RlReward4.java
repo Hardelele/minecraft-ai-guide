@@ -25,7 +25,8 @@ final class RlReward4 {
             + "\"death\":{\"accident_x\":1.5,\"accident_causes\":[\"accident\",\"starve\",\"fall\",\"lava\",\"fire\",\"drown\"],\"base_r\":10.0,\"far_per_block\":0.01,\"far_cap\":1.0,\"finds_soften\":0.5,\"soften_cap\":0.5},"
             + "\"afk\":{\"rate\":0.01,\"grace_s\":30.0,\"ramp_s\":120.0,\"active_s\":20.0},\"sight\":{\"near_r\":6.0},"
             + "\"threat\":{\"agent_hits\":3.0,\"kill\":1.0,\"deter\":0.5,\"delay_tau_s\":5.0,\"dodge_s\":3.0,\"w\":{\"kill\":2.0,\"blocked\":1.0,\"stuck\":1.0,\"fell\":1.0,\"detour\":1.0,\"cover\":1.0,\"moved\":1.0}},"
-            + "\"survive\":{\"hp_low\":6.0,\"hp_safe\":14.0,\"share\":0.1},\"scout\":{\"share\":0.3},\"wasted_day\":{\"share\":0.25},\"scale_move\":0.5,"
+            + "\"survive\":{\"hp_low\":6.0,\"hp_safe\":14.0,\"share\":0.1},\"scout\":{\"share\":0.3},\"wasted_day\":{\"share\":0.25},"
+            + "\"forfeit\":{\"goal\":1.0,\"scales\":1.0,\"min_s\":60.0,\"cap\":20.0},\"scale_move\":0.5,"
             + "\"calm_phases\":[\"day\",\"prep\",\"break\"],\"no_curiosity_phases\":[\"wave\",\"night\"]}";
 
     static JsonObject defaults() { return new JsonParser().parse(DEFAULTS).getAsJsonObject(); }
@@ -85,6 +86,7 @@ final class RlReward4 {
     final Map<String, Map<String, Double>> open = new LinkedHashMap<String, Map<String, Double>>();
     final Map<String, Double> episode = new LinkedHashMap<String, Double>();
     double total, t;
+    double gain;   // the scales' positive points paid so far (the crew): the forfeit's rate
     String phase = "day";
     List<JsonObject> moves = new ArrayList<JsonObject>();
 
@@ -366,6 +368,14 @@ final class RlReward4 {
             if (dg != null) dg.add(d);
         } else if (type.equals("noop")) {
             pay(str(e, "agent"), "noop", o.get("noop"));
+            JsonObject f = p.has("forfeit") && p.get("forfeit").isJsonObject() ? p.getAsJsonObject("forfeit") : null;
+            if (f != null) {   // the rest of the episode given up: the open goal and the scales still to come, to the one who gave up
+                boolean g = e.has("goal") && !e.get("goal").isJsonNull() && e.get("goal").getAsBoolean();
+                double goal = g ? o.get("goal") * f.get("goal").getAsDouble() * ag.size() : 0;
+                double left = Math.max(0, dbl(e, "left_s", 0));
+                double est = Math.min(f.get("cap").getAsDouble(), f.get("scales").getAsDouble() * gain / Math.max(t, f.get("min_s").getAsDouble()) * left);
+                pay(str(e, "agent"), "forfeit", -(goal + est));
+            }
         } else if (type.equals("fall")) {
             for (Long mob : new ArrayList<Long>(threats.keySet())) {
                 Threat th = threats.remove(mob);
@@ -508,6 +518,7 @@ final class RlReward4 {
         Find find = e.has("res") && !e.get("res").isJsonNull() ? finds.get(str(e, "res")) : null;
         for (String k : payees) {
             pay(k, key, pts);
+            if (pts > 0) gain += pts;
             if (raw <= 0) continue;
             if (!crew || causes.isEmpty()) {
                 progress(k);

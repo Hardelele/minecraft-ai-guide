@@ -204,7 +204,7 @@ def _event4(ei, ef, lst) -> dict:
     if typ == "decision":
         return {"type": "decision", "agent": i1, "id": i2, "kind": T.ACTIONS[i3]}
     if typ == "noop":
-        return {"type": "noop", "agent": i1}
+        return {"type": "noop", "agent": i1, "left_s": f1, "goal": bool(i2)}
     if typ == "goal":
         return {"type": "goal"}
     if typ == "damage":

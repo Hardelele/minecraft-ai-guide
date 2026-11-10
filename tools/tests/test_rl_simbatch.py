@@ -100,7 +100,11 @@ def compare(o, b, step, off, where):
     return ""
 
 
-def run_case(scen, n_ep, seed0, crews, force=None, noise=True, noop_p=0.002, max_steps=4000):
+PLACE_AT = tuple(k for k, n in enumerate(spec.ACTIONS) if n.startswith(("place:water@", "place:lava@", "place:torch@", "place:block@hole",
+                                                                       "place:block@moat", "place:block@mob")))
+
+
+def run_case(scen, n_ep, seed0, crews, force=None, noise=True, noop_p=0.002, max_steps=4000, prefer=()):
     """n_ep episodes of the reference and an arena side by side; -> (episodes, decisions, first difference or '')"""
     env = SimEnv(0, force=force, noise=noise)
     sim = BatchSim(1, noise=noise)
@@ -126,7 +130,8 @@ def run_case(scen, n_ep, seed0, crews, force=None, noise=True, noop_p=0.002, max
             row = np.full((1, T.MA), -1)
             for i, m in zip(o["agents"], o["mask"]):
                 ok = [k for k, v in enumerate(m) if v and k != 0]
-                a = 0 if (pick.random() < noop_p or not ok) else pick.choice(ok)
+                pr = [k for k in ok if k in prefer]
+                a = 0 if (pick.random() < noop_p or not ok) else (pick.choice(pr) if pr and pick.random() < 0.5 else pick.choice(ok))
                 acts[i] = a
                 row[0, i] = a
                 dec += 1
@@ -218,7 +223,7 @@ def norm_frame(fr, off):
     return (round(fr["t"], 9), round(fr["dt"], 9), fr["phase"], evs)
 
 
-def run_case4(scen, n_ep, seed0, crews, noop_p=0.004, max_steps=4000):
+def run_case4(scen, n_ep, seed0, crews, noop_p=0.004, max_steps=4000, prefer=()):
     """the reward v4: SimEnv(reward="v4") against BatchSim(reward="v4"): the same frames of events (reward_core's input),
     the same points (the kernel's core against reward_core), moves, observations"""
     import reward_core as RCORE
@@ -259,7 +264,8 @@ def run_case4(scen, n_ep, seed0, crews, noop_p=0.004, max_steps=4000):
                 row = np.full((1, T.MA), -1)
                 for i, m in zip(o["agents"], o["mask"]):
                     ok = [k for k, v in enumerate(m) if v and k != 0]
-                    a = 0 if (pick.random() < noop_p or not ok) else pick.choice(ok)
+                    pr = [k for k in ok if k in prefer]
+                    a = 0 if (pick.random() < noop_p or not ok) else (pick.choice(pr) if pr and pick.random() < 0.5 else pick.choice(ok))
                     acts[i] = a
                     row[0, i] = a
                     dec += 1
@@ -298,6 +304,14 @@ def main():
         tot += dec
         check(not msg, f"{s}{'+' + force if force else ''}{'' if noise else ' (noise off)'}: {ep} episodes, {dec} decisions alike" +
               ("\n     " + msg if msg else ""))
+    # place_at (the reference's place:<slot>@<target>, once unreachable): half of the choices among them when allowed
+    for k, s in enumerate(["delay:lava", "fortify", "waves:normal", "delay:bucket"]):
+        ep, dec, msg = run_case(s, n, 700 + k, (2, 3) if s.startswith("waves") else (1, 2), prefer=PLACE_AT)
+        tot += dec
+        check(not msg, f"{s} (place_at preferred): {ep} episodes, {dec} decisions alike" + (NL + msg if msg else ""))
+    for k, s in enumerate(["waves:normal", "delay:lava"]):
+        ep, dec, msg = run_case4(s, max(2, n // 2), 950 + k, (2, 3), prefer=PLACE_AT)
+        check(not msg, f"v4 {s} (place_at preferred): {ep} episodes, {dec} decisions alike" + (NL + msg if msg else ""))
     for k, s in enumerate(["wood", "iron", "farm", "achievements", "waves:easy", "waves:normal", "waves:long", "night:shelter", "fortify", "diamond"]):
         ep, dec, msg = run_case4(s, max(2, n // 2), 900 + k, (2, 3, 1, 4) if s.startswith("waves") else (1, 2, 3))
         tot += dec

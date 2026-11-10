@@ -378,6 +378,9 @@ public class RlEnv {
     final Set<Integer> mobs4 = new HashSet<Integer>(), killed4 = new HashSet<Integer>(), in4 = new HashSet<Integer>();
     final Set<String> aimed4 = new HashSet<String>();
     boolean goal4;
+    /** the goals goal() can reach (1): the rest (waves' "none") caps below it, no goal to pay */
+    static final java.util.Set<String> PAYS_GOAL = new java.util.HashSet<String>(java.util.Arrays.asList(
+        "items", "food", "fortify", "armor", "bow", "mine_trip", "enchant", "achievements", "farm", "pasture"));
 
     static JsonObject params4() {
         if (REWARD4.isEmpty() || REWARD4.equals("true")) return RlReward4.defaults();
@@ -955,7 +958,12 @@ public class RlEnv {
 
     void pay4(String agent, String key, double n, List<RlCause.Link> chain) {
         String comp = RlSpec.component(key);
-        if (key.equals("noop")) ev4("noop").addProperty("agent", agent);
+        if (key.equals("noop")) {   // what the run gives up (reward v4's forfeit): the seconds left, the goal still to pay
+            JsonObject o = ev4("noop");
+            o.addProperty("agent", agent);
+            o.addProperty("left_s", sc == null ? 0.0 : Math.max(0.0, sc.seconds - ticks / 20.0));
+            o.addProperty("goal", !goal4 && sc != null && PAYS_GOAL.contains(sc.goal));
+        }
         else if (key.equals("goal")) { if (!goal4) { goal4 = true; ev4("goal"); } }
         else if (key.equals("human")) { JsonObject o = ev4("human"); o.addProperty("agent", agent); o.addProperty("rating", n); }
         else if (key.equals("curiosity.novel")) ev4("novel").addProperty("agent", agent);

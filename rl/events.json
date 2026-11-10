@@ -7,7 +7,7 @@
   "events": {
     "agent":         {"agent": "agent", "x": "float", "y": "float", "z": "float", "hp": "float", "alive": "bool", "base_dist": "float"},
     "decision":      {"agent": "agent", "id": "int", "kind": "str"},
-    "noop":          {"agent": "agent"},
+    "noop":          {"agent": "agent", "left_s?": "float (the seconds to the episode's end)", "goal?": "bool (the scenario's goal still to pay: not reached, and the scenario pays one)"},
     "goal":          {},
     "human":         {"agent": "agent", "rating": "float"},
     "damage":        {"agent": "agent", "hp": "float", "mob?": "int", "cause?": "str"},
@@ -24,7 +24,7 @@
     "mob_gone":      {"mob": "int", "why": "despawn|wave_end|other"},
     "novel":         {"agent": "agent", "decision?": "int"}
   },
-  "components": ["noop", "goal", "human", "crew.damage", "crew.death", "base.breach", "base.mob_seconds", "surrender", "afk",
+  "components": ["noop", "goal", "human", "crew.damage", "crew.death", "base.breach", "base.mob_seconds", "surrender", "forfeit", "afk",
                  "credit.kill", "credit.block", "credit.cover", "credit.dodge", "credit.survive", "credit.scout", "credit.wasted_day", "credit.scale",
                  "<a scale's part: safety.wall, equipment.armor, ...>", "curiosity.novel"],
   "move_event": {"type": "reward", "agent": "agent (whose step got the points)", "key": "component", "points": "float", "move": "float (the share train.py moves to the cause: 1 for credit)", "chain": "[{decision_id, agent, tick, kind, via: 'credit'}]"}

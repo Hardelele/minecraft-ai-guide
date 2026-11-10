@@ -158,6 +158,7 @@ G_TRIP, G_FARM, G_PASTURE, G_ENCHANT, G_ACH = G["mine_trip"], G["farm"], G["past
 
 F = T.F
 ACT_FAM, ACT_P, ACT_Q, ACT_KIND = T.ACT_FAM, T.ACT_P, T.ACT_Q, T.ACT_KIND
+PS_BLOCK, PS_TORCH, PS_WATER, PS_LAVA = (T.PLACE_SLOTS.index(k) for k in ("block", "torch", "water", "lava"))
 ACT_FAIL, ACT_STICKY, ACT_DUR_OK, ACT_DUR_FAIL = T.ACT_FAIL, T.ACT_STICKY, T.ACT_DUR_OK, T.ACT_DUR_FAIL
 ACT_STICKY_REASON, ACT_FRESH_REASON = T.ACT_STICKY_REASON, T.ACT_FRESH_REASON
 ACT_LOCAL, ACT_MOVE, ACT_PLACE, ACT_NO_RESULT = T.ACT_LOCAL, T.ACT_MOVE, T.ACT_PLACE, T.ACT_NO_RESULT
@@ -223,7 +224,7 @@ _AI = ("SCEN NAG TARGET FORCE TREES TREES_HIDDEN STONE_SEEN COAL COAL_HIDDEN IRO
        "PEN_ORDER_N SUCCESS V4 GOAL_SENT MOB_NEXT N_FOUND B_SEEN ACTOR HURT_MOB N_OUT N_IN N_FEV N_FEVL NIGHT_ORD "
        "C4_PHASE C4_PREV_CALM C4_DAY_N C4_THR_N C4_POOL_N C4_MOVES_N C4_EP_FIRST C4_ERR C4_FORGOT C4_DAYFULL REC_NF REC_NE REC_NL").split()
 _AF = ("T MINE_D TABLE_D FURNACE_D PHASE_UNTIL ENEMIES INSIDE MOB_S WAVE_MOB_S SUS_FR SUS_FE SUS_WR SUS_WU SUS_PAID0 SUS_PAID1 CT_WALL CT_MOAT "
-       "CT_LIGHT CT_GATE CT_ETABLE CT_SOURCE CT_STOCK OB_SHELTER PROGRESS_OUT C4_TOTAL C4_T C4_CALM_END").split()
+       "CT_LIGHT CT_GATE CT_ETABLE CT_SOURCE CT_STOCK OB_SHELTER PROGRESS_OUT C4_TOTAL C4_T C4_CALM_END C4_GAIN").split()
 _GI = ("XP HELD DEPTH TUN0 TUN1 TUN2 POST ALIVE PEND PEND_ACT PEND_OK PEND_REASON HOLDING DID KIND LAST OUTCOME REPEATED TRIP_ORES TRIP_OUT TRIPS "
        "ENCHANTED DITCH LAVA_FRONT PIT_FAILS NEAR_VALID NEAR_GROUND NEAR_PICK NEAR_Y NEAR_PLACED NEAR_N MOB_ON MOB_X MOB_Y MOB_Z "
        "F_LAST_FAILED F_GROUP F_WIN_N F_WIN_HEAD HAS_RESPAWN BOX_N NIGHT_N NIGHT_ORD DANGER_N C4_CUR REC_N OPEN_N").split()
@@ -258,10 +259,12 @@ C4_SURVIVE, C4_SCOUT, C4_WASTED, C4_SCALE, C4_NOVEL = (C4X[k] for k in ("credit.
                                                                     "curiosity.novel"))
 R4_KILL, R4_BLOCK, R4_COVER = 0, 1, 2          # the contributions' reasons: credit.kill, credit.block, credit.cover
 C4_CREDIT0 = C4X["credit.kill"]
+C4_FORFEIT = C4X["forfeit"]
 assert (C4X["credit.block"], C4X["credit.cover"]) == (C4_CREDIT0 + 1, C4_CREDIT0 + 2)
 KEY_SCALE4, SW4_C, SW4_HAS, FAC4 = T.KEY_SCALE4, T.SW4_C, T.SW4_HAS, T.FAC4
 _p = T.P4F
 O_NOOP, O_GOAL, O_DMG, O_DEATH, O_BREACH, O_MOB_S = _p["noop"], _p["goal"], _p["dmg"], _p["death"], _p["breach"], _p["mob_s"]
+FF_ON, FF_GOAL, FF_SCALES, FF_MIN_S, FF_CAP = _p["ff_on"], _p["ff_goal"], _p["ff_scales"], _p["ff_min_s"], _p["ff_cap"]
 ACCIDENT_X, BASE_R, FAR_PER, FAR_CAP, FINDS_SOFTEN, SOFTEN_CAP = (_p[k] for k in ("accident_x", "base_r", "far_per", "far_cap", "finds_soften",
                                                                                   "soften_cap"))
 AFK_RATE, AFK_GRACE, AFK_RAMP, AFK_ACTIVE, NEAR_R = _p["afk_rate"], _p["afk_grace"], _p["afk_ramp"], _p["afk_active"], _p["near_r"]
@@ -2221,6 +2224,52 @@ def effect(st, e, i, act):
             give0(st, e, i, K_E_SHELF, 1.0)
         else:
             st.ai[e, A_CHEST] = 1
+    elif fam == FAM_PLACE_AT:   # sim_env.place_at: a building block, a torch, a bucket of water or lava into a target
+        slot, tg = ACT_P[act], ACT_Q[act]
+        if slot == PS_BLOCK:
+            mat = best_block(st, e, i)
+            if st.bag[e, i, mat] < 1:
+                return RS_NO_ITEMS
+            add(st, e, i, mat, -1)
+            if tg == TG_HOLE and st.ai[e, A_RING] and st.ai[e, A_WALL] < RING:
+                st.ai[e, A_WALL] += 1
+                bad = st.ai[e, A_BAD]
+                st.ai[e, A_BAD] = max(0, bad - (1 if st.ai[e, A_WALL] > RING - bad else 0))
+                builder(st, e, i)
+            elif tg == TG_MOAT and st.ai[e, A_MOAT] > 0:
+                st.ai[e, A_MOAT] -= 1
+            return R_OK
+        if slot == PS_TORCH:
+            if st.bag[e, i, I_TORCH] < 1:
+                return RS_NO_ITEMS
+            add(st, e, i, I_TORCH, -1)
+            if (tg == TG_FRONT or tg == TG_BELOW or tg == TG_FRONT_DOWN or tg == TG_HOLE) and st.gi[e, i, GI_DEPTH] == 0                     and st.gf[e, i, GF_DIST] < 12:
+                st.ai[e, A_TORCHES] = min(12, st.ai[e, A_TORCHES] + 1)
+            return R_OK
+        lava = slot == PS_LAVA
+        item = I_LAVA_B if lava else I_WATER_B
+        if st.bag[e, i, item] < 1:
+            return RS_NO_ITEMS
+        add(st, e, i, item, -1)
+        add(st, e, i, I_BUCKET, 1)
+        via = V_LAVA if lava else V_WATER
+        if tg == TG_MOAT and st.ai[e, A_MOAT] > 0:
+            st.ai[e, A_MOAT_LIQ] = 2 if lava else 1
+            st.ai[e, A_ML_DID] = st.gi[e, i, GI_DID]
+            st.ai[e, A_ML_AGENT] = i
+            st.ai[e, A_ML_TICK] = int(st.gf[e, i, GF_DID_T] * 20)
+            st.ai[e, A_ML_KIND] = st.gi[e, i, GI_KIND]
+            st.ai[e, A_ML_VIA] = via
+        elif tg == TG_MOB and lava and st.af[e, AF_ENEMIES] > 0 and st.ai[e, A_PHASE] == PH_WAVE:
+            k = min(int(st.af[e, AF_ENEMIES]), randint(mt, e, 1, 3))
+            ch = new_chain()
+            nch = chain_add(ch, 0, st.gi[e, i, GI_DID], i, int(st.gf[e, i, GF_DID_T] * 20), st.gi[e, i, GI_KIND], via)
+            kill(st, e, i, k, False, -1, ch, nch)
+        elif lava and (tg == TG_FRONT or tg == TG_BELOW or tg == TG_FRONT_DOWN):   # lava at one's feet: a burn, at worst death
+            hurt(st, e, i, 1.0, 4.0, 3.0, False)
+            if st.gf[e, i, GF_HEALTH] <= 0:
+                give0(st, e, i, K_ACCIDENT, 1.0)
+                die(st, e, i, False, True)
     elif fam == FAM_BUILD_WALL or fam == FAM_REPAIR_WALL:
         build = fam == FAM_BUILD_WALL
         if not build and st.ai[e, A_WALL] >= RING:
@@ -3487,7 +3536,10 @@ def give4(st, e, i, key, n, ch, nch):
     if key == K_NOOP:
         j = fev_new(st, e, E4_NOOP)
         if j >= 0:
+            s = st.ai[e, A_SCEN]
             st.fev_i[e, j, 1] = i
+            st.fev_i[e, j, 2] = 1 if (not st.ai[e, A_GOAL_SENT] and (st.sc_i[s, SI_GOAL] != G_NONE or st.sc_f[s, SF_PASS_ALIVE] >= 0)) else 0
+            st.fev_f[e, j, 0] = max(0.0, st.sc_f[s, SF_SECONDS] - st.af[e, AF_T])
     elif key == K_GOAL:
         if not st.ai[e, A_GOAL_SENT]:
             st.ai[e, A_GOAL_SENT] = 1
@@ -4143,7 +4195,18 @@ def c4_event(st, e, j):
             else:
                 st.ai[e, A_OVERFLOW] += 1
     elif typ == E4_NOOP:
-        c4_pay(st, e, st.fev_i[e, j, 1], C4_NOOP, O_NOOP)
+        k = st.fev_i[e, j, 1]
+        c4_pay(st, e, k, C4_NOOP, O_NOOP)
+        if FF_ON:   # reward_core.ev_noop's forfeit: the open goal (each agent's) and the scales still to come
+            goal = 0.0
+            if st.fev_i[e, j, 2]:
+                na = 0
+                for z in range(MA):
+                    if st.c4ag[e, z, CA_EXISTS]:
+                        na += 1
+                goal = O_GOAL * FF_GOAL * na
+            est = min(FF_CAP, FF_SCALES * st.af[e, AF_C4_GAIN] / max(t, FF_MIN_S) * max(0.0, st.fev_f[e, j, 0]))
+            c4_pay(st, e, k, C4_FORFEIT, -(goal + est))
     elif typ == E4_FALL:
         alive = np.empty(MA, np.int64)
         while st.ai[e, A_C4_THR_N] > 0:
@@ -4335,6 +4398,8 @@ def c4_scale(st, e, j):
     if res >= 0 and res < FIND_CAP and st.find_d[e, res] != -1:
         fd = res
     c4_pay(st, e, k, comp, pts)
+    if pts > 0:
+        st.af[e, AF_C4_GAIN] += pts
     if raw_ > 0:
         c4_progress(st, e, k)   # the simulator names the agent ("*" never): progress, its running decision productive
         if st.gi[e, k, GI_C4_CUR] >= 0:

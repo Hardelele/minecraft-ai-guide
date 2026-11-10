@@ -271,7 +271,7 @@ def scen_tables(curiosity: float = -1.0):
 
 # ---- actions by family --------------------------------------------------------------------------------------------
 FAMS = ["NOOP", "LOOK", "FRONTIER", "CHOP", "MINE_STONE", "MINE_GRAVEL", "MINE_ORE", "DESCEND", "TUNNEL", "ASCEND", "CRAFT", "CRAFT_ARMOR",
-        "SMELT", "PLACE_ITEM", "BUILD_WALL", "REPAIR_WALL", "DIG_MOAT", "LIGHT", "EQUIP", "TAKE_POST", "HOLD_LINE", "SHOOT", "HOME",
+        "SMELT", "PLACE_ITEM", "PLACE_AT", "BUILD_WALL", "REPAIR_WALL", "DIG_MOAT", "LIGHT", "EQUIP", "TAKE_POST", "HOLD_LINE", "SHOOT", "HOME",
         "EAT", "HUNT", "PUT_CHEST", "TAKE_CHEST", "BUILD_GATE", "CLOSE_GATE", "GATHER_SEEDS", "GATHER_SAPLINGS", "GATHER_CANE", "TILL",
         "PLANT_WHEAT", "HARVEST", "PLANT_SAPLING", "BUILD_PEN", "LURE", "BREED", "SLAUGHTER", "ENCHANT", "USE_BUCKET", "USE_FIRE",
         "ATTACK_MOB", "ATTACK_ANIMAL", "OPEN", "WAIT", "DIG", "PUT31", "PILLAR", "NONE"]
@@ -282,6 +282,7 @@ DIRS = list(NEAR.DIRS)             # front, back, left, right, above, below
 DIGS = list(NEAR.DIG)              # below, front, front_down, left, right, back, above
 SIDES = list(NEAR.SIDES)
 
+PLACE_SLOTS = ["block", "torch", "water", "lava"]
 ACT_FAM = np.full(A, F["NONE"], np.int64)
 ACT_P = np.full(A, -1, np.int64)    # the family's parameter: an ore, a recipe, a material, an item, a target, a direction
 ACT_Q = np.full(A, -1, np.int64)    # a second one (smelt's product)
@@ -321,9 +322,9 @@ for _i, _n in enumerate(ACTIONS):
         src, dst = {"smelt:iron_ingot": ("iron_ore", "iron_ingot"), "smelt:gold_ingot": ("gold_ore", "gold_ingot"),
                     "smelt:food": ("food_raw", "food_cooked")}[_n]
         fam, p, q = "SMELT", IT[src], IT[dst]
+    elif _n.startswith("place:") and "@" in _n:   # sim_env.place_at: p the slot (PLACE_SLOTS), q the target
+        fam, p, q = "PLACE_AT", PLACE_SLOTS.index(_n[6:_n.index("@")]), TG[_n[_n.index("@") + 1:]]
     elif _n.startswith("place:"):
-        # sim_env.effect's "place:" branch comes before the primitives': place:<slot>@<target> asks the bag for an item
-        # named "<slot>@<target>" and fails NO_ITEMS (the reference's behaviour, kept: see docs/rl/SIMBATCH.md)
         fam, p = "PLACE_ITEM", IT.get(_n[6:], -1)
     elif _n == "build_wall:ring":
         fam = "BUILD_WALL"
@@ -608,7 +609,8 @@ import reward_core as RC  # noqa: E402
 
 P4, (SW4, _SS4, _SCALES4) = RC.defaults()
 C4 = ["noop", "goal", "human", "crew.damage", "crew.death", "base.breach", "base.mob_seconds", "surrender", "afk", "credit.kill",
-      "credit.block", "credit.cover", "credit.dodge", "credit.survive", "credit.scout", "credit.wasted_day", "credit.scale", "curiosity.novel"]
+      "credit.block", "credit.cover", "credit.dodge", "credit.survive", "credit.scout", "credit.wasted_day", "credit.scale", "curiosity.novel",
+      "forfeit"]
 for _k in SW4:
     if _k not in C4:
         C4.append(_k)
@@ -642,6 +644,9 @@ P4F = {"noop": _o["noop"], "goal": _o["goal"], "human": _o["human"], "dmg": _o["
        "w_cover": P4["threat"]["w"]["cover"], "w_moved": P4["threat"]["w"]["moved"], "hp_low": P4["survive"]["hp_low"],
        "hp_safe": P4["survive"]["hp_safe"], "surv_share": P4["survive"]["share"], "scout_share": P4["scout"]["share"],
        "wd_share": P4["wasted_day"]["share"], "scale_move": P4["scale_move"]}
+_ff = P4.get("forfeit") or {}
+P4F.update({"ff_on": bool(_ff), "ff_goal": float(_ff.get("goal", 0.0)), "ff_scales": float(_ff.get("scales", 0.0)),
+            "ff_min_s": float(_ff.get("min_s", 1.0)), "ff_cap": float(_ff.get("cap", 0.0))})
 PHASES4 = ["day", "night", "prep", "wave", "break"]
 CALM4 = np.array([p in P4.get("calm_phases", ("day", "prep", "break")) for p in PHASES4], np.bool_)
 NOCUR4 = np.array([p in P4.get("no_curiosity_phases", ("wave", "night")) for p in PHASES4], np.bool_)
