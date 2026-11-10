@@ -213,6 +213,7 @@ class Guard {
         ItemStack held = a.getHeldItem();
         grip(h, held);
         a.swingItem();
+        OpenRec.note(a, OpenRec.ATTACK, 0);
         float before = target.getHealth();
         h.attackTargetEntityWithCurrentItem(target);
         if (Agent.hungerOn) a.hunger.exhaust(Hunger.ATTACK);   // a hit costs food as a player's

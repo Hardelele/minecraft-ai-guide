@@ -861,6 +861,7 @@ final class MindSkills {
                 }
                 fu.markDirty();
                 a.swingItem();
+                OpenRec.note(a, OpenRec.FURNACE, OpenSpec.ACT_LOAD);
                 Ledger.act(a, "fill the furnace");
                 inside = put;
                 state = 2;
@@ -875,6 +876,7 @@ final class MindSkills {
                     fu.setInventorySlotContents(2, null);
                     Skills.put(a, out, Ledger.Way.SMELTED);
                     a.swingItem();
+                    OpenRec.note(a, OpenRec.FURNACE, OpenSpec.ACT_TAKE);
                     Ledger.act(a, "take from the furnace");
                 }
                 fu.markDirty();

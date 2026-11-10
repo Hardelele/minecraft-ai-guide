@@ -25,7 +25,7 @@ final class AgentLife {
     static void tick(Agent a) {
         hunger(a);
         if (a.ticksExisted % 2 == 0) orbs(a);
-        reflex(a);
+        if (a.open == null) reflex(a);   // (the open world: no reflexes, the policy only)
     }
 
     static void hunger(Agent a) {

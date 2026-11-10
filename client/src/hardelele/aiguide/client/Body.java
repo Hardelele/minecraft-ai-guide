@@ -207,6 +207,7 @@ class Body {
         }
         digWait = 0;
         digTicks++;
+        OpenRec.note(a, OpenRec.ATTACK, 0);
         if (digTicks % 5 == 1) {
             a.swingItem();
             w.playSoundEffect(x + 0.5, y + 0.5, z + 0.5, b.stepSound.getStepSound(), 0.35F, 0.6F);
@@ -312,6 +313,7 @@ class Body {
         int side = m != null && m.blockX == x && m.blockY == y && m.blockZ == z ? m.sideHit : 0;
         w.getBlock(x, y, z).onBlockActivated(w, x, y, z, Skills.hands(a, w), side, (float) (p[0] - x), (float) (p[1] - y), (float) (p[2] - z));
         a.swingItem();
+        OpenRec.note(a, OpenRec.USE, 0);
         return Result.OK;
     }
 

@@ -18,12 +18,12 @@ PURE = ["Sight.java", "CaseVec.java", "CaseBook.java", "Events.java", "Result.ja
         "PlaceView.java", "PlaceSource.java", "Labels.java", "Episodes.java", "Scrub.java", "ShareBuild.java", "ShareUpload.java", "CrewCommand.java",
         "UiIcon.java", "UiLayout.java", "UiToasts.java", "Mind.java", "MindState.java", "MindShare.java", "Defense.java",
         "WavePlan.java", "WaveRing.java", "WaveCycle.java", "WaveReport.java", "WaveCommand.java",
-        "EpochScore.java", "Lessons.java", "EpochKnobs.java", "EpochRun.java", "RlSpec.java", "RlSpec1.java", "RlSpec3.java", "RlAchievements.java", "RlScore.java", "RlCause.java", "RlNear.java", "Reach.java", "Xp.java", "Hunger.java", "RlReward.java", "PolicyNet.java"]   # the classes with no game in them (Gson aside)
+        "EpochScore.java", "Lessons.java", "EpochKnobs.java", "EpochRun.java", "RlSpec.java", "RlSpec1.java", "RlSpec3.java", "RlAchievements.java", "RlScore.java", "RlCause.java", "RlNear.java", "Reach.java", "Xp.java", "Hunger.java", "RlReward.java", "PolicyNet.java", "OpenSpec.java"]   # the classes with no game in them (Gson aside)
 TESTS = ["hardelele.aiguide.client.SightTest", "hardelele.aiguide.client.CaseTest", "hardelele.aiguide.client.ReflexesTest",
          "hardelele.aiguide.client.PlacesSplitTest", "hardelele.aiguide.client.PlacesNetTest", "hardelele.aiguide.client.FeedbackTest",
          "hardelele.aiguide.client.CrewCommandTest", "hardelele.aiguide.client.UiLayoutTest", "hardelele.aiguide.client.MindTest",
          "hardelele.aiguide.client.WavesTest", "hardelele.aiguide.client.DefenseTest", "hardelele.aiguide.client.EpochsTest",
-         "hardelele.aiguide.client.RlTest", "hardelele.aiguide.client.PolicyTest"]
+         "hardelele.aiguide.client.RlTest", "hardelele.aiguide.client.PolicyTest", "hardelele.aiguide.client.OpenTest"]
 GAME_TESTS = ["CaveGeometryTest", "CaveRetentionTest", "RoutineIntentTest", "RoutineLayoutTest", "RoutineSnapshotTest", "ShelterRouteTest", "PlacesInputTest", "BoardOrdersTest", "MindGameTest", "DefenseGameTest", "EngineGameTest", "TreeMemoryGameTest"]   # against the built client
 HELPERS = ["ShareProbe.java"]   # compiled with the pure tests, run by tools/share-service's tests
 PY_TESTS = ["tests/test_rl_policy.py", "tests/test_labels.py", "tests/test_feedback_lang.py", "tests/test_crew_lang.py", "tests/test_ui_icons.py", "tests/test_commander_ui_wiring.py", "tests/test_waves_wiring.py", "tests/test_epochs_tools.py", "tests/test_rl_env.py", "tests/test_rl_spec2.py", "tests/test_rl_sim31.py",   # the ratings' offline tool, the words, the commander's icons

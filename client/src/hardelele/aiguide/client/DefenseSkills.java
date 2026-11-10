@@ -457,6 +457,7 @@ final class DefenseSkills {
                 ag.body.stop();
                 ag.body.hold(f);
                 if (++ticks % 4 == 0) { ag.swingItem(); w.playSoundEffect(ag.posX, ag.posY + 1, ag.posZ, "random.eat", 0.5F, 1.0F); }
+                OpenRec.note(ag, OpenRec.USE, 0);
                 if (ticks < 32) return Result.RUNNING;
                 ticks = 0;
                 int heal = ((ItemFood) f.getItem()).getHealAmount(f);
