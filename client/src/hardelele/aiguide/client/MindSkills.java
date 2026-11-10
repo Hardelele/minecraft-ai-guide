@@ -233,20 +233,6 @@ final class MindSkills {
     }
 
     /** a free cell beside the agent to put a block in: room, firm ground under it, nobody standing in it */
-    /** cells beside an agent where a placing failed (not seen, out of reach, nothing to put it against): the tick it failed; not offered again for SPOT_REST */
-    static final Map<Long, Long> badSpots = new java.util.HashMap<Long, Long>();
-    static final long SPOT_REST = 20 * 120;
-
-    static void badSpot(WorldServer w, int[] cell) {
-        if (badSpots.size() > 512) badSpots.clear();
-        badSpots.put(Crew.key(cell[0], cell[1], cell[2]), w.getTotalWorldTime());
-    }
-
-    static boolean resting(WorldServer w, int x, int y, int z) {
-        Long t = badSpots.get(Crew.key(x, y, z));
-        return t != null && w.getTotalWorldTime() - t < SPOT_REST;
-    }
-
     static int[] beside(Crew c, Agent a, WorldServer w) {
         int[] f = Ground.feet(w, a.posX, a.posY, a.posZ);
         for (int r = 1; r <= 2; r++)
@@ -255,7 +241,7 @@ final class MindSkills {
                     if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
                     for (int dy : new int[] { 0, -1, 1 }) {
                         int x = f[0] + dx, y = f[1] + dy, z = f[2] + dz;
-                        if (!Crew.soft(w, x, y, z) || !Crew.solid(w, x, y - 1, z) || Ground.liquid(w, x, y, z) || resting(w, x, y, z)) continue;
+                        if (!Crew.soft(w, x, y, z) || !Crew.solid(w, x, y - 1, z) || Ground.liquid(w, x, y, z)) continue;
                         boolean taken = a.boundingBox.intersectsWith(net.minecraft.util.AxisAlignedBB.getBoundingBox(x, y, z, x + 1, y + 1, z + 1))
                                 || a.boundingBox.intersectsWith(net.minecraft.util.AxisAlignedBB.getBoundingBox(x, y - 1, z, x + 1, y, z + 1));   // its own body (on stairs too)
                         for (Doer d : c.doers())
@@ -854,7 +840,6 @@ final class MindSkills {
             Result run(Agent ag, WorldServer ww) {
                 Result r = p.step(ag, ww);
                 if (r == Result.OK) { adopt(c, ww, at3, item); detail = "put at " + at3[0] + " " + at3[1] + " " + at3[2]; }
-                else if (r == Result.NOT_VISIBLE || r == Result.OUT_OF_REACH || r == Result.BLOCKED) badSpot(ww, at3);   // not offered again (place_spot, the next place) for a while
                 return r;
             }
         };
