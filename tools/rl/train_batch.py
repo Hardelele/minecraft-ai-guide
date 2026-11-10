@@ -26,23 +26,30 @@ import spec
 
 
 class FlatRetNorm:
-    """RetNorm over arrays: the discounted return per slot, the running std over all (batched Welford)"""
+    """RetNorm over arrays: the discounted return per slot, the running std (batched Welford) over all, or by group
+    (--scen-norm: by scenario, so that the waves' hundreds under v4 do not shrink a wood run's rewards to nothing)"""
 
-    def __init__(self, gamma: float, slots: int):
+    def __init__(self, gamma: float, slots: int, groups: int = 1):
         self.g = gamma
         self.ret = np.zeros(slots)
-        self.mean, self.var, self.count = 0.0, 1.0, 1e-4
+        self.mean, self.var, self.count = np.zeros(groups), np.ones(groups), np.full(groups, 1e-4)
 
-    def __call__(self, slot: np.ndarray, r: np.ndarray, done: np.ndarray) -> np.ndarray:
+    def __call__(self, slot: np.ndarray, r: np.ndarray, done: np.ndarray, group: np.ndarray | None = None) -> np.ndarray:
         x = self.ret[slot] * self.g + r
         self.ret[slot] = np.where(done, 0.0, x)
-        bm, bv, bc = float(x.mean()), float(x.var()), x.size
-        d = bm - self.mean
-        tot = self.count + bc
-        self.mean += d * bc / tot
-        self.var = (self.var * self.count + bv * bc + d * d * self.count * bc / tot) / tot
-        self.count = tot
-        return r / np.sqrt(self.var + 1e-8)
+        group = np.zeros(len(r), np.int64) if group is None or len(self.mean) == 1 else group
+        out = np.empty_like(r)
+        for gi in np.unique(group):
+            m = group == gi
+            xs = x[m]
+            bm, bv, bc = float(xs.mean()), float(xs.var()), xs.size
+            d = bm - self.mean[gi]
+            tot = self.count[gi] + bc
+            self.mean[gi] += d * bc / tot
+            self.var[gi] = (self.var[gi] * self.count[gi] + bv * bc + d * d * self.count[gi] * bc / tot) / tot
+            self.count[gi] = tot
+            out[m] = r[m] / np.sqrt(self.var[gi] + 1e-8)
+        return out
 
 
 class Buffer:
@@ -63,6 +70,7 @@ class Buffer:
         self.t = np.zeros(cap)
         self.dt = np.zeros(cap)
         self.slot = np.zeros(cap, np.int64)
+        self.scen = np.zeros(cap, np.int64)
         self.nxt = np.full(cap, -1, np.int64)
         self.did = np.full(cap, -1, np.int64)
         self.block = np.zeros(cap, np.int64)
@@ -78,7 +86,7 @@ class Buffer:
             new = torch.zeros((cap,) + tuple(old.shape[1:]), dtype=old.dtype, device=self.dev)
             new[:self.n] = old[:self.n]
             setattr(self, k, new)
-        for k in ("rew", "done", "complete", "has_rew", "t", "dt", "slot", "nxt", "did", "block"):
+        for k in ("rew", "done", "complete", "has_rew", "t", "dt", "slot", "scen", "nxt", "did", "block"):
             old = getattr(self, k)
             new = np.full(cap, -1 if k in ("nxt", "did") else 0, old.dtype)
             new[:self.n] = old[:self.n]
@@ -93,7 +101,7 @@ class Buffer:
             for k in ("obs", "msk", "act", "logp", "val", "nv"):
                 t_ = getattr(self, k)
                 t_[:m] = t_[ix].clone()
-            for k in ("rew", "done", "complete", "has_rew", "t", "dt", "slot", "did", "block"):
+            for k in ("rew", "done", "complete", "has_rew", "t", "dt", "slot", "scen", "did", "block"):
                 a_ = getattr(self, k)
                 a_[:m] = a_[keep]
             self.nxt[:m] = -1
@@ -165,24 +173,37 @@ def run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, cpu_copy,
             return GOV.read_advice(gov_file) or {}
         return {}
 
+    from train import below_normal, league_running
+    lol = {"t": 0.0, "on": False}
+
     def govern():
-        """the advice applied between steps: a pause waits; the threads follow it"""
+        """the advice applied between steps: a pause waits; the threads follow it. The owner's rule is stricter than the
+        governor's (any League* process, the client too): then Idle, 1 simulator thread and 1 torch thread"""
         d = advice()
         while d.get("pause"):
             time.sleep(1.0)
             d = advice()
-        if d:
-            numba.set_num_threads(int(max(1, min(a.sim_threads, d.get("arenas", a.sim_threads) or 1))))
-            torch.set_num_threads(int(max(1, min(a.threads, d.get("threads", 1)))))
-        return d
-    adv = govern()
-    adv_t = time.time()
+        if time.time() - lol["t"] > 30:
+            on = league_running()
+            if on != lol["on"]:
+                below_normal()   # Idle while League* runs, else below normal
+            lol["t"], lol["on"] = time.time(), on
+        sim_th = int(max(1, min(a.sim_threads, d.get("arenas", a.sim_threads) or 1))) if d else a.sim_threads
+        tor_th = int(max(1, min(a.threads, d.get("threads", 1)))) if d else a.threads
+        if lol["on"]:
+            sim_th, tor_th = 1, 1
+            d = dict(d or {}, gpu_duty=min(0.25, float((d or {}).get("gpu_duty", 0.25))))
+        numba.set_num_threads(sim_th)
+        torch.set_num_threads(tor_th)
+        return d or {}
+    gadv = govern()
+    gadv_t = time.time()
     sim.reset(np.arange(N), [job() for _ in range(N)])
     rows = N * MA
     last = np.full(rows, -1, np.int64)        # a slot's transition waiting for its reward or its next value
     ep_ret = np.zeros(N)
     ep_dec = np.zeros(N, np.int64)
-    retnorm = FlatRetNorm(a.gamma_s ** 20 if a.gamma_s else a.gamma, rows)
+    retnorm = FlatRetNorm(a.gamma_s ** 20 if a.gamma_s else a.gamma, rows, len(T.SCENS) if getattr(a, "scen_norm", False) else 1)
     buf = Buffer(int(a.rollout * 1.5) + rows, dev)
     pin = dev.type == "cuda"
     mcsv = open(out / "metrics.csv", "w", newline="", encoding="utf-8")
@@ -208,8 +229,8 @@ def run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, cpu_copy,
         n_done = int(buf.complete[:buf.n].sum())
         pol.eval()
         while n_done < a.rollout:
-            if time.time() - adv_t > 2.0:
-                adv, adv_t = govern(), time.time()
+            if time.time() - gadv_t > 2.0:
+                gadv, gadv_t = govern(), time.time()
             vrows = np.flatnonzero(sim.valid)
             m = len(vrows)
             ti = time.perf_counter()
@@ -252,6 +273,7 @@ def run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, cpu_copy,
             buf.has_rew[sl] = False
             buf.t[sl] = tnow
             buf.slot[sl] = vrows
+            buf.scen[sl] = sim.st.ai[envs_of, KN.A_SCEN]
             buf.nxt[sl] = -1
             buf.did[sl] = -1
             buf.block[sl] = block
@@ -348,7 +370,7 @@ def run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, cpu_copy,
         rn = np.empty_like(rew)
         bounds = np.flatnonzero(np.diff(blk[order])) + 1
         for part in np.split(order, bounds):
-            rn[part] = retnorm(buf.slot[comp[part]], rew[part], buf.done[comp[part]])
+            rn[part] = retnorm(buf.slot[comp[part]], rew[part], buf.done[comp[part]], buf.scen[comp[part]])
         # GAE: by the next transition of the same slot (when it is in this batch), blocks backward
         pos = np.full(n, -1, np.int64)
         pos[comp] = np.arange(len(comp))
@@ -384,7 +406,7 @@ def run(a, pol, opt, cur, rng, out, dev, job, ach_depth, write_policy, cpu_copy,
         for _ in range(a.epochs):
             perm = torch.randperm(nb, device=dev)
             for s0 in range(0, nb, a.minibatch):
-                duty = float(adv.get("gpu_duty", 1.0) or 0.0)
+                duty = float(gadv.get("gpu_duty", 1.0) or 0.0)
                 t_mb = time.perf_counter()
                 idx = perm[s0:s0 + a.minibatch]
                 loss, pg, vl, ent, ratio = ppo_loss(pol, bo[idx], bm[idx], ba[idx], blp[idx], badv[idx], bret[idx], a.clip, a.vf, ent_coef)
