@@ -620,7 +620,30 @@ public class RlEnv {
     /** the base given up or lost: the threats open now count as done */
     void fall4(String why) {
         if (r4 == null) return;
+        if (sc != null && sc.waves != null && Waves.cycle.active()) {   // the threats still to come count as done (REWARD-v4.md: fall)
+            WaveCycle cy = Waves.cycle;
+            double t = ticks / 20.0, end = sc.seconds;
+            int fake = -1;   // (ids of mobs not yet in the world: below 0, none of the game's)
+            for (int i = 0; i < Waves.pending.size(); i++) threatToCome(fake--, stay4());   // the rest of this wave's
+            // the waves to come before the run's end: each a break, then its mobs for the wave's length at most
+            double at = t + (cy.phase == WaveCycle.Phase.WAVE ? stay4() : 0) + cy.cfg.breakTicks / 20.0;
+            for (int n = cy.wave + 1; at < end; n++) {
+                int k = WavePlan.total(WavePlan.counts(n, cy.mult));
+                double stay = Math.min(cy.cfg.waveMaxTicks / 20.0, end - at);
+                for (int i = 0; i < k; i++) threatToCome(fake--, stay);
+                at += cy.cfg.waveMaxTicks / 20.0 + cy.cfg.breakTicks / 20.0;
+            }
+        }
         ev4("fall").addProperty("why", why);
+    }
+
+    void threatToCome(int mob, double stay) {
+        JsonObject o = ev4("threat");
+        o.addProperty("mob", mob);
+        o.addProperty("kind", "to_come");
+        o.addProperty("target", "base");
+        o.addProperty("dmg", 3.0);
+        o.addProperty("stay_s", stay);
     }
     final List<JsonObject> events = new ArrayList<JsonObject>();
     /** the decisions given to the actions of the last step: agent -> decision_id */
