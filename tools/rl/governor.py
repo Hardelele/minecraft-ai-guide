@@ -283,15 +283,17 @@ def main():
     ap.add_argument("--max-threads", type=int, default=0)
     ap.add_argument("--max-arenas", type=int, default=0)
     ap.add_argument("--margin", type=float, default=2.0, help="cores left free over the others' use")
-    ap.add_argument("rest", nargs=argparse.REMAINDER)
-    a = ap.parse_args()
+    argv = sys.argv[1:]
+    cut = argv.index("--") if "--" in argv else len(argv)   # (the command after --: its own options are not ours)
+    a = ap.parse_args(argv[:cut])
+    a.rest = argv[cut + 1:]
     if a.cmd == "once":
         g = Governor(max_threads=a.max_threads or None, max_arenas=a.max_arenas or None, margin=a.margin)
         time.sleep(1.0)
         m = g.measure()
         print(json.dumps({"measured": m, "decided": g.decide(m)}, indent=1, ensure_ascii=False))
         return
-    cmd = a.rest[1:] if a.rest and a.rest[0] == "--" else a.rest
+    cmd = a.rest
     if not cmd:
         sys.exit("governor run -- <command...>")
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -299,6 +301,8 @@ def main():
     os.makedirs(os.path.dirname(log), exist_ok=True)
     adv = log + ".advice.json"
     env = dict(os.environ, AIGUIDE_GOVERNOR=adv, AIGUIDE_GOVERNOR_LOG=log)
+    import shutil
+    cmd = [shutil.which(cmd[0]) or cmd[0]] + cmd[1:]   # (CreateProcess does not look along PATH as a shell does)
     child = subprocess.Popen(cmd, env=env, creationflags=BELOW if IS_WIN else 0)
     g = Governor(root_pid=child.pid, log=log, max_threads=a.max_threads or None, max_arenas=a.max_arenas or None, interval=a.interval,
                  margin=a.margin, self_pause=True, advice_file=adv)
