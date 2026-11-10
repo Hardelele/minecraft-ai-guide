@@ -299,7 +299,8 @@ public class Crew {
         board.tick(w);
         for (Agent a : agents) {
             a.body.sense(w);   // the body's snapshot of this tick, before anything acts on it
-            if (Reacts.tick(this, a, w)) { AgentMind.reflex(a); continue; }   // layer 2: a reflex (or what a task asked for itself) has the body this tick; the job waits
+            if (Reacts.tick(this, a, w)) { AgentMind.reflex(a); AgentMind.share(this, a, w, true); continue; }   // layer 2: a reflex (or what a task asked for itself) has the body this tick; the job waits
+            AgentMind.share(this, a, w, false);   // who drives it (the mind share's line)
             if (AgentMind.tick(this, a, w)) continue;   // layer 3, its own mind: it thinks, or is between its steps (no board work then)
             Task t = a.jobs.peek();
             if (t == null && (w.getTotalWorldTime() + a.skin()) % 10 == 0 && board.feed(a, w)) t = a.jobs.peek();   // idle: the board gives it something (asked twice a second, not every tick)

@@ -102,12 +102,26 @@ final class MindSkills {
             case "chop_tree": return chop(c, a, w, call.arg("at"));
             case "mine": return mine(c, a, w, call.arg("block"), clamp(n, 1, 32));
             case "craft": return craft(c, a, w, call.arg("item"), clamp(n, 1, 64));
-            case "smelt": return smelt(c, a, w, call.arg("item"), clamp(n, 1, 64), call.arg("fuel"));
+            case "smelt": {
+                String what = call.arg("item");
+                if (what.equalsIgnoreCase("food")) {   // the raw food of the bag, whichever it is
+                    what = RlSkills.rawFood(a);
+                    if (what == null) return failed("NO_FOOD", "no raw food in the bag (raw meat, fish, a potato) to cook");
+                }
+                return smelt(c, a, w, what, clamp(n, 1, 64), call.arg("fuel"));
+            }
             case "place": return place(c, a, w, call.arg("item"), call.arg("at"));
             case "take": case "put": return chest(c, a, w, call.tool.equals("take"), call.arg("chest"), call.arg("item"), clamp(n, 1, 64 * 27));
             case "give": return give(c, a, w, call.arg("to"), call.arg("item"), clamp(n, 1, 64 * 9));
             case "wait": return new Wait(clamp(call.num("seconds", 5), 1, 120));
-            default: return DefenseSkills.make(c, a, w, call);   // the defence's (or UNKNOWN_TOOL)
+            case "hunt": return RlSkills.hunt(c, a, w);
+            default: {   // contract 3's skills, then the defence's (or UNKNOWN_TOOL)
+                Skill s = PrimSkills.make(c, a, w, call);
+                if (s == null) s = MineSkills.make(c, a, w, call);
+                if (s == null) s = GearSkills.make(c, a, w, call);
+                if (s == null) s = FarmSkills.make(c, a, w, call);
+                return s != null ? s : DefenseSkills.make(c, a, w, call);
+            }
         }
     }
 
@@ -218,7 +232,7 @@ final class MindSkills {
         return l.isEmpty() ? null : l.get(0);
     }
 
-    /** a free cell beside the agent to put a block in: room, firm ground under it, nobody standing in it */
+    /** a free cell beside the agent to put a block in: room, firm ground under it, nobody standing in it, a face seen to put it against */
     static int[] beside(Crew c, Agent a, WorldServer w) {
         int[] f = Ground.feet(w, a.posX, a.posY, a.posZ);
         for (int r = 1; r <= 2; r++)
@@ -228,10 +242,12 @@ final class MindSkills {
                     for (int dy : new int[] { 0, -1, 1 }) {
                         int x = f[0] + dx, y = f[1] + dy, z = f[2] + dz;
                         if (!Crew.soft(w, x, y, z) || !Crew.solid(w, x, y - 1, z) || Ground.liquid(w, x, y, z)) continue;
-                        boolean taken = false;
+                        boolean taken = a.boundingBox.intersectsWith(net.minecraft.util.AxisAlignedBB.getBoundingBox(x, y, z, x + 1, y + 1, z + 1))
+                                || a.boundingBox.intersectsWith(net.minecraft.util.AxisAlignedBB.getBoundingBox(x, y - 1, z, x + 1, y, z + 1));   // its own body (on stairs too)
                         for (Doer d : c.doers())
                             if (d.alive() && Math.floor(d.px()) == x && Math.floor(d.pz()) == z && Math.abs(Math.floor(d.py()) - y) <= 1) taken = true;
-                        if (!taken) return new int[] { x, y, z };
+                        // and a face to put it against that the eyes see from here (else place finds none: NOT_VISIBLE under the ground)
+                        if (!taken && a.body.seesFace(w, x, y, z)) return new int[] { x, y, z };
                     }
                 }
         return null;
@@ -266,6 +282,10 @@ final class MindSkills {
     /** a place by words: { x, y, z, within } of 'x y z', table, chest, furnace, player, agent N, home; null if none */
     static double[] where(Crew c, Agent a, WorldServer w, String target) {
         String t = target == null ? "" : target.trim().toLowerCase(Locale.ROOT);
+        if (t.equals("frontier")) {   // where the crew has not looked yet (the edge of the ground it saw)
+            int[] f = RlSkills.frontier(a, w);
+            return f == null ? null : new double[] { f[0] + 0.5, f[1], f[2] + 0.5, 1.5 };
+        }
         int[] p = coords(t);
         if (p != null) return new double[] { p[0] + 0.5, p[1], p[2] + 0.5, 1.5 };
         Roles.Role role = t.contains("table") || t.contains("верстак") ? Roles.Role.TABLE : t.contains("chest") || t.contains("сундук") ? Roles.Role.CHEST
@@ -324,9 +344,68 @@ final class MindSkills {
         return l;
     }
 
+    /** a cache of the path finder's answers: agent and trunk -> { tick, 1 reached / 0 not } (10 s) */
+    static final Map<Long, long[]> reachCache = new java.util.HashMap<Long, long[]>();
+    /** trunks no agent of the crew got to (its key -> until when it is not tried): shared, so four do not go to one */
+    static final Map<Long, Long> crewUnreached = new java.util.HashMap<Long, Long>();
+    static final int UNREACHED_TICKS = 20 * 120;
+    /** a hanging top climbed by the skill itself: off (no detours inside the skills; the net may pillar up: pillar:up, dig@, place@) */
+    static final boolean PILLAR_TOPS = Boolean.getBoolean("aiguide.chop.pillar");
+
+    static void unreached(int[] t, long now) {
+        if (crewUnreached.size() > 1024) crewUnreached.clear();
+        crewUnreached.put(Crew.key(t[0], t[1], t[2]), now + UNREACHED_TICKS);
+    }
+
+    static boolean mayTryTrunk(Agent a, int[] t, long now) {
+        Long until = crewUnreached.get(Crew.key(t[0], t[1], t[2]));
+        return (until == null || until <= now) && a.walks.mayTry(Crew.key(t[0], t[1], t[2]), now);
+    }
+
+    /** the trunk's foot (its lowest log, the column down while logs) */
+    static int footY(WorldServer w, int[] t) {
+        int y = t[1];
+        while (y > t[1] - 12 && (w.getBlock(t[0], y - 1, t[2]) == Blocks.log || w.getBlock(t[0], y - 1, t[2]) == Blocks.log2)) y--;
+        return y;
+    }
+
+    /** chop it from the ground, up a pillar (a hanging top: blocks in the bag), or skip it (Reach.trunkPlan) */
+    static String trunkPlan(Agent a, WorldServer w, int[] t) {
+        int y = footY(w, t);
+        int[][] around = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 }, { 2, 0 }, { -2, 0 }, { 0, 2 }, { 0, -2 } };
+        int[] g = new int[around.length];
+        for (int i = 0; i < around.length; i++) g[i] = Crew.ground(w, t[0] + around[i][0], y, t[2] + around[i][1]);
+        return Reach.trunkPlan(y, g, PILLAR_TOPS && Skills.Scaffold.block(a, null) != null);
+    }
+
+    /** a walk gets there: the game's path finder ends within 2 of it */
+    static boolean reached(Agent a, WorldServer w, int[] p) {
+        long now = w.getTotalWorldTime(), key = Crew.key(p[0], p[1], p[2]) * 31 + a.skin();
+        long[] c = reachCache.get(key);
+        if (c != null && now - c[0] < 200 && now >= c[0]) return c[1] == 1;
+        net.minecraft.pathfinding.PathEntity path = RlEngine.pathTo(a, p[0] + 0.5, p[1], p[2] + 0.5);
+        net.minecraft.pathfinding.PathPoint end = path == null ? null : path.getFinalPathPoint();
+        boolean ok = end != null && Math.abs(end.xCoord - p[0]) + Math.abs(end.zCoord - p[2]) <= 2 && Math.abs(end.yCoord - p[1]) <= 3;
+        if (reachCache.size() > 4096) reachCache.clear();
+        reachCache.put(key, new long[] { now, ok ? 1 : 0 });
+        return ok;
+    }
+
+    /**
+     * The free trunks seen near that a walk gets to, nearest first (the five nearest looked at): one not reached is
+     * remembered as a failed walk's goal (Walks: tried again after a while), so chop never takes it again and again.
+     */
+    static List<int[]> reachableTrunks(Crew c, final Agent a, final WorldServer w, double r) {
+        final long now = w.getTotalWorldTime();
+        List<int[]> unreached = new ArrayList<int[]>();
+        List<int[]> ok = Reach.reachable(trunks(c, a, w, r, false), p -> mayTryTrunk(a, p, now), p -> !trunkPlan(a, w, p).equals("skip") && reached(a, w, p), 5, unreached);
+        for (int[] p : unreached) { a.walks.failed(Crew.key(p[0], p[1], p[2]), Crew.key((int) Math.floor(a.posX), (int) Math.floor(a.posY), (int) Math.floor(a.posZ)), now); unreached(p, now); }
+        return ok;
+    }
+
     static Skill chop(final Crew c, Agent a, WorldServer w, String at) {
         int[] want = coords(at);
-        List<int[]> l = trunks(c, a, w, 48, false);
+        List<int[]> l = want == null ? reachableTrunks(c, a, w, 48) : trunks(c, a, w, 48, false);
         int[] t = null;
         if (want != null) {
             double bd = 3.5;
@@ -336,13 +415,31 @@ final class MindSkills {
             }
             if (t == null) return failed("NO_TREE_THERE", "no tree the crew has seen at " + want[0] + " " + want[1] + " " + want[2] + " (or another agent has it)");
         } else if (!l.isEmpty()) t = l.get(0);
-        if (t == null) return failed("NO_TREE_SEEN", "no tree in the crew's memory near here (or all are taken by others): look_around, or go_to somewhere else");
+        if (t == null) return failed("NO_TREE_SEEN", "no tree in the crew's memory near here that a walk gets to (or all are taken by others): look_around, or go_to somewhere else");
         int y = t[1];   // down to the trunk's foot (it stands on what the eyes see there)
         while (y > t[1] - 12 && (w.getBlock(t[0], y - 1, t[2]) == Blocks.log || w.getBlock(t[0], y - 1, t[2]) == Blocks.log2)) y--;
         final int[] base = { t[0], y, t[2] };
         c.board.reserve(a, base[0], base[1], base[2]);
-        Skill s = wrap(new TaskBoard.Seq(new Crew.Chop(base[0], base[1], base[2]), new Crew.Collect(base[0] + 0.5, base[1], base[2] + 0.5, 5)),
-                r -> r == Result.NO_PATH ? new String[] { "NO_PATH", "no spot beside the tree at " + base[0] + " " + base[1] + " " + base[2] + " to chop it from" } : null);
+        final int[] trunk = t;
+        if (PILLAR_TOPS && want == null && trunkPlan(a, w, t).equals("pillar")) {   // a top hanging in the air: the whole tree felled, up a pillar of its blocks (taken down after)
+            List<int[]> logs = Fell.tree(w, base[0], base[1], base[2]);
+            if (!logs.isEmpty()) {
+                Skill f = wrap(new TaskBoard.Seq(new Fell(logs), new Crew.Collect(base[0] + 0.5, base[1], base[2] + 0.5, 6)), r -> {
+                    if (r != Result.NO_PATH && r != Result.BLOCKED) return null;
+                    unreached(trunk, w.getTotalWorldTime());
+                    return new String[] { "NO_PATH", "could not get at the logs hanging at " + base[0] + " " + base[1] + " " + base[2] + " even up a pillar" };
+                });
+                f.lease = Budget.ticks(Crew.dist(a, base[0], base[1], base[2]) * 1.5 + 20, logs.size() * 2, 6, 0, 0, 60);
+                f.detail = "a hanging top: up a pillar";
+                return f;
+            }
+        }
+        Skill s = wrap(new TaskBoard.Seq(new Crew.Chop(base[0], base[1], base[2]), new Crew.Collect(base[0] + 0.5, base[1], base[2] + 0.5, 5)), r -> {
+            if (r != Result.NO_PATH) return null;
+            a.walks.failed(Crew.key(trunk[0], trunk[1], trunk[2]), Crew.key((int) Math.floor(a.posX), (int) Math.floor(a.posY), (int) Math.floor(a.posZ)), w.getTotalWorldTime());   // not this one again soon
+            unreached(trunk, w.getTotalWorldTime());   // nor by the others
+            return new String[] { "NO_PATH", "no spot beside the tree at " + base[0] + " " + base[1] + " " + base[2] + " to chop it from" };
+        });
         s.lease = Budget.ticks(Crew.dist(a, base[0], base[1], base[2]) * 1.5 + 8, 7, 0, 0, 0, 40);
         return s;
     }
@@ -576,6 +673,7 @@ final class MindSkills {
                 return finish(a);
             }
             made += r.stackSize;
+            if (!r.isStackable()) RlEnv.made(a, Skills.lastOf(a, r.getItem()));   // its decision in it (the causes)
             w.playSoundEffect(a.posX, a.posY + 1, a.posZ, "random.wood_click", 0.4F, 1.2F);
             if (!r.isStackable()) a.body.hold(Skills.lastOf(a, r.getItem()));
             return made >= want ? finish(a) : Result.RUNNING;
@@ -759,6 +857,11 @@ final class MindSkills {
         if (at == null && coords(t) == null) at = station(c, a, w, Roles.Role.CHEST, 48);
         if (at == null || !Roles.is(w, at, Roles.Role.CHEST)) return failed("NO_CHEST", "no chest known " + (coords(t) != null ? "at " + t : "near (48 blocks)"));
         boolean all = !take && (name.equalsIgnoreCase("all") || name.equalsIgnoreCase("everything"));
+        if (take && name.equalsIgnoreCase("food")) {   // whatever food the chest has
+            TileEntity te = w.getTileEntity(at[0], at[1], at[2]);
+            name = RlSkills.foodIn(te instanceof IInventory ? (IInventory) te : null);
+            if (name == null) return failed("NOT_IN_CHEST", "no food in the chest at " + at[0] + " " + at[1] + " " + at[2]);
+        }
         Object[] it = all ? null : item(name);
         if (!all && it == null) return failed("UNKNOWN_ITEM", "'" + name + "': use the game's id");
         if (!take && !all && Skills.count(a.bag, (Item) it[0], (Integer) it[1]) == 0) return failed("NO_ITEMS", "no " + name + " in the bag");

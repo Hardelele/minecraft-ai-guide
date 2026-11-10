@@ -310,6 +310,30 @@ public final class MindTest {
         ok(st.render().contains("failed the same way 3 times"), "the state says the step keeps failing");
         m.record(craft, "NO_TABLE", "no table", "", 1);
         ok(m.over() && m.status.equals("GAVE_UP") && g.state.equals("GAVE_UP") && m.endReason.startsWith("the same step failed 4 times"), "the fourth ends the goal: " + m.endReason);
+        // on the net (Limits.policy): the same failure does not end the goal, only its time and steps do
+        Mind.Limits pl = new Mind.Limits().defense().policy();
+        ok(pl.byNet && pl.steps == 3 * 3600 && pl.seconds == 3 * 3600, "on the net: a step a second of the goal's time (" + pl.steps + " steps)");
+        m = new Mind("Агент 2", g = new Mind.Goal("защищай базу от волн", null, 0), pl, 0);
+        Mind.Call chop = m.parse(answer("chop_tree", "{\"target\":\"near\",\"why\":\"policy\"}", 1, 1, 0), 1);
+        for (int i = 0; i < 40; i++) m.record(chop, "NO_PATH", "no spot beside the tree", "", 0);
+        ok(!m.over() && g.open() && m.repeated() == 40 && m.limit(0) == null, "on the net: 40 same failures, the goal goes on (" + m.status + ")");
+        ok(m.limit(3 * 3600 * 1000L + 1000) != null && m.limit(3 * 3600 * 1000L + 1000).startsWith("time limit"), "on the net: the goal's time still ends it");
+        Mind.Limits pw = new Mind.Limits().policy();
+        m = new Mind("Агент 2", new Mind.Goal("x", null, 0), pw, 0);
+        for (int i = 0; i < pw.steps; i++) m.record(chop, "NO_PATH", "x", "", 0);
+        ok(!m.over() && m.limit(0) != null && m.limit(0).startsWith("step limit (1800"), "on the net: the goal's steps still end it: " + m.limit(0));
+        // the mind share: who drove the bodies, a line a window
+        MindShare sh = new MindShare();
+        for (int i = 0; i < 90; i++) sh.tick("Агент 1", MindShare.NET);
+        for (int i = 0; i < 10; i++) sh.tick("Агент 1", MindShare.FIGHT);
+        for (int i = 0; i < 50; i++) sh.tick("Агент 2", MindShare.GUARD);
+        for (int i = 0; i < 50; i++) sh.tick("Агент 2", MindShare.NET);
+        sh.decided("Агент 1");
+        sh.guarded("Агент 2");
+        String line = sh.line();
+        ok(line != null && line.contains("crew net 70% self-defence 5% reflex 0% guard 25% other 0%") && line.contains("Агент 1: net 90% self-defence 10% (decisions 1, guard cards 0")
+                && line.contains("Агент 2: net 50% guard 50% (decisions 0, guard cards 1"), "the mind share's line: " + line);
+        ok(sh.line() == null, "the window is reset after its line");
         // calls that are no calls, in a row
         m = new Mind("Агент 2", new Mind.Goal("x", null, 0), new Mind.Limits(), 0);
         for (int i = 0; i < m.lim.badCalls; i++) { Mind.Call b = m.parse(text("hmm"), 4); m.record(b, "BAD_CALL", b.error, "", 0); }

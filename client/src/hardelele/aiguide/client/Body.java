@@ -116,6 +116,15 @@ class Body {
         return m != null && m.blockX == x && m.blockY == y && m.blockZ == z;
     }
 
+    /** the aim on a block with no box (wheat, grass, a sapling, a torch): a ray that stops at what has a selection box, as a player's click */
+    boolean aimingAtPlant(int x, int y, int z) {
+        double[] v = look();
+        Vec3 from = Vec3.createVectorHelper(eyeX(), eyeY(), eyeZ());
+        Vec3 to = Vec3.createVectorHelper(eyeX() + v[0] * Crew.REACH, eyeY() + v[1] * Crew.REACH, eyeZ() + v[2] * Crew.REACH);
+        MovingObjectPosition m = a.worldObj.rayTraceBlocks(from, to, false, false, false);
+        return m != null && m.blockX == x && m.blockY == y && m.blockZ == z;
+    }
+
     boolean aimingAt(int x, int y, int z, int face) {
         MovingObjectPosition m = aim();
         return m != null && m.blockX == x && m.blockY == y && m.blockZ == z && m.sideHit == face;
@@ -127,8 +136,11 @@ class Body {
      */
     double[] sightPoint(WorldServer w, int x, int y, int z) {
         Vec3 from = Vec3.createVectorHelper(eyeX(), eyeY(), eyeZ());
+        Block blk = w.getBlock(x, y, z);
+        blk.setBlockBoundsBasedOnState(w, x, y, z);
+        double mid = (blk.getBlockBoundsMinY() + blk.getBlockBoundsMaxY()) / 2;   // a low plant's middle (wheat: an eighth up)
         for (int k = -1; k < 6; k++) {
-            double tx = x + 0.5, ty = y + 0.5, tz = z + 0.5;
+            double tx = x + 0.5, ty = y + (k < 0 ? mid : 0.5), tz = z + 0.5;
             if (k >= 0) {
                 int[] d = Skills.SIDE[k];
                 if (!w.isAirBlock(x + d[0], y + d[1], z + d[2]) && w.getBlock(x + d[0], y + d[1], z + d[2]).getMaterial().isSolid()) continue;
@@ -188,7 +200,8 @@ class Body {
         double dx = p[0] - eyeX(), dy = p[1] - eyeY(), dz = p[2] - eyeZ();
         if (Math.sqrt(dx * dx + dy * dy + dz * dz) > Crew.REACH) { reset(w); return Result.OUT_OF_REACH; }
         lookAt(p[0], p[1], p[2]);
-        if (!aimingAt(x, y, z)) {   // the eyes are not on it yet: the cracks wait
+        boolean plant = b.getCollisionBoundingBoxFromPool(w, x, y, z) == null;
+        if (!(aimingAt(x, y, z) || plant && aimingAtPlant(x, y, z))) {   // the eyes are not on it yet: the cracks wait
             if (++digWait > LOOK_FOR) { reset(w); return Result.NOT_VISIBLE; }
             return Result.RUNNING;
         }
@@ -203,7 +216,12 @@ class Body {
         if (k < 1) return Result.RUNNING;
         reset(w);
         Ledger.act(a, "break " + b.getUnlocalizedName().replace("tile.", ""));
-        return Skills.harvest(a, w, x, y, z) ? Result.OK : Result.BLOCKED;
+        boolean got = Skills.harvest(a, w, x, y, z);
+        if (got) {
+            if (Agent.hungerOn) a.hunger.exhaust(Hunger.BREAK);   // a block broken costs food as a player's
+            RlEnv.broken(a, w, x, y, z);
+        }
+        return got ? Result.OK : Result.BLOCKED;
     }
 
     private void reset(WorldServer w) {
@@ -225,8 +243,22 @@ class Body {
      * the item's own use happens on the point the aim meets. NOT_VISIBLE / OUT_OF_REACH: no such face from here (the
      * task goes and stands where one is, Sight finds where); BLOCKED: nothing to put it against, or the use failed.
      */
+    /** a face to put a block in x y z against, seen from the eyes within reach (place's own test, from where it stands) */
+    boolean seesFace(WorldServer w, int x, int y, int z) {
+        Sight.Space s = space(w);
+        for (int[] c : Skills.supports(w, x, y, z, false))
+            if (Sight.seeFace(s, eyeX(), eyeY(), eyeZ(), c[0], c[1], c[2], c[3], Crew.REACH) != null) return true;
+        return false;
+    }
+
+    /** a cell a block can go into: soft (air, plants) or a flowing liquid (replaced as a player's block replaces it) */
+    static boolean takes(WorldServer w, int x, int y, int z) {
+        if (Crew.soft(w, x, y, z)) return true;
+        return w.getBlock(x, y, z).getMaterial().isLiquid() && w.getBlockMetadata(x, y, z) != 0;
+    }
+
     Result place(WorldServer w, int x, int y, int z, Item item, int meta) {
-        if (!Crew.soft(w, x, y, z)) { placeWait = 0; return Result.GONE; }
+        if (!takes(w, x, y, z)) { placeWait = 0; return Result.GONE; }
         ItemStack in = stack(item, meta);
         if (in == null) { placeWait = 0; return Result.NO_ITEMS; }
         boolean door = item instanceof net.minecraft.item.ItemDoor;
@@ -262,6 +294,7 @@ class Body {
         MovingObjectPosition hit = aim();
         Result r = Skills.use(a, w, x, y, z, in, use, (float) (hit.hitVec.xCoord - use[0]), (float) (hit.hitVec.yCoord - use[1]), (float) (hit.hitVec.zCoord - use[2]));
         if (r == Result.OK && !a.bag.contains(in)) hold(Skills.bestHeld(a));   // the last one went: a tool in the hand again
+        if (r == Result.OK) RlEnv.placed(a, w, x, y, z);   // its decision's mark on the block (the causes)
         return r;
     }
 
@@ -295,7 +328,7 @@ class Body {
     // ---- the legs ---------------------------------------------------------------------------------------
 
     /** walk there by the game's path finder */
-    boolean walkTo(double x, double y, double z, double speed) { return a.getNavigator().tryMoveToXYZ(x, y, z, speed); }
+    boolean walkTo(double x, double y, double z, double speed) { return RlEngine.moveTo(a, x, y, z, speed); }
 
     boolean walkTo(Entity e, double speed) { return a.getNavigator().tryMoveToEntityLiving(e, speed); }
 

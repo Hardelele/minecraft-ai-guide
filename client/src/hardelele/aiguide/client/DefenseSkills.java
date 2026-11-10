@@ -113,6 +113,38 @@ final class DefenseSkills {
         return put(c, a, w, "build", open, item, mat, avoid, p.cells.size());
     }
 
+    /**
+     * The wall's work would start: of the open cells of the planned walls the first few put would take (bottom first,
+     * nearest), one takes a block (soft, a face to go against) from a place this agent gets to and sees it from
+     * (PlaceFrom's own plan, pillar and all). No wall planned yet: true (build_wall plans it first). For the mask
+     * (wall_blocks): build_wall and repair_wall allowed only when they can put something.
+     */
+    static boolean canPut(Crew c, Agent a, WorldServer w, String mat) {
+        if (DefenseWorld.walls().isEmpty()) return true;
+        Object[] it = mat == null ? null : MindSkills.item(mat);
+        if (it == null) return false;
+        List<int[]> open = new ArrayList<int[]>();
+        Set<Long> avoid = new HashSet<Long>();
+        for (Defense.Perimeter p : DefenseWorld.walls()) {
+            for (int[] k : p.cells) {
+                avoid.add(Crew.key(k[0], k[1], k[2]));
+                if (DefenseWorld.open(w, k[0], k[1], k[2]) && !c.board.reserved(a, k[0], k[1], k[2])) open.add(k);
+            }
+            for (int[] k : p.gateCells) avoid.add(Crew.key(k[0], k[1], k[2]));
+        }
+        final Agent me = a;
+        Collections.sort(open, (p, q) -> p[1] != q[1] ? p[1] - q[1] : Double.compare(Crew.dist(me, p[0] + 0.5, p[1], p[2] + 0.5), Crew.dist(me, q[0] + 0.5, q[1], q[2] + 0.5)));
+        int looked = 0;
+        for (int[] k : open) {
+            if (!Crew.soft(w, k[0], k[1], k[2]) || Skills.supports(w, k[0], k[1], k[2], false).isEmpty()) continue;
+            if (looked++ >= 6) break;   // as many as put tries before it gives up
+            Skills.PlaceFrom pf = new Skills.PlaceFrom(k[0], k[1], k[2], (Item) it[0], -1);
+            pf.avoid(avoid);
+            if (pf.plan(a, w) != null) return true;
+        }
+        return false;
+    }
+
     static Skill repair(Crew c, Agent a, WorldServer w) {
         if (DefenseWorld.walls().isEmpty()) return MindSkills.failed("NO_PERIMETER", "no wall is planned: build_wall first");
         List<int[]> h = DefenseWorld.holes(w);
@@ -409,7 +441,8 @@ final class DefenseSkills {
      * have no hunger (they count as fed): a bite heals them by its food points, the game's number for it.
      */
     static Skill eat(Agent a, final int most) {
-        if (a.getHealth() >= a.getMaxHealth()) return MindSkills.failed("FULL_HEALTH", "health " + Math.round(a.getHealth()) + " of " + Math.round(a.getMaxHealth()) + ": nothing to heal");
+        if (!Agent.hungerOn && a.getHealth() >= a.getMaxHealth()) return MindSkills.failed("FULL_HEALTH", "health " + Math.round(a.getHealth()) + " of " + Math.round(a.getMaxHealth()) + ": nothing to heal");
+        if (Agent.hungerOn && !a.hunger.canEat(false)) return MindSkills.failed("NOT_HUNGRY", "food " + a.hunger.food + "/20: full (as a player, it cannot eat)");
         if (food(a) == null) return MindSkills.failed("NO_FOOD", "no food in the bag (bread, apples, cooked meat; raw meat is cooked in a furnace: smelt)");
         Skill s = new Skill() {
             int ticks, eaten;
@@ -417,7 +450,7 @@ final class DefenseSkills {
             Result run(Agent ag, WorldServer w) {
                 if (from < 0) from = ag.getHealth();
                 ItemStack f = food(ag);
-                if (f == null || eaten >= most || ag.getHealth() >= ag.getMaxHealth()) return end(ag);
+                if (f == null || eaten >= most || (Agent.hungerOn ? !ag.hunger.canEat(false) : ag.getHealth() >= ag.getMaxHealth())) return end(ag);
                 ag.body.stop();
                 ag.body.hold(f);
                 if (++ticks % 4 == 0) { ag.swingItem(); w.playSoundEffect(ag.posX, ag.posY + 1, ag.posZ, "random.eat", 0.5F, 1.0F); }
@@ -427,7 +460,9 @@ final class DefenseSkills {
                 Item it = f.getItem();
                 Skills.take(ag, it, f.getMetadata(), 1, Ledger.Way.INGREDIENT);
                 if (it == Items.mushroom_stew) Skills.put(ag, new ItemStack(Items.bowl), Ledger.Way.CRAFTED);
-                ag.heal(heal);
+                if (Agent.hungerOn) ag.hunger.eat(heal, ((ItemFood) it).getSaturationModifier(f));   // hungry: food and saturation, the healing by them
+                else ag.heal(heal);
+                RlEnv.ate(ag, heal);
                 eaten++;
                 Defense.of(ag.who()).eaten++;
                 w.playSoundEffect(ag.posX, ag.posY + 1, ag.posZ, "random.burp", 0.5F, 1.0F);
@@ -502,7 +537,14 @@ final class DefenseSkills {
 
         Result run(Agent a, WorldServer w) {
             long now = w.getTotalWorldTime();
-            if (start == null) start = Defense.of(a.who()).copy();
+            if (start == null) {
+                start = Defense.of(a.who()).copy();
+                if (a.getHealth() < Defense.LOW) {   // too hurt to begin: said at once (it used to walk back inside and fail LOW_HEALTH every time)
+                    reason = "LOW_HEALTH";
+                    detail = note + "health " + Math.round(a.getHealth()) + " is under " + Math.round(Defense.LOW) + ": not fit to fight; eat or retreat first (it heals 1 every 4 s)";
+                    return Result.BLOCKED;
+                }
+            }
             if (interrupt != null) { a.body.stop(); reason = "INTERRUPTED"; detail = note + interrupt + " after " + t / 20 + " s; " + tally(a); return Result.BLOCKED; }
             double[] post = centre(a, w);
             if (post == null) { reason = "GONE"; detail = note + where() + " is gone; " + tally(a); return Result.GONE; }

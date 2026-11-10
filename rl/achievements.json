@@ -1,0 +1,269 @@
+{
+  "version": 4,
+  "note": "Generated from RlAchievements.java: Minecraft 1.7.10's achievements (AchievementList) with their parents and the game's ru_RU names. An agent gets one only with its parent; 'supported': the environment gives it to agents (its condition as here), the others never (the curriculum must not set them).",
+  "achievements": [
+    {
+      "id": "openInventory",
+      "depth": 0,
+      "name_ru": "Проверить карманы",
+      "supported": true,
+      "condition": "at its first decision (an agent's bag is always open: the game's press of E)"
+    },
+    {
+      "id": "mineWood",
+      "parent": "openInventory",
+      "depth": 1,
+      "name_ru": "Нарубить дров",
+      "supported": true,
+      "condition": "a log or log2 comes into its bag (EntityItem pickup)"
+    },
+    {
+      "id": "buildWorkBench",
+      "parent": "mineWood",
+      "depth": 2,
+      "name_ru": "Рабочий стол",
+      "supported": true,
+      "condition": "it crafts a crafting_table"
+    },
+    {
+      "id": "buildPickaxe",
+      "parent": "buildWorkBench",
+      "depth": 3,
+      "name_ru": "Пора в шахту!",
+      "supported": true,
+      "condition": "it crafts any pickaxe"
+    },
+    {
+      "id": "buildFurnace",
+      "parent": "buildPickaxe",
+      "depth": 4,
+      "name_ru": "Горячая штучка",
+      "supported": true,
+      "condition": "it crafts a furnace"
+    },
+    {
+      "id": "acquireIron",
+      "parent": "buildFurnace",
+      "depth": 5,
+      "name_ru": "Куй железо пока...",
+      "supported": true,
+      "condition": "an iron_ingot comes out of a furnace for it (smelt)"
+    },
+    {
+      "id": "buildHoe",
+      "parent": "buildWorkBench",
+      "depth": 3,
+      "name_ru": "Дачный сезон!",
+      "supported": true,
+      "condition": "it crafts any hoe"
+    },
+    {
+      "id": "makeBread",
+      "parent": "buildHoe",
+      "depth": 4,
+      "name_ru": "Хлеб насущный",
+      "supported": true,
+      "condition": "it crafts bread"
+    },
+    {
+      "id": "bakeCake",
+      "parent": "buildHoe",
+      "depth": 4,
+      "name_ru": "Вот такие пироги!",
+      "supported": false,
+      "condition": "it crafts a cake (milk: no buckets here)"
+    },
+    {
+      "id": "buildBetterPickaxe",
+      "parent": "buildPickaxe",
+      "depth": 4,
+      "name_ru": "Обновка!",
+      "supported": true,
+      "condition": "it crafts a pickaxe not of wood"
+    },
+    {
+      "id": "cookFish",
+      "parent": "buildFurnace",
+      "depth": 5,
+      "name_ru": "Вкусная рыбка",
+      "supported": false,
+      "condition": "cooked fish out of a furnace (no fishing here)"
+    },
+    {
+      "id": "onARail",
+      "parent": "acquireIron",
+      "depth": 6,
+      "name_ru": "Стук колёс",
+      "supported": false,
+      "condition": "a minecart ride of 1000 m"
+    },
+    {
+      "id": "buildSword",
+      "parent": "buildWorkBench",
+      "depth": 3,
+      "name_ru": "К бою готов!",
+      "supported": true,
+      "condition": "it crafts any sword"
+    },
+    {
+      "id": "killEnemy",
+      "parent": "buildSword",
+      "depth": 4,
+      "name_ru": "Охотник на монстров",
+      "supported": true,
+      "condition": "it kills a monster (IMob): a hit or its arrow"
+    },
+    {
+      "id": "killCow",
+      "parent": "buildSword",
+      "depth": 4,
+      "name_ru": "Мясник",
+      "supported": true,
+      "condition": "leather comes into its bag"
+    },
+    {
+      "id": "flyPig",
+      "parent": "killCow",
+      "depth": 5,
+      "name_ru": "Жаль, что свиньи не летают...",
+      "supported": false,
+      "condition": "a fall of 5 on a saddled pig"
+    },
+    {
+      "id": "snipeSkeleton",
+      "parent": "killEnemy",
+      "depth": 5,
+      "name_ru": "Снайперская дуэль",
+      "supported": true,
+      "condition": "its arrow kills a skeleton 50 blocks away or more (horizontally)"
+    },
+    {
+      "id": "diamonds",
+      "parent": "acquireIron",
+      "depth": 6,
+      "name_ru": "АЛМАЗЫ!",
+      "supported": true,
+      "condition": "a diamond comes into its bag"
+    },
+    {
+      "id": "diamondsToYou",
+      "parent": "diamonds",
+      "depth": 7,
+      "name_ru": "Алмазы для вас!",
+      "supported": false,
+      "condition": "diamonds thrown to a player"
+    },
+    {
+      "id": "portal",
+      "parent": "diamonds",
+      "depth": 7,
+      "name_ru": "В самое пекло",
+      "supported": false,
+      "condition": "into the Nether"
+    },
+    {
+      "id": "ghast",
+      "parent": "portal",
+      "depth": 8,
+      "name_ru": "Вернуть отправителю",
+      "supported": false,
+      "condition": "a ghast killed by its own fireball"
+    },
+    {
+      "id": "blazeRod",
+      "parent": "portal",
+      "depth": 8,
+      "name_ru": "Пламенный привет",
+      "supported": false,
+      "condition": "a blaze rod"
+    },
+    {
+      "id": "potion",
+      "parent": "blazeRod",
+      "depth": 9,
+      "name_ru": "Юный алхимик",
+      "supported": false,
+      "condition": "a potion brewed"
+    },
+    {
+      "id": "theEnd",
+      "parent": "blazeRod",
+      "depth": 9,
+      "name_ru": "Конец?",
+      "supported": false,
+      "condition": "into the End"
+    },
+    {
+      "id": "theEnd2",
+      "parent": "theEnd",
+      "depth": 10,
+      "name_ru": "Конец.",
+      "supported": false,
+      "condition": "out of the End"
+    },
+    {
+      "id": "enchantments",
+      "parent": "diamonds",
+      "depth": 7,
+      "name_ru": "Заклинатель",
+      "supported": true,
+      "condition": "it crafts an enchanting_table"
+    },
+    {
+      "id": "overkill",
+      "parent": "enchantments",
+      "depth": 8,
+      "name_ru": "Смертельный удар",
+      "supported": true,
+      "condition": "one hit of its deals 18 or more"
+    },
+    {
+      "id": "bookcase",
+      "parent": "enchantments",
+      "depth": 8,
+      "name_ru": "Библиотекарь",
+      "supported": true,
+      "condition": "it crafts a bookshelf"
+    },
+    {
+      "id": "breedCow",
+      "parent": "killCow",
+      "depth": 5,
+      "name_ru": "Перенаселение",
+      "supported": true,
+      "condition": "two cows it fed make a calf"
+    },
+    {
+      "id": "spawnWither",
+      "parent": "theEnd2",
+      "depth": 11,
+      "name_ru": "Начало?",
+      "supported": false,
+      "condition": "a wither built"
+    },
+    {
+      "id": "killWither",
+      "parent": "spawnWither",
+      "depth": 12,
+      "name_ru": "Начало.",
+      "supported": false,
+      "condition": "a wither killed"
+    },
+    {
+      "id": "fullBeacon",
+      "parent": "killWither",
+      "depth": 13,
+      "name_ru": "Маяковский",
+      "supported": false,
+      "condition": "a full beacon"
+    },
+    {
+      "id": "exploreAllBiomes",
+      "parent": "theEnd",
+      "depth": 10,
+      "name_ru": "Время приключений",
+      "supported": false,
+      "condition": "every biome visited"
+    }
+  ]
+}

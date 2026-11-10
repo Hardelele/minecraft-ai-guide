@@ -498,8 +498,8 @@ public class Waves {
         }
         if (t == null) {   // nobody near: to the base
             if (old) {
-                if (!((EntityCreature) m).hasPath()) ((EntityCreature) m).setPathToEntity(w.getEntityPathToXYZ(m, center[0], center[1], center[2], (float) SEEK, true, false, false, true));
-            } else if (m.getNavigator().noPath()) m.getNavigator().tryMoveToXYZ(center[0] + 0.5, center[1], center[2] + 0.5, 1.0);
+                if (!((EntityCreature) m).hasPath()) ((EntityCreature) m).setPathToEntity(RlEngine.path(w, m, center[0], center[1], center[2], (float) SEEK, true, false, false, true));
+            } else if (m.getNavigator().noPath()) RlEngine.moveTo(m, center[0] + 0.5, center[1], center[2] + 0.5, 1.0);
         } else if (old && (!((EntityCreature) m).hasPath() || m.getDistanceToEntity(t) > 12))
             ((EntityCreature) m).setPathToEntity(w.getPathEntityToEntity(m, t, (float) SEEK, true, false, false, true));
         // stuck: not 3 blocks from where it was 45 s ago, and not at the base nor at its target

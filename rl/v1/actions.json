@@ -1,0 +1,293 @@
+{
+  "version": 1,
+  "hash": "1e7a66545050",
+  "n": 38,
+  "note": "Generated from RlSpec.java (docs/rl/CONTRACT.md). The index is the action's number; noop (0) is always allowed and ends the episode with -1.",
+  "actions": [
+    {
+      "id": "noop",
+      "tool": "noop",
+      "args": {}
+    },
+    {
+      "id": "look_around",
+      "tool": "look_around",
+      "args": {}
+    },
+    {
+      "id": "go_to:frontier",
+      "tool": "go_to",
+      "args": {
+        "target": "frontier"
+      }
+    },
+    {
+      "id": "chop_tree:near",
+      "tool": "chop_tree",
+      "args": {
+        "at": "near"
+      }
+    },
+    {
+      "id": "mine:stone",
+      "tool": "mine",
+      "args": {
+        "block": "stone",
+        "count": "8"
+      }
+    },
+    {
+      "id": "mine:coal_ore",
+      "tool": "mine",
+      "args": {
+        "block": "coal_ore",
+        "count": "3"
+      }
+    },
+    {
+      "id": "mine:iron_ore",
+      "tool": "mine",
+      "args": {
+        "block": "iron_ore",
+        "count": "3"
+      }
+    },
+    {
+      "id": "craft:planks",
+      "tool": "craft",
+      "args": {
+        "item": "planks",
+        "count": "4"
+      }
+    },
+    {
+      "id": "craft:stick",
+      "tool": "craft",
+      "args": {
+        "item": "stick",
+        "count": "4"
+      }
+    },
+    {
+      "id": "craft:crafting_table",
+      "tool": "craft",
+      "args": {
+        "item": "crafting_table",
+        "count": "1"
+      }
+    },
+    {
+      "id": "craft:wooden_pickaxe",
+      "tool": "craft",
+      "args": {
+        "item": "wooden_pickaxe",
+        "count": "1"
+      }
+    },
+    {
+      "id": "craft:stone_pickaxe",
+      "tool": "craft",
+      "args": {
+        "item": "stone_pickaxe",
+        "count": "1"
+      }
+    },
+    {
+      "id": "craft:iron_pickaxe",
+      "tool": "craft",
+      "args": {
+        "item": "iron_pickaxe",
+        "count": "1"
+      }
+    },
+    {
+      "id": "craft:wooden_sword",
+      "tool": "craft",
+      "args": {
+        "item": "wooden_sword",
+        "count": "1"
+      }
+    },
+    {
+      "id": "craft:stone_sword",
+      "tool": "craft",
+      "args": {
+        "item": "stone_sword",
+        "count": "1"
+      }
+    },
+    {
+      "id": "craft:iron_sword",
+      "tool": "craft",
+      "args": {
+        "item": "iron_sword",
+        "count": "1"
+      }
+    },
+    {
+      "id": "craft:furnace",
+      "tool": "craft",
+      "args": {
+        "item": "furnace",
+        "count": "1"
+      }
+    },
+    {
+      "id": "craft:torch",
+      "tool": "craft",
+      "args": {
+        "item": "torch",
+        "count": "4"
+      }
+    },
+    {
+      "id": "craft:chest",
+      "tool": "craft",
+      "args": {
+        "item": "chest",
+        "count": "1"
+      }
+    },
+    {
+      "id": "smelt:iron_ingot",
+      "tool": "smelt",
+      "args": {
+        "item": "iron_ingot",
+        "count": "3"
+      }
+    },
+    {
+      "id": "smelt:food",
+      "tool": "smelt",
+      "args": {
+        "item": "food",
+        "count": "4"
+      }
+    },
+    {
+      "id": "place:crafting_table",
+      "tool": "place",
+      "args": {
+        "item": "crafting_table",
+        "at": "near"
+      }
+    },
+    {
+      "id": "place:furnace",
+      "tool": "place",
+      "args": {
+        "item": "furnace",
+        "at": "near"
+      }
+    },
+    {
+      "id": "place:chest",
+      "tool": "place",
+      "args": {
+        "item": "chest",
+        "at": "near"
+      }
+    },
+    {
+      "id": "build_wall:ring",
+      "tool": "build_wall",
+      "args": {
+        "shape": "around base",
+        "height": "2",
+        "material": "any"
+      }
+    },
+    {
+      "id": "repair_wall:nearest",
+      "tool": "repair_wall",
+      "args": {}
+    },
+    {
+      "id": "dig_moat:ring",
+      "tool": "dig_moat",
+      "args": {
+        "depth": "1"
+      }
+    },
+    {
+      "id": "light_area:base",
+      "tool": "light_area",
+      "args": {
+        "radius": "12"
+      }
+    },
+    {
+      "id": "equip:best",
+      "tool": "equip",
+      "args": {
+        "what": "best"
+      }
+    },
+    {
+      "id": "take_post:auto",
+      "tool": "take_post",
+      "args": {
+        "where": "auto"
+      }
+    },
+    {
+      "id": "hold_line:post",
+      "tool": "hold_line",
+      "args": {
+        "radius": "4",
+        "seconds": "60"
+      }
+    },
+    {
+      "id": "retreat:home",
+      "tool": "retreat",
+      "args": {
+        "where": "home"
+      }
+    },
+    {
+      "id": "eat:best",
+      "tool": "eat",
+      "args": {}
+    },
+    {
+      "id": "hunt:near",
+      "tool": "hunt",
+      "args": {
+        "at": "near"
+      }
+    },
+    {
+      "id": "put:chest_all",
+      "tool": "put",
+      "args": {
+        "chest": "crew",
+        "item": "all",
+        "count": "1728"
+      }
+    },
+    {
+      "id": "take:chest_food",
+      "tool": "take",
+      "args": {
+        "chest": "crew",
+        "item": "food",
+        "count": "8"
+      }
+    },
+    {
+      "id": "go_to:base",
+      "tool": "go_to",
+      "args": {
+        "target": "base"
+      }
+    },
+    {
+      "id": "wait:5",
+      "tool": "wait",
+      "args": {
+        "seconds": "5"
+      }
+    }
+  ]
+}

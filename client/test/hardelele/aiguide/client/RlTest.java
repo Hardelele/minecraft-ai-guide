@@ -1,0 +1,490 @@
+package hardelele.aiguide.client;
+
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * The learning environment's spaces without the game (RlSpec, RlSpec1, RlReward, RlAchievements, RlScore;
+ * docs/rl/CONTRACT-v2.md): the actions and their calls, contract 1's kept as the first 38, the features and their
+ * scaling, the mask from raw facts by the rules, the outcome groups, the reward by agent and component with its
+ * scales by scenario, the weights read over the defaults, the scenarios, the achievements' tree, the measures.
+ */
+public final class RlTest {
+    static int bad, passed;
+
+    static void check(boolean ok, String what) {
+        if (ok) passed++;
+        else { bad++; System.out.println("FAIL " + what); }
+    }
+
+    static Map<String, Double> raw(Object... kv) {
+        Map<String, Double> m = new LinkedHashMap<String, Double>();
+        for (int i = 0; i + 1 < kv.length; i += 2) m.put((String) kv[i], ((Number) kv[i + 1]).doubleValue());
+        return m;
+    }
+
+    static boolean on(Map<String, Double> r, String id) { return RlSpec.mask(r)[RlSpec.index(id)] == 1; }
+
+    public static void main(String[] args) {
+        actions();
+        features();
+        masks();
+        reward();
+        scenarios();
+        achievements();
+        score();
+        causes();
+        body();
+        near();
+        reach();
+        fails();
+        System.out.println("RlTest " + (bad == 0 ? "PASS" : "FAIL") + " (" + passed + " checks, " + bad + " failed)");
+        if (bad > 0) System.exit(1);
+    }
+
+    static void actions() {
+        // the actions: noop first, ids unique, each a skill the minds have or the environment's own
+        check(RlSpec.ACTIONS.get(0).id.equals("noop"), "noop is action 0");
+        Set<String> ids = new HashSet<String>(), skills = new HashSet<String>();
+        for (String s : Mind.skills(true)) skills.add(s);
+        for (String s : RlSpec.ENV_TOOLS) skills.add(s);
+        for (RlSpec.Action a : RlSpec.ACTIONS) {
+            check(ids.add(a.id), "action id unique: " + a.id);
+            if (!a.id.equals("noop")) check(skills.contains(a.tool), "a skill of the minds or the environment: " + a.tool);
+        }
+        check(RlSpec.ACTIONS.size() == 136, "136 actions: " + RlSpec.ACTIONS.size());
+        // contract 3's actions are the first 124, the same (a v3 net's action k is k here); its spaces frozen
+        boolean same3 = RlSpec3.ACTIONS.size() == RlSpec.V3_ACTIONS;
+        for (int i = 0; same3 && i < RlSpec3.ACTIONS.size(); i++) {
+            RlSpec3.Action o = RlSpec3.ACTIONS.get(i);
+            RlSpec.Action n = RlSpec.ACTIONS.get(i);
+            same3 = o.id.equals(n.id) && o.tool.equals(n.tool) && o.args.equals(n.args) && o.mask.json().equals(n.mask.json());
+        }
+        check(same3, "the first 124 are contract 3's, rules and all");
+        check(RlSpec3.hash().equals("553dfd026d9d") && RlSpec3.obsHash().equals("7821a391980f") && RlSpec3.rewardHash().equals("c5c25ba77c8a"),
+                "contract 3's hashes as they were: " + RlSpec3.hash() + " " + RlSpec3.obsHash() + " " + RlSpec3.rewardHash());
+        // contract 1's actions are the first 38, the same (a v1 net's action k is k here)
+        check(RlSpec1.ACTIONS.size() == RlSpec.V1_ACTIONS, "contract 1 had 38");
+        boolean same = true;
+        for (int i = 0; i < RlSpec1.ACTIONS.size(); i++) {
+            RlSpec1.Action o = RlSpec1.ACTIONS.get(i);
+            RlSpec.Action n = RlSpec.ACTIONS.get(i);
+            same &= o.id.equals(n.id) && o.tool.equals(n.tool) && o.args.equals(n.args);
+        }
+        check(same, "the first 38 are contract 1's in its order");
+        check(RlSpec1.hash().equals("1e7a66545050") && RlSpec1.obsHash().equals("4ba70eaea357"), "contract 1's hashes as they were: " + RlSpec1.hash() + " " + RlSpec1.obsHash());
+        Mind.Call c = RlSpec.call(RlSpec.index("mine:stone"));
+        check(c.tool.equals("mine") && c.arg("block").equals("stone") && c.num("count", 0) == 8 && c.why.contains("policy"), "an action as a mind's call: " + c.brief());
+        check(RlSpec.call(RlSpec.index("craft:stone_pickaxe")).arg("item").equals("stone_pickaxe"), "craft's item");
+        check(RlSpec.call(RlSpec.index("craft_armor:iron")).arg("material").equals("iron"), "craft_armor's material");
+        check(RlSpec.hash().length() == 12 && !RlSpec.hash().equals(RlSpec1.hash()), "the actions' hash (its rules in it)");
+        // the spaces of a net by its version and size: none silently
+        check(RlSpec.space(fake(1, 137, 38)) == RlSpec.V1 && RlSpec.space(fake(4, RlSpec.FEATURES.size(), 136)) == RlSpec.V2 && RlSpec.space(fake(3, 402, 124)) == RlSpec.V3,
+                "a net's spaces by its version and size");
+        check(RlSpec.space(fake(3, 137, 38)) == null && RlSpec.space(fake(1, RlSpec.FEATURES.size(), 136)) == null && RlSpec.space(fake(3, RlSpec.FEATURES.size(), 136)) == null
+                && RlSpec.space(fake(4, 402, 124)) == null,
+                "a net whose version and size disagree is refused");
+        check(RlSpec.V1.index("wait:5") == 37 && RlSpec.V1.index("descend:mine") == -1 && RlSpec.V2.index("descend:mine") == 38 && RlSpec.V3.index("dig@below") == -1
+                && RlSpec.V2.index("dig@below") == 124 && RlSpec.V3.features() == 402, "the actions a net of each contract has");
+    }
+
+    static PolicyNet fake(int version, int d, int a) {
+        Map<String, float[]> t = new HashMap<String, float[]>();
+        int h = 2;
+        t.put("obs_mean", new float[d]); t.put("obs_std", new float[d]); t.put("l1.w", new float[h * d]); t.put("l1.b", new float[h]);
+        t.put("l2.w", new float[h * h]); t.put("l2.b", new float[h]); t.put("pi.w", new float[a * h]); t.put("pi.b", new float[a]);
+        PolicyNet n = new PolicyNet(d, a, h, t);
+        n.version = version;
+        return n;
+    }
+
+    static void features() {
+        Set<String> names = new HashSet<String>();
+        for (RlSpec.Feature f : RlSpec.FEATURES) check(names.add(f.name), "feature unique: " + f.name);
+        for (RlSpec.Action a : RlSpec.ACTIONS) check(names.contains("last_action_" + a.id), "a last-action feature for " + a.id);
+        for (String s : RlSpec.SCENARIOS) check(names.contains("scen_" + s.replace(':', '_')), "a scenario feature for " + s);
+        for (String s : RlSpec.SCALES) check(names.contains("scale_" + s), "a scale feature for " + s);
+        for (String a : RlAchievements.supported()) check(names.contains("ach_" + a) && names.contains("ach_target_" + a), "achievement features for " + a);
+        // contract 1's features are all still there under their names (a v1 net reads them from the same raw facts)
+        int kept = 0;
+        for (RlSpec1.Feature f : RlSpec1.FEATURES) if (names.contains(f.name) || f.name.equals("scen_siege")) kept++;
+        check(kept == RlSpec1.FEATURES.size(), "contract 1's features are among contract 2's facts: " + kept + " of " + RlSpec1.FEATURES.size());
+        float[] v = RlSpec.vector(raw("health", 10, "bag_log", 64, "night", 0.7, "wall_frac", 5, "enemy_dx", -100, "y_rel", -40));
+        check(v.length == RlSpec.FEATURES.size(), "the vector's length");
+        check(Math.abs(v[idx("health")] - 0.5) < 1e-6, "div: health 10 of 20 -> 0.5");
+        check(Math.abs(v[idx("bag_log")] - 1.0) < 1e-6, "log: 64 of 64 -> 1");
+        check(v[idx("night")] == 1f && v[idx("scen_wood")] == 0f, "bool: over a half is 1, a missing fact is 0");
+        check(v[idx("wall_frac")] == 2f && v[idx("enemy_dx")] == -1f, "div clipped to -1..2");
+        check(Math.abs(v[idx("y_rel")] + 0.625) < 1e-6, "under the ground: y_rel negative");
+    }
+
+    static void masks() {
+        Map<String, Double> none = new HashMap<String, Double>();
+        int[] m0 = RlSpec.mask(none);
+        check(m0[0] == 1 && on(none, "look_around") && on(none, "wait:5"), "noop, look_around, wait always");
+        int ones = 0;
+        for (int x : m0) ones += x;
+        check(ones == 3, "an empty agent can do only noop, look_around, wait: " + ones);
+        // contract 1's rules, as they were
+        check(on(raw("craftable_planks", 1, "small_planks", 1), "craft:planks"), "planks from logs in the hands");
+        check(!on(raw("craftable_planks", 1, "small_planks", 1, "bag_planks", 64), "craft:planks"), "no planks over a stack");
+        check(!on(raw("craftable_wooden_pickaxe", 1), "craft:wooden_pickaxe"), "a 3x3 craft needs a table");
+        check(on(raw("craftable_wooden_pickaxe", 1, "bag_crafting_table", 1, "place_spot", 1), "craft:wooden_pickaxe"), "the bag's table will do");
+        check(!on(raw("craftable_wooden_pickaxe", 1, "bag_crafting_table", 1), "craft:wooden_pickaxe"), "the bag's table needs a free cell beside");
+        check(on(raw("craftable_wooden_pickaxe", 1, "table_known", 1, "table_dist", 5), "craft:wooden_pickaxe"), "a table near will do");
+        check(!on(raw("craftable_wooden_pickaxe", 1, "table_known", 1, "table_dist", 30), "craft:wooden_pickaxe"), "a table too far will not");
+        check(!on(raw("craftable_stone_pickaxe", 1, "bag_crafting_table", 1, "place_spot", 1, "pick_tier", 2), "craft:stone_pickaxe"), "no pickaxe it has already");
+        check(on(raw("craftable_stone_pickaxe", 1, "bag_crafting_table", 1, "place_spot", 1, "pick_tier", 1), "craft:stone_pickaxe"), "a better pickaxe");
+        check(!on(raw("pick_tier", 0), "mine:stone") && on(raw("pick_tier", 1), "mine:stone"), "stone needs a pickaxe");
+        check(!on(raw("pick_tier", 1, "iron_minable", 3), "mine:iron_ore") && on(raw("pick_tier", 2, "iron_minable", 3), "mine:iron_ore"), "iron needs stone");
+        check(on(raw("trees_free", 2), "chop_tree:near") && !on(raw("trees_free", 0), "chop_tree:near"), "a tree seen free");
+        check(!on(raw("waves_active", 1, "health", 5, "low_health", 8), "hold_line:post") && on(raw("waves_active", 1, "health", 15, "low_health", 8), "hold_line:post"), "no fight begun hurt");
+        check(!on(raw("health", 20, "max_health", 20, "food_items", 3), "eat:best") && on(raw("health", 12, "max_health", 20, "food_items", 3), "eat:best"), "eat when hurt");
+        check(on(raw("bag_iron_ore", 2, "fuel", 4, "bag_furnace", 1, "place_spot", 1), "smelt:iron_ingot") && !on(raw("bag_iron_ore", 2, "bag_furnace", 1, "place_spot", 1), "smelt:iron_ingot"), "smelting needs fuel");
+        check(on(raw("base_known", 1, "wall_blocks", 20), "build_wall:ring") && !on(raw("base_known", 1, "wall_blocks", 20, "ring_planned", 1, "wall_frac", 1), "build_wall:ring"), "no wall built twice");
+        check(on(raw("ring_planned", 1, "posts_free", 2), "take_post:auto") && !on(raw("ring_planned", 1, "has_post", 1, "post_dist", 1), "take_post:auto"), "a post once");
+        check(on(raw("chest_known", 1, "chest_food", 4), "take:chest_food") && !on(raw("chest_known", 1), "take:chest_food"), "food from the chest");
+        // contract 2's
+        check(!on(raw("trees_free", 2, "underground", 1), "chop_tree:near") && !on(raw("base_known", 1, "wall_blocks", 20, "underground", 1), "build_wall:ring"), "no trees, no wall from under the ground");
+        check(on(raw("health", 20, "max_health", 20, "food_items", 3, "hunger_on", 1, "food_level", 14), "eat:best")
+                && !on(raw("health", 20, "max_health", 20, "food_items", 3, "hunger_on", 1, "food_level", 20), "eat:best"), "with hunger: eat when hungry, not when full");
+        check(on(raw("pick_tier", 1, "base_known", 1), "descend:mine") && !on(raw("pick_tier", 1, "base_known", 1, "depth_level", 2), "descend:mine")
+                && !on(raw("base_known", 1), "descend:mine"), "down the mine with a pickaxe, not below the last horizon");
+        check(on(raw("underground", 1, "mine_known", 1), "ascend:surface") && !on(raw("mine_known", 1), "ascend:surface"), "up only from under the ground");
+        check(!on(raw("pick_tier", 2, "diamond_minable", 1), "mine:diamond_ore") && on(raw("pick_tier", 3, "diamond_minable", 1), "mine:diamond_ore"), "diamond needs iron");
+        check(!on(raw("pick_tier", 3, "obsidian_minable", 1), "mine:obsidian") && on(raw("pick_tier", 4, "obsidian_minable", 1), "mine:obsidian"), "obsidian needs diamond");
+        check(on(raw("bag_bow", 1, "bag_arrow", 4, "enemies_visible", 1), "shoot:post") && !on(raw("bag_bow", 1, "enemies_visible", 1), "shoot:post"), "a shot needs arrows");
+        check(on(raw("armor_craftable_iron", 1, "bag_crafting_table", 1, "place_spot", 1), "craft_armor:iron") && !on(raw("armor_craftable_iron", 1), "craft_armor:iron"), "armour at a table");
+        check(on(raw("bag_wheat_seeds", 3, "farm_empty", 2), "plant:wheat") && !on(raw("bag_wheat_seeds", 3), "plant:wheat"), "seeds on empty farmland");
+        check(on(raw("farm_ripe", 1), "harvest:farm") && !on(raw("farm_planted", 5), "harvest:farm"), "a harvest of the ripe only");
+        check(on(raw("pen_adults", 3), "slaughter:pen") && !on(raw("pen_adults", 2), "slaughter:pen"), "the pen keeps its two");
+        check(on(raw("ench_table_known", 1, "ench_table_dist", 3, "xp_level", 2, "enchantable", 1), "enchant:best")
+                && !on(raw("ench_table_known", 1, "ench_table_dist", 3, "enchantable", 1), "enchant:best"), "an enchanting needs levels");
+        check(on(raw("ring_planned", 1, "bag_wooden_door", 1), "build_gate:door") && !on(raw("ring_planned", 1, "bag_wooden_door", 1, "door_placed", 1), "build_gate:door"), "one gate");
+        check(!on(raw("craftable_wooden_hoe", 1, "small_wooden_hoe", 0, "bag_crafting_table", 1, "place_spot", 1, "hoes", 1), "craft:wooden_hoe"), "no second hoe");
+        // the rules are data: Cond's JSON read back gives the same
+        int[] mk = RlSpec.mask(raw("trees_free", 1, "pick_tier", 1, "base_known", 1, "craftable_planks", 1, "small_planks", 1));
+        check(mk[RlSpec.index("chop_tree:near")] == 1 && mk[RlSpec.index("descend:mine")] == 1 && mk[RlSpec.index("ascend:surface")] == 0, "a mask of several");
+        // a negative control: the rules of two actions swapped give another mask on some states
+        JsonObject cs = RlSpec.cases(500, 3);
+        int differ = 0, i1 = RlSpec.index("chop_tree:near"), i2 = RlSpec.index("mine:stone");
+        for (com.google.gson.JsonElement e : cs.getAsJsonArray("cases")) {
+            Map<String, Double> r = new HashMap<String, Double>();
+            for (Map.Entry<String, com.google.gson.JsonElement> kv : e.getAsJsonObject().getAsJsonObject("raw").entrySet()) r.put(kv.getKey(), kv.getValue().getAsDouble());
+            if (RlSpec.ACTIONS.get(i1).mask.eval(r) != (e.getAsJsonObject().getAsJsonArray("mask").get(i2).getAsInt() == 1)) differ++;
+        }
+        check(differ > 20, "a swapped rule is caught on the cases: " + differ + " of 500 differ");
+        check(RlSpec.outcome("OK").equals("ok") && RlSpec.outcome("NO_PATH").equals("fail_path") && RlSpec.outcome("MISSING").equals("fail_items")
+                && RlSpec.outcome("NO_TREE_SEEN").equals("fail_target") && RlSpec.outcome("LOW_HEALTH").equals("fail_danger") && RlSpec.outcome("MASKED").equals("fail_other")
+                && RlSpec.outcome(null).equals("none") && RlSpec.outcome("NOT_RIPE").equals("fail_target") && RlSpec.outcome("NO_XP").equals("fail_items"), "outcome groups");
+    }
+
+    static void reward() {
+        RlReward r = new RlReward(RlSpec.rewardDefaults(), RlSpec.scenario("wood"));
+        r.add("1", "time", 20);
+        r.add("1", "stock.value", 0.2);
+        r.add("2", "death", 1);
+        r.add("1", "perimeter.kill", 3);   // the wood has no perimeter: nothing
+        r.add("1", "goal", 0);
+        JsonObject comp = new JsonObject();
+        double t1 = r.take("1", comp);
+        check(Math.abs(t1 - (-0.02 + 0.1)) < 1e-9, "agent 1's reward: " + t1);
+        check(comp.has("time") && comp.has("stock") && !comp.has("perimeter") && Math.abs(comp.get("stock").getAsDouble() - 0.1) < 1e-9, "its components: " + comp);
+        check(r.take("1", null) == 0, "taken once");
+        check(Math.abs(r.take("2", null) + 1) < 1e-9, "a death -1");
+        check(Math.abs(r.total - (-0.92)) < 1e-9 && r.episodeJson().get("death").getAsDouble() == -1, "the episode's sum by component");
+        RlReward waves = new RlReward(RlSpec.rewardDefaults(), RlSpec.scenario("waves:easy"));
+        check(waves.add("1", "perimeter.kill", 1) > 0 && waves.add("1", "safety.wall", 0.5) > 0 && waves.add("1", "mine.iron", 1) == 0, "the waves pay the perimeter and safety, not the mine");
+        RlReward pick = new RlReward(RlSpec.rewardDefaults(), RlSpec.scenario("pickaxe"));
+        check(pick.add("1", "safety.moat", 0.5) == 0 && pick.add("1", "safety.wall", 1) == 0 && pick.add("1", "equipment.pickaxe", 0.25) > 0, "the pickaxe pays no moat, no wall");
+        check(pick.add("1", "equipment.weapon", 0.25) == 0 && new RlReward(RlSpec.rewardDefaults(), RlSpec.scenario("sword")).add("1", "equipment.weapon", 0.25) > 0,
+                "the pickaxe pays its pickaxe, not a sword; the sword its sword");
+        RlReward ach = new RlReward(RlSpec.rewardDefaults(), RlSpec.scenario("achievements"));
+        check(Math.abs(ach.add("1", "achievement.new", 1) - 0.6) < 1e-9, "the achievements' scenario doubles them");
+        boolean threw = false;
+        try { r.add("1", "nonsense", 1); } catch (IllegalArgumentException e) { threw = true; }
+        check(threw, "an unknown weight is an error");
+        Map<String, Double> w = RlSpec.rewardWeights(new JsonParser().parse("{\"weights\":{\"noop\":-3,\"time\":0}}").getAsJsonObject());
+        check(w.get("noop") == -3 && w.get("time") == 0 && w.get("goal") == 5, "a weights file over the defaults");
+        check(RlSpec.component("mine.iron").equals("mine") && RlSpec.component("noop").equals("noop"), "a weight's component");
+        Set<String> comps = new HashSet<String>();
+        for (String k : RlSpec.rewardDefaults().keySet()) comps.add(RlSpec.component(k));
+        for (String s : RlSpec.SCALES) check(comps.contains(s), "the scale " + s + " has weights");
+        for (String k : new String[] { "tier_up", "new_item", "gathered.log", "built.wall", "ate" }) check(!RlSpec.rewardDefaults().containsKey(k), "contract 1's " + k + " is gone (scales instead)");
+    }
+
+    static void scenarios() {
+        for (String s : RlSpec.available()) {
+            RlSpec.Scenario x = RlSpec.scenario(s);
+            check(x.seconds > 0 && !x.goal.isEmpty(), "scenario " + s);
+            for (String k : x.scales.keySet()) check(RlSpec.isScale(RlSpec.component(k)) && (k.indexOf('.') < 0 || RlSpec.rewardDefaults().containsKey(k)), "scenario " + s + "'s scale " + k);
+        }
+        check(RlSpec.available().size() == 17, "17 scenarios: " + RlSpec.available());
+        check(RlSpec.scenario("siege") == null && RlSpec.scenario("nonsense") == null, "siege and the unknown are not there");
+        check(RlSpec.scenario("waves:normal").waves.equals("normal") && RlSpec.scenario("waves:easy").defense && RlSpec.scenario("wood").waves == null, "the waves' levels");
+        check(RlSpec.scenario("wood").scale("safety") == 0 && RlSpec.scenario("pickaxe").scale("safety") == 0 && RlSpec.scenario("fortify").scale("safety") == 1, "the wall pays only where it is the work");
+        check(RlSpec.scenario("farm").hunger && RlSpec.scenario("mine_trip").hunger && !RlSpec.scenario("wood").hunger, "hunger where food is the matter");
+        check(RlSpec.scenario("enchant").xpLevels > 0 && RlSpec.scenario("diamond").crewGoal, "the enchanting's levels, the diamond the crew's");
+        check(RlSpec.kit("stone_pickaxe 1, planks 16,stick").size() == 3 && RlSpec.kit("stone_pickaxe 1, planks 16,stick").get(2)[1].equals("1"), "a kit read");
+    }
+
+    static void achievements() {
+        check(RlAchievements.ALL.size() == 33, "1.7.10 has 33 achievements: " + RlAchievements.ALL.size());
+        check(RlAchievements.supported().size() == 18, "18 an agent can get: " + RlAchievements.supported());
+        for (RlAchievements.Ach a : RlAchievements.ALL.values()) check(a.parent == null || RlAchievements.ALL.containsKey(a.parent), "the parent of " + a.id);
+        check(RlAchievements.depth("acquireIron") == 5 && RlAchievements.depth("openInventory") == 0 && RlAchievements.ALL.get("spawnWither").parent.equals("theEnd2"), "the tree as the game's");
+        Set<String> got = new HashSet<String>();
+        check(RlAchievements.available(got).size() == 1 && RlAchievements.available(got).contains("openInventory"), "at first only the root");
+        check(!RlAchievements.canGet(got, "mineWood"), "no child before its parent");
+        got.add("openInventory");
+        got.add("mineWood");
+        got.add("buildWorkBench");
+        check(RlAchievements.available(got).containsAll(java.util.Arrays.asList("buildPickaxe", "buildHoe", "buildSword")) && !RlAchievements.available(got).contains("bakeCake"),
+                "the next ones, the unsupported never: " + RlAchievements.available(got));
+        for (String s : RlAchievements.supported()) {
+            String p = RlAchievements.ALL.get(s).parent;
+            check(p == null || RlAchievements.ALL.get(p).supported, "a supported one's parent is supported: " + s);
+        }
+    }
+
+    /** the scales' measures: the change of a value, a baseline unpaid, the renewable only when used, a trip, the perimeter, the stall */
+    static void score() {
+        RlScore.Track t = new RlScore.Track();
+        check(t.delta("a", 5) == 0 && t.delta("a", 7) == 2 && t.delta("a", 4) == -3, "a measure pays its change, the first value is the baseline");
+        check(t.rise("h", 0) == 0 && t.rise("h", 1) == 1 && t.rise("h", 0) == 0 && t.rise("h", 1) == 0 && t.rise("h", 2) == 1, "a rise pays a new best only");
+        double[] e = RlScore.equipment(6, 2, 3, true, 5);
+        check(e[0] == 0.3 && e[1] == 0.5 && e[2] == 0.75 && e[3] == 1 && RlScore.equipment(0, 0, 0, true, 2)[3] == 0, "equipment's parts");
+        Map<String, Double> st = new HashMap<String, Double>();
+        st.put("log", 1000.0);
+        double capped = RlScore.stock(st);
+        st.put("log", 32.0);
+        check(capped == RlScore.stock(st) && capped == 1.0, "the stock is capped: hoarding past the cap pays nothing");
+        RlScore.Sustain su = new RlScore.Sustain();
+        su.add(0, RlScore.FOOD_RENEW, 10);
+        check(su.pay()[0] == 0, "a farm's harvest nobody eats pays nothing");
+        su.add(5, RlScore.FOOD_EATEN, 4);
+        check(su.pay()[0] == 4, "eaten: the renewable that fed pays");
+        su.add(10, RlScore.FOOD_EATEN, 20);
+        check(su.pay()[0] == 6, "no more than the renewable got");
+        RlScore.Sustain hunt = new RlScore.Sustain();
+        hunt.add(0, RlScore.FOOD_EATEN, 30);
+        check(hunt.pay()[0] == 0, "eating what is not grown pays nothing");
+        check(su.recent(10, 120)[1] == 24 && su.recent(200, 120)[1] == 0, "the window's sums");
+        check(RlScore.sources(16, 2, 4) == 3 && RlScore.sources(8, 1, 0) == 1, "the sources kept");
+        check(RlScore.horizon(70) == 0 && RlScore.horizon(43) == 1 && RlScore.horizon(14) == 2 && RlScore.atHorizon(38) && !RlScore.atHorizon(25), "the horizons");
+        RlScore.Trip tr = new RlScore.Trip();
+        check(!tr.update(0, false, 0) && !tr.update(1, true, 0) && !tr.update(1, true, 2) && tr.update(0, false, 0) && tr.done == 1, "a trip down, ore, up: done");
+        check(!tr.update(1, true, 0) && !tr.update(0, false, 0) && tr.done == 1, "down and up with no ore: no trip");
+        RlScore.Perimeter pm = new RlScore.Perimeter();
+        double[] s1 = pm.second(java.util.Arrays.asList(1, 2), 1);
+        double[] s2 = pm.second(java.util.Arrays.asList(1), 1);
+        check(s1[0] == 2 && s1[1] == 2 && s2[0] == 1 && s2[1] == 0 && pm.mobSeconds == 3, "mob-seconds, a breach counted once");
+        check(!pm.waveEnd() && pm.waveEnd() && pm.clean == 1, "a wave with a breach is not clean, one without is");
+        RlScore.Stall sl = new RlScore.Stall();
+        check(!sl.check("1", 0) && !sl.check("1", 59) && sl.check("1", 60) && !sl.check("1", 61), "a stall a window without progress");
+        sl.progress("1", 100);
+        check(!sl.check("1", 150) && sl.check("1", 160), "progress starts the window again");
+        check(RlScore.progress("mine") && RlScore.progress("goal") && !RlScore.progress("time") && !RlScore.progress("skill_fail"), "what counts as progress");
+    }
+
+    /** the choices by what is reached: trees a walk gets to (the others remembered), a cell to fall back to, a stuck walk */
+    static void reach() {
+        java.util.List<int[]> trees = new java.util.ArrayList<int[]>();
+        for (int i = 0; i < 8; i++) trees.add(new int[] { i, 64, 0 });
+        final java.util.Set<Integer> walled = new java.util.HashSet<Integer>(java.util.Arrays.asList(0, 1, 2));   // the three nearest: behind a ravine
+        final java.util.Set<Integer> given = new java.util.HashSet<Integer>();
+        java.util.List<int[]> un = new java.util.ArrayList<int[]>();
+        java.util.List<int[]> ok = Reach.reachable(trees, p -> !given.contains(p[0]), p -> !walled.contains(p[0]), 5, un);
+        check(ok.size() == 2 && ok.get(0)[0] == 3 && un.size() == 3, "the trees a walk gets to, the nearest first; the walled ones noted: " + ok.size() + " " + un.size());
+        for (int[] p : un) given.add(p[0]);   // remembered as given up (Walks)
+        ok = Reach.reachable(trees, p -> !given.contains(p[0]), p -> !walled.contains(p[0]), 5, null);
+        check(ok.size() == 5 && ok.get(0)[0] == 3, "the next time the unreached are not looked at: five others checked");
+        check(Reach.reachable(trees, p -> true, p -> false, 5, null).isEmpty(), "none reached: no tree (the mask says so, chop is not chosen)");
+        // falling back from a mob at x 0: the house first if reached, else away; nowhere: null (hit back)
+        java.util.List<int[]> house = new java.util.ArrayList<int[]>();
+        house.add(new int[] { 20, 64, 0 });
+        check(Reach.fallBack(5, 64, 0, 0, 0, house, p -> true)[0] == 20, "the house when a path goes there");
+        int[] away = Reach.fallBack(5, 64, 0, 0, 0, house, p -> p[0] != 20);
+        check(away != null && away[0] >= 10, "else straight away from the mob: " + (away == null ? null : away[0]));
+        int[] side = Reach.fallBack(5, 64, 0, 0, 0, house, p -> p[0] < 10 && Math.abs(p[2]) >= 3);
+        check(side != null && Math.abs(side[2]) >= 3, "a wall behind: aside");
+        check(Reach.fallBack(5, 64, 0, 0, 0, house, p -> false) == null, "nowhere reached: null (it hits back, not stands 10 s under the blows)");
+        Reach.Progress pr = new Reach.Progress(40);
+        boolean stuck = false;
+        for (int t = 0; t < 30; t++) stuck |= pr.stuck(10 - t * 0.2);
+        check(!stuck, "a walk that gets nearer is not stuck");
+        for (int t = 0; t < 45; t++) stuck |= pr.stuck(4.0);
+        check(stuck, "40 ticks without getting nearer: stuck, the walk ends");
+        // a hanging top: its lowest log at y 66, the ground round it at 63 (stand height 64): no spot beside it
+        int[] round = { 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, -1 };
+        check(Reach.trunkPlan(66, round, true).equals("pillar") && Reach.trunkPlan(66, round, false).equals("skip"), "a hanging top: up a pillar with blocks, else skipped");
+        check(Reach.trunkPlan(64, round, false).equals("chop") && Reach.trunkPlan(65, round, false).equals("chop"), "a trunk on the ground (or one up): chopped from beside it");
+    }
+
+    /** (3.1) the memory of failures: a run of the same action, the window, the reason's group; the retry's penalty grows, another way pays */
+    static void fails() {
+        RlScore.Fails f = new RlScore.Fails();
+        int chop = RlSpec.index("chop_tree:near"), dig = RlSpec.index("dig@front");
+        double[] s1 = f.step(chop, false, "NO_PATH"), s2 = f.step(chop, false, "NO_PATH"), s3 = f.step(chop, false, "NO_PATH");
+        check(s1[0] == 0 && s2[0] == 1 && s3[0] == 2 && f.run(chop) == 3, "the retry's penalty grows: 0, 1, 2 (the first failure is skill_fail only)");
+        check(f.group.equals("no_path") && Math.abs(f.recent(chop) - 3.0 / RlSpec.FAIL_WINDOW) < 1e-9, "the last failure's group, the window's share");
+        double[] s4 = f.step(dig, true, "OK");
+        check(s4[1] == 1 && f.run(chop) == 3, "a success by another action: a change of approach (the other's run stays)");
+        check(f.step(dig, true, "OK")[1] == 0, "no bonus without a failure before");
+        f.step(chop, false, "NO_PATH");
+        check(f.step(chop, true, "OK")[1] == 0 && f.run(chop) == 0, "the same action succeeding at last: no change of approach, its run over");
+        for (int i = 0; i < 30; i++) f.step(dig, true, "OK");
+        check(f.recent(chop) == 0, "the window forgets");
+        check(RlSpec.failGroup("NO_TOOL").equals("no_tool") && RlSpec.failGroup("OCCUPIED").equals("occupied") && RlSpec.failGroup("NOT_VISIBLE").equals("not_visible")
+                && RlSpec.failGroup("NO_SPOT").equals("no_spot") && RlSpec.failGroup("MISSING").equals("no_items") && RlSpec.failGroup("OK").isEmpty(), "the reasons' groups");
+        RlReward rw = new RlReward(RlSpec.rewardDefaults(), RlSpec.scenario("wood"));
+        check(Math.abs(rw.add("1", "retry_fail", 2) + 0.06) < 1e-9 && Math.abs(rw.add("1", "switch_ok", 1) - 0.05) < 1e-9, "their weights, components of their own");
+    }
+
+    /** a world of cells for RlNear: solid at the cells given, else air (a mob where asked) */
+    static RlNear.Grid grid(final java.util.Set<Long> solid, final java.util.Set<Long> lava, final long mob) {
+        return new RlNear.Grid() {
+            public int at(int x, int y, int z) {
+                long k = RlCause.key(x, y, z);
+                return lava.contains(k) ? RlNear.LAVA : solid.contains(k) ? RlNear.SOLID : RlNear.AIR;
+            }
+            public boolean mob(int x, int y, int z) { return RlCause.key(x, y, z) == mob; }
+        };
+    }
+
+    /** round an agent (3.1) on synthetic worlds: a pillar up, a pit down, four blocks round, shut in; the masks of the primitives */
+    static void near() {
+        java.util.Set<Long> s = new java.util.HashSet<Long>(), lava = new java.util.HashSet<Long>();
+        for (int x = -3; x <= 3; x++) for (int z = -3; z <= 3; z++) for (int y = 0; y < 64; y++) s.add(RlCause.key(x, y, z));   // ground to y 63
+        Map<String, Double> r = new HashMap<String, Double>();
+        // on flat ground at y 64, facing +z (south)
+        RlNear.facts(r, grid(s, lava, -1), 0, 64, 0, 0, 1, true);
+        check(r.get("nb_below_solid") == 1 && r.get("nb_front_air") == 1 && r.get("nb_above_air") == 1 && r.get("walls_around") == 0 && r.get("enclosed") == 0, "flat ground: open round");
+        check(r.get("nb_below_dig") == 1 && r.get("nb_front_dig") == 0 && r.get("pillar_ok") == 1 && r.get("nb_left_free") == 1 && r.get("nb_above_free") == 0,
+                "flat: dig down yes, nothing ahead to dig, a pillar yes; a block at the left (the floor holds it), over the head nothing to hold it");
+        check(r.get("nb_front_down_dig") == 1, "flat: the ground in front is seen over the open cell in front: it may be dug");
+        check(on(r, "dig@below") && !on(r, "dig@front") && !on(r, "pillar:up"), "the masks read the same facts (no block in hand: no pillar)");
+        r.put("slot_block", 5.0);
+        check(on(r, "pillar:up") && on(r, "place:block@left") && !on(r, "place:block@above"), "with blocks: a pillar, a block at the left");
+        // a pillar up: three blocks under it, it stands at y 67
+        for (int y = 64; y <= 66; y++) s.add(RlCause.key(0, y, 0));
+        r.clear();
+        RlNear.facts(r, grid(s, lava, -1), 0, 67, 0, 0, 1, true);
+        check(r.get("nb_below_solid") == 1 && r.get("nb_front_air") == 1 && r.get("nb_left_free") == 0 && r.get("pillar_ok") == 1,
+                "on its pillar: the sides free but nothing to put a block against, up again yes");
+        check(r.get("nb_below_dig") == 1, "it may dig its pillar down (a drop of one, then the next)");
+        for (int y = 64; y <= 66; y++) s.remove(RlCause.key(0, y, 0));
+        // a pit down: it dug three under itself, it stands at y 61 with walls round at feet and head
+        for (int y = 61; y <= 63; y++) s.remove(RlCause.key(0, y, 0));
+        r.clear();
+        RlNear.facts(r, grid(s, lava, -1), 0, 61, 0, 0, 1, true);
+        check(r.get("walls_around") == 4 && r.get("enclosed") == 0 && r.get("nb_above_air") == 1, "in its pit: walls round, open over the head");
+        check(r.get("nb_front_dig") == 1 && r.get("nb_below_dig") == 1 && r.get("nb_above_free") == 1, "in the pit: the walls may be dug, down again, a block over its head (the walls hold it)");
+        check(r.get("nb_front_down_dig") == 0, "in the pit: the block in front and down is under the wall in front, not seen (the game: NOT_VISIBLE)");
+        s.add(RlCause.key(0, 63, 0));   // a block over the head: shut in
+        r.clear();
+        RlNear.facts(r, grid(s, lava, -1), 0, 61, 0, 0, 1, true);
+        check(r.get("enclosed") == 1 && r.get("shelter") == 1, "the pit roofed: shut in, sheltered at night");
+        r.clear();
+        RlNear.facts(r, grid(s, lava, -1), 0, 61, 0, 0, 1, false);
+        check(r.get("enclosed") == 1 && r.get("shelter") == 0, "by day it is no shelter (the metric counts nights and waves)");
+        // no digging down over lava or a drop
+        lava.add(RlCause.key(0, 59, 0));
+        r.clear();
+        RlNear.facts(r, grid(s, lava, -1), 0, 61, 0, 0, 1, true);
+        check(r.get("nb_below_dig") == 0, "not down when lava is under the block");
+        lava.clear();
+        for (int y = 56; y <= 59; y++) s.remove(RlCause.key(0, y, 0));
+        r.clear();
+        RlNear.facts(r, grid(s, lava, -1), 0, 61, 0, 0, 1, true);
+        check(r.get("nb_below_dig") == 0, "not down over a drop of three");
+        // four blocks round on flat ground: walls at the feet, not shut in (the head open)
+        s.clear();
+        for (int x = -3; x <= 3; x++) for (int z = -3; z <= 3; z++) s.add(RlCause.key(x, 63, z));
+        for (int[] d : new int[][] { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) s.add(RlCause.key(d[0], 64, d[1]));
+        r.clear();
+        RlNear.facts(r, grid(s, lava, RlCause.key(0, 64, 3)), 0, 64, 0, 0, 1, true);
+        check(r.get("walls_around") == 4 && r.get("enclosed") == 0 && r.get("nb_front_solid") == 1 && r.get("nb_left_solid") == 1 && r.get("nb_back_solid") == 1,
+                "four blocks round: four walls, not shut in");
+        check(r.get("nb_front_mob") == 0, "a mob two away is not in the front cell");
+        check(RlNear.off("left", 0, 1)[0] == 1 && RlNear.off("right", 0, 1)[0] == -1 && RlNear.off("back", 0, 1)[2] == -1, "left and right of a southward look (east, west)");
+    }
+
+    /** the agents' experience and hunger as a player's of 1.7.10 */
+    static void body() {
+        Xp x = new Xp();
+        x.add(17);
+        check(x.level == 1 && x.progress < 1e-6 && x.total == 17, "17 points: level 1 (" + x.level + ")");
+        x.setLevels(15);
+        check(x.level == 15 && Xp.cap(15) == 17 && Xp.cap(16) == 20 && Xp.cap(30) == 62 && Xp.cap(31) == 69, "the bar's caps");
+        x.spend(3);
+        check(x.level == 12, "levels spent on an enchanting");
+        Hunger h = new Hunger();
+        for (int i = 0; i < 200; i++) h.exhaust(0.15F);   // 30 of exhaustion: 5 points of saturation, then 2 of food
+        h.tick(20, 20, 0);
+        int was = h.food;
+        for (int i = 0; i < 60; i++) h.tick(20, 20, 0);
+        check(h.food == 18 && h.saturation == 0, "exhaustion takes the saturation, then the food: " + h.line());
+        h.food = 0;
+        int starve = 0;
+        for (int i = 0; i < 81; i++) if (h.tick(10, 20, 0) == Hunger.STARVE) starve++;
+        check(starve == 1, "starving: a point of damage every 4 s");
+        h.eat(5, 0.6F);
+        check(h.food == 5 && h.canEat(false) && was <= 20, "bread: 5 points");
+    }
+
+    /** the causes on synthetic events: a lava trap, a sword made then used, a water bucket that saves; the novelty once */
+    static void causes() {
+        RlCause c = new RlCause();
+        // a lava trap: agent 1 pours lava in the moat (decision A), it flows two cells on; a zombie dies in the flow
+        RlCause.Link a = c.decide("1", 100, "place:lava@moat");
+        long src = RlCause.key(10, 63, 5), f1 = RlCause.key(11, 63, 5), f2 = RlCause.key(12, 63, 5), far = RlCause.key(30, 63, 5);
+        c.placed(src, "minecraft:lava", a);
+        c.decide("1", 120, "wait:5");   // its next decision: the lava's mark is still A's
+        c.changed(f1, "minecraft:flowing_lava", new long[] { src, far });
+        c.changed(f2, "minecraft:flowing_lava", new long[] { f1 });
+        c.changed(far, "minecraft:flowing_lava", new long[] { RlCause.key(31, 63, 5) });
+        check(c.at(f2) != null && c.at(f2).id == a.id && c.at(f2).via.equals("block:lava"), "the flow keeps its source's decision: " + (c.at(f2) == null ? null : c.at(f2).json()));
+        check(c.at(far) == null, "lava with no marked neighbour has no cause");
+        List<RlCause.Link> lava = RlCause.chain(c.at(f2));
+        List<Object[]> n1 = c.novel(lava, "mob_killed");
+        check(lava.size() == 1 && lava.get(0).kind.equals("place:lava@moat") && n1.size() == 1 && n1.get(0)[0].equals("block:lava → mob_killed") && (Boolean) n1.get(0)[2],
+                "a zombie dead in the flow: the chain to the pouring, a discovery");
+        check(c.novel(lava, "mob_killed").isEmpty(), "the same link and effect again: nothing new");
+        c.changed(f2, "minecraft:cobblestone", new long[] { f1 });   // lava met water: cobblestone, not the agent's
+        check(c.at(f2) == null, "the block the world made of it has no mark");
+        // a sword: crafted by decision B, used by decision D: the kill's chain is the hit, then the craft
+        RlCause.Link b = c.decide("2", 200, "craft:stone_sword");
+        RlCause.Link d = c.decide("2", 900, "attack@mob");
+        List<RlCause.Link> kill = RlCause.chain(c.now("2").via("hit"), c.item(b.id, "stone_sword"));
+        check(kill.size() == 2 && kill.get(0).id == d.id && kill.get(1).id == b.id && kill.get(1).via.equals("item:stone_sword"), "the kill: the hit, the sword's craft");
+        List<Object[]> n2 = c.novel(kill, "mob_killed");
+        check(n2.size() == 2 && n2.get(0)[1].equals("hit") && n2.get(1)[1].equals("item:stone_sword"), "two kinds of cause new for a kill");
+        // a bucket: filled by decision E; the reflex (F) puts its water under the falling agent: saved
+        RlCause.Link e = c.decide("3", 300, "use:bucket@front");
+        RlCause.Link r = c.decide("3", 950, "reflex:water");
+        long under = RlCause.key(0, 40, 0);
+        c.placed(under, "minecraft:water", r);
+        List<RlCause.Link> saved = RlCause.chain(c.at(under), c.item(e.id, "water_bucket"));
+        check(saved.size() == 2 && saved.get(0).kind.equals("reflex:water") && saved.get(1).kind.equals("use:bucket@front"), "saved: the water put, the bucket filled");
+        check(c.novel(saved, "agent_saved").size() == 2 && RlCause.curious("agent_saved") && !RlCause.curious("agent_killed"), "a save is a discovery that pays curiosity");
+        // a new episode: the marks go, the decisions' ids go on, a discovery is new in it again but not ever
+        long last = c.next;
+        c.reset();
+        check(c.at(src) == null && c.current.isEmpty() && c.next == last, "a reset: no marks, the ids go on");
+        List<Object[]> again = c.novel(lava, "mob_killed");
+        check(again.size() == 1 && !(Boolean) again.get(0)[2], "new in the episode, not ever");
+        check(RlCause.chain(null, null).isEmpty() && RlCause.family("flowing_water").equals("water") && RlCause.family("stone") == null, "the families");
+    }
+
+    static int idx(String name) {
+        for (int i = 0; i < RlSpec.FEATURES.size(); i++) if (RlSpec.FEATURES.get(i).name.equals(name)) return i;
+        throw new IllegalArgumentException(name);
+    }
+}
