@@ -31,6 +31,7 @@ import java.util.UUID;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import net.minecraft.block.Block;
+import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLiving;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.init.Blocks;
@@ -76,6 +77,7 @@ public class RlEnv {
         };
         FMLCommonHandler.instance().bus().register(e);
         RlEngine.start();
+        Exploration.finds = (a, x, y, z, b) -> { RlEnv r = instance; if (r != null) r.found(a, x, y, z, b); };   // (3.1) a scout's finds
         e.listen();
         Events.log("rl: the environment on port " + port + (e.fast ? ", fast ticks" : "") + "; " + RlSpec.ACTIONS.size() + " actions (" + RlSpec.hash() + "), "
                 + RlSpec.FEATURES.size() + " features (" + RlSpec.obsHash() + ")");
@@ -94,7 +96,32 @@ public class RlEnv {
             try { f = new JsonParser().parse(new String(java.nio.file.Files.readAllBytes(new File(rf).toPath()), StandardCharsets.UTF_8)).getAsJsonObject(); }
             catch (Exception ex) { Events.log("rl: the reward file " + rf + " not read: " + ex + " (the built-in weights)"); }
         weights = RlSpec.rewardWeights(f);
+        JsonObject afk = f != null && f.has("constants") && f.getAsJsonObject("constants").has("afk") ? f.getAsJsonObject("constants").getAsJsonObject("afk") : null;
+        afkTau = afk != null && afk.has("tau_s") ? afk.get("tau_s").getAsDouble() : RlSpec.AFK_TAU;
+        afkCap = afk != null && afk.has("cap") ? afk.get("cap").getAsDouble() : RlSpec.AFK_CAP;
+        afkMove = afk != null && afk.has("move_blocks") ? afk.get("move_blocks").getAsDouble() : RlSpec.AFK_MOVE;
+        JsonObject wd = f != null && f.has("constants") && f.getAsJsonObject("constants").has("wasted_day") ? f.getAsJsonObject("constants").getAsJsonObject("wasted_day") : null;
+        wastedWindow = wd != null && wd.has("window_s") ? wd.get("window_s").getAsDouble() : RlSpec.WASTED_WINDOW;
+        wastedShare = wd != null && wd.has("share") ? wd.get("share").getAsDouble() : RlSpec.WASTED_SHARE;
+        java.util.Set<String> keys = new HashSet<String>(java.util.Arrays.asList(RlSpec.WASTED_KEYS));
+        if (wd != null && wd.has("night_keys")) { keys.clear(); for (JsonElement e : wd.getAsJsonArray("night_keys")) keys.add(e.getAsString()); }
+        wastedKeys = keys;
     }
+
+    /**
+     * The outcomes' rewards begun here (idling, the wasted day, trades, dodges, covers, block credit, ready for a wave,
+     * no curiosity in a wave, a death by its distance, a scout's finds): off unless -Daiguide.rl.outcomes=true, in a 3.1
+     * episode. Unfinished: their system goes on in the branch rl/reward-outcomes (docs/rl/ENGINE.md section 10).
+     */
+    static final boolean OUTCOMES = Boolean.getBoolean("aiguide.rl.outcomes");
+
+    boolean outcomes() { return OUTCOMES && space == RlSpec.V2; }
+
+    /** (3.1) idling's numbers (rl/reward.json constants.afk; a reward file given overrides them) */
+    final double afkTau, afkCap, afkMove;
+    /** (3.1) the wasted day's (constants.wasted_day) */
+    final double wastedWindow, wastedShare;
+    final java.util.Set<String> wastedKeys;
 
     // ---- the connection: one at a time, a line in is a request (the server thread answers) --------------------
 
@@ -386,12 +413,308 @@ public class RlEnv {
         List<RlCause.Link> water;
         boolean decided;
         final RlScore.Fails fails = new RlScore.Fails();
+        RlScore.Afk afk;
+        boolean real;   // (3.1) a real deed this second: idling's clock starts again
+        RlScore.WastedDay wd;   // (3.1) the day's wasted time, named by a night's penalty
+        RlScore.Fight fight;    // (3.1) trades and dodges
+        double lastHurt = -1e9;  // when it last took damage
+        RlScore.Finds finds;    // (3.1) what it found first (ores): a death soon after costs less
+        final List<Double> deaths = new ArrayList<Double>();   // the distances from the base it died at (a metric)
+        final double[][] range = new double[3][5];   // by phase (day, night, wave): { seconds, beyond 16, beyond 32, beyond 64, the most }
+        final Map<Integer, double[]> threats = new HashMap<Integer, double[]>();   // mob -> { when it was in reach at it, 0 seen: a dodge / 1 a block between: a cover }
+    }
+
+    /** arrows aimed at an agent: arrow id -> { agent, when seen, shooter } */
+    final Map<Integer, double[]> arrows = new HashMap<Integer, double[]>();
+
+    RlScore.Fight newFight() {
+        return new RlScore.Fight(RlSpec.FIGHT_HP_SCALE, RlSpec.FIGHT_WINDOW, RlSpec.FIGHT_LOW, RlSpec.FIGHT_HIGH, RlSpec.FIGHT_BACK, RlSpec.FIGHT_DECAY,
+                RlSpec.FIGHT_CAP_TRADE, RlSpec.FIGHT_CAP_DODGE, w("trade.kill"), w("trade.recover"), w("dodge.melee"))
+                .cover(RlSpec.FIGHT_CAP_COVER, RlSpec.FIGHT_CAP_BLOCK, w("cover.melee"), w("block_credit"));
+    }
+
+    double w(String key) { Double v = weights.get(key); return v == null ? 0 : v; }
+
+    /** pay points of a capped bonus (Fight gives points, pay wants the measure) */
+    void payPoints(String agent, String key, double points) {
+        double wk = w(key);
+        if (points > 0 && wk > 0) { pay(agent, key, points / wk, null); real(agent); }   // fighting back is no idling
+    }
+
+    /** a hostile mob within r of the agent */
+    static boolean hostileNear(Agent a, double r) {
+        for (Object o : a.worldObj.getEntitiesWithinAABB(EntityLiving.class, a.boundingBox.expand(r, 4, r)))
+            if (o != a && !((EntityLiving) o).isDead && Guard.hostile((EntityLiving) o)) return true;
+        return false;
+    }
+
+    /** (3.1) a second of the range from the base by the time of day (0 day, 1 night, 2 a wave): seconds, beyond 16, 32, 64, the most */
+    void range(Agent a, Mine m, WorldServer w) {
+        int[] o = Crew.instance == null ? null : DefenseWorld.centre(Crew.instance, w);
+        if (o == null) return;
+        double d = Math.hypot(a.posX - o[0] - 0.5, a.posZ - o[2] - 0.5);
+        int ph = sc != null && sc.waves != null && Waves.cycle.phase == WaveCycle.Phase.WAVE ? 2 : nightNow(w) ? 1 : 0;
+        double[] r = m.range[ph];
+        r[0]++;
+        if (d > 16) r[1]++;
+        if (d > 32) r[2]++;
+        if (d > 64) r[3]++;
+        r[4] = Math.max(r[4], d);
+    }
+
+    /** (3.1) the first sight of an ore by an agent: its find (a death soon after costs less; the crew's later mining names it) */
+    final Map<Long, RlCause.Link> foundBy = new HashMap<Long, RlCause.Link>();
+
+    void found(Agent a, int x, int y, int z, String block) {
+        double v = RlScore.findValue(block);
+        if (v <= 0 || !outcomes() || state == State.IDLE) return;
+        Mine m = mine(a);
+        m.finds.found(ticks / 20.0, v);
+        if (m.wd != null) m.wd.useful();   // a find is no wasted day
+        RlCause.Link l = cause.now(id(a));
+        if (l != null) foundBy.put(RlCause.key(x, y, z), cause.decision(l.id, "found:" + block.replace("minecraft:", "")));
+    }
+
+    static final String[][] ORE_KEY = { { "coal_ore", "mine.coal" }, { "iron_ore", "mine.iron" }, { "gold_ore", "mine.gold" }, { "diamond_ore", "mine.diamond" },
+            { "redstone_ore", "mine.redstone" }, { "lit_redstone_ore", "mine.redstone" }, { "obsidian", "mine.obsidian" } };
+
+    /** an ore of a scout's find mined by another of the crew: an event scout_credit naming the find's decision */
+    void scoutCredit(Agent miner, long pos) {
+        RlCause.Link l = foundBy.remove(pos);
+        if (l == null || l.agent.equals(id(miner))) return;
+        String block = l.via.startsWith("found:") ? l.via.substring(6) : "";
+        String key = null;
+        for (String[] k : ORE_KEY) if (block.endsWith(k[0])) key = k[1];
+        if (key == null) return;
+        double pts = RlSpec.SCOUT_SHARE * w(key) * reward.factor(key);
+        if (pts <= 0) return;
+        JsonObject e = new JsonObject();
+        e.addProperty("type", "reward");
+        e.addProperty("agent", id(miner));
+        e.addProperty("key", "scout_credit");
+        e.addProperty("points", RlReward.round(pts));
+        JsonArray ch = new JsonArray();
+        ch.add(l.json());
+        e.add("chain", ch);
+        e.addProperty("ticks", ticks);
+        events.add(e);
+        scoutUsed++;
+    }
+
+    int scoutUsed;   // the episode's finds mined by another (a metric)
+
+    /**
+     * (3.1) A dodge counts where there was a real fight to dodge: the agent not shut in (a box of blocks: no threat),
+     * and near the base in a waves scenario (within leash_base of its centre), else near the mob (leash_mob): far off it
+     * is flight, which pays nothing here (the idling and the wasted day see it)
+     */
+    boolean inFight(Agent a, WorldServer w, Entity mob) { return inFight(a, w, mob, RlSpec.FIGHT_LEASH_MOB); }
+
+    /** near the base in a waves scenario, or in the fight by itself: the mob within near of it (far from home it may hold where it stands) */
+    boolean inFight(Agent a, WorldServer w, Entity mob, double near0) {
+        int[] o = DefenseWorld.centre(Crew.instance, w);
+        boolean near = sc != null && sc.waves != null && o != null && Math.hypot(a.posX - o[0] - 0.5, a.posZ - o[2] - 0.5) <= RlSpec.FIGHT_LEASH_BASE
+                || mob != null && a.getDistanceToEntity(mob) <= near0;
+        if (!near) return false;
+        Map<String, Double> nb = new HashMap<String, Double>();
+        int[] fc = PrimSkills.facing(a);
+        RlNear.facts(nb, PrimSkills.grid(a, w), MathHelper.floor_double(a.posX), MathHelper.floor_double(a.boundingBox.minY + 0.1), MathHelper.floor_double(a.posZ), fc[0], fc[1], true);
+        return RlSpec.g(nb, "enclosed") < 0.5;
+    }
+
+    /** night for the wasted day: a wave on (a waves scenario's time stands at night), else the world's night */
+    boolean nightNow(WorldServer w) {
+        if (sc != null && sc.waves != null) return Waves.state().phase == WaveCycle.Phase.WAVE;
+        long tm = w.getWorldTime() % 24000;
+        return tm >= 13000 && tm < 23000;
     }
 
     Mine mine(Agent a) {
         Mine m = mine.get(a.skin());
-        if (m == null) mine.put(a.skin(), m = new Mine());
+        if (m == null) {
+            mine.put(a.skin(), m = new Mine());
+            m.afk = new RlScore.Afk(afkTau, afkCap, afkMove);
+            m.wd = new RlScore.WastedDay(wastedWindow, wastedShare);
+            m.fight = newFight();
+            m.finds = new RlScore.Finds(RlSpec.SCOUT_WINDOW, RlSpec.SCOUT_PER, RlSpec.SCOUT_CAP);
+        }
         return m;
+    }
+
+    Mine mineOf(String agent) {
+        try { return mine.get(Integer.parseInt(agent)); } catch (NumberFormatException e) { return null; }
+    }
+
+    /** a real deed of the agent (its id): a measured gain, a new thing, a hit on a mob (useful to the wasted day too) */
+    void real(String agent) {
+        Mine m = mineOf(agent);
+        if (m == null) return;
+        m.real = true;
+        if (m.wd != null) m.wd.useful();
+    }
+
+    /**
+     * (3.1) A penalty at night: an event "wasted_day" naming the day's wasted decisions before it (no payment: its
+     * points are a part of the penalty just paid, for train.py's credit to move back to them)
+     */
+    void wasted(String agent, Mine m, double p) {
+        double[] r = m.wd.night(ticks / 20.0, p);
+        if (r == null) return;
+        JsonArray chain = new JsonArray();
+        for (int i = 1; i < r.length; i++) {
+            RlCause.Link l = cause.decision((long) r[i], "wasted");
+            if (l != null) chain.add(l.json());
+        }
+        if (chain.size() == 0) return;
+        JsonObject e = new JsonObject();
+        e.addProperty("type", "reward");
+        e.addProperty("agent", agent);
+        e.addProperty("key", "wasted_day");
+        e.addProperty("points", RlReward.round(r[0]));
+        e.add("chain", chain);
+        e.addProperty("ticks", ticks);
+        events.add(e);
+        wastedPoints += r[0];
+    }
+
+    double wastedPoints;   // the episode's points named back to wasted days (a metric)
+
+    /** (3.1) a second of the fight: the caps' period, the health, the threats in reach a second ago met with no hit, the new ones */
+    @SuppressWarnings("unchecked")
+    void fightSecond(Agent a, Mine m, WorldServer w, double t) {
+        m.fight.period(t, sc != null && sc.waves != null ? Waves.cycle.wave : -1);
+        m.fight.health(t, a.getHealth());
+        if (!m.threats.isEmpty()) {
+            for (Map.Entry<Integer, double[]> e : m.threats.entrySet()) {
+                Entity mob = w.getEntityByID(e.getKey());
+                if (m.lastHurt >= e.getValue()[0] || mob == null) continue;
+                if (e.getValue()[1] == 0 && inFight(a, w, mob)) payPoints(id(a), "dodge.melee", m.fight.dodge(e.getKey()));
+                else if (e.getValue()[1] == 1 && nearFight(a, w) && seesBetween(a, w, mob)) payPoints(id(a), "cover.melee", m.fight.cover(e.getKey()));
+            }
+            m.threats.clear();
+        }
+        double r = RlSpec.FIGHT_REACH;
+        for (Object o : w.getEntitiesWithinAABB(EntityLiving.class, a.boundingBox.expand(r + 1, 2, r + 1))) {
+            EntityLiving mob = (EntityLiving) o;
+            if (mob == a || mob.isDead || !Guard.hostile(mob)) continue;
+            Entity target = mob.getAttackTarget() != null ? mob.getAttackTarget()
+                    : mob instanceof net.minecraft.entity.EntityCreature ? ((net.minecraft.entity.EntityCreature) mob).getEntityToAttack() : null;
+            if (target != a) continue;
+            double d = Math.hypot(mob.posX - a.posX, mob.posZ - a.posZ);
+            boolean sees = mob.canEntityBeSeen(a);
+            if (d <= r && sees) m.threats.put(mob.getEntityId(), new double[] { t, 0 });
+            else if (d <= r + 1 && !sees) m.threats.put(mob.getEntityId(), new double[] { t, 1 });   // a block between them
+        }
+    }
+
+    /** (3.1) every other tick in a wave: arrows a hostile shot that fly at an agent's body; one that has gone by unhurt is a dodge */
+    void arrowsTick(Crew c, WorldServer w) {
+        double t = ticks / 20.0;
+        for (Object o : w.loadedEntityList) {
+            if (!(o instanceof net.minecraft.entity.projectile.EntityArrow)) continue;
+            net.minecraft.entity.projectile.EntityArrow ar = (net.minecraft.entity.projectile.EntityArrow) o;
+            if (arrows.containsKey(ar.getEntityId()) || ar.isDead || !(ar.shootingEntity instanceof EntityLiving) || !Guard.hostile((EntityLiving) ar.shootingEntity)) continue;
+            double sp = Math.sqrt(ar.motionX * ar.motionX + ar.motionY * ar.motionY + ar.motionZ * ar.motionZ);
+            if (sp < 0.3) continue;   // in the ground
+            for (Agent a : c.agents) {
+                if (a.isDead || a.getDistanceToEntity(ar) > 24) continue;
+                if (aimed(ar.posX, ar.posY, ar.posZ, ar.motionX, ar.motionY, ar.motionZ, a.boundingBox.expand(0.3, 0.3, 0.3))) {
+                    arrows.put(ar.getEntityId(), new double[] { a.skin(), t, ar.shootingEntity.getEntityId(), ar.posX, ar.posY, ar.posZ, ar.motionX, ar.motionY, ar.motionZ });
+                    break;
+                }
+            }
+        }
+        for (java.util.Iterator<Map.Entry<Integer, double[]>> it = arrows.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<Integer, double[]> e = it.next();
+            Entity ar = w.getEntityByID(e.getKey());
+            double[] v = e.getValue();
+            boolean ground = ar != null && !ar.isDead && Math.abs(ar.motionX) + Math.abs(ar.motionY) + Math.abs(ar.motionZ) < 0.05;
+            boolean over = ar == null || ar.isDead || ground || t - v[1] > 3;
+            if (!over) { v[3] = ar.posX; v[4] = ar.posY; v[5] = ar.posZ; v[6] = ar.motionX; v[7] = ar.motionY; v[8] = ar.motionZ; continue; }
+            it.remove();
+            Agent a = null;
+            for (Agent x : c.agents) if (x.skin() == (int) e.getValue()[0]) a = x;
+            if (a == null || a.isDead) continue;
+            Mine m = mine(a);
+            if (m.fight == null || m.lastHurt >= v[1]) continue;
+            if (ground && ar.getDistanceToEntity(a) > 1.0) {   // stuck in a block before reaching it: a cover, if it sees that block
+                double sp = Math.sqrt(v[6] * v[6] + v[7] * v[7] + v[8] * v[8]) + 1e-9;
+                int bx = MathHelper.floor_double(ar.posX + v[6] / sp * 0.4), by = MathHelper.floor_double(ar.posY + v[7] / sp * 0.4), bz = MathHelper.floor_double(ar.posZ + v[8] / sp * 0.4);
+                if (w.getBlock(bx, by, bz).getMaterial().isSolid() && nearFight(a, w) && Exploration.visible(a, w, bx, by, bz)) payPoints(id(a), "cover.arrow", m.fight.cover((int) v[2]));
+            } else if (inFight(a, w, w.getEntityByID((int) v[2]), RlSpec.FIGHT_SEE)) payPoints(id(a), "dodge.arrow", m.fight.dodge((int) v[2]));
+        }
+    }
+
+    /** in the fight or at the perimeter: near the base in a waves scenario (a cover counts in a box too: it worked) */
+    boolean nearFight(Agent a, WorldServer w) {
+        int[] o = DefenseWorld.centre(Crew.instance, w);
+        return sc == null || sc.waves == null || o == null || Math.hypot(a.posX - o[0] - 0.5, a.posZ - o[2] - 0.5) <= RlSpec.FIGHT_LEASH_BASE;
+    }
+
+    /** the first block on the line from its eyes to the mob, and the agent's eyes see it (Exploration's look: a ray, the range) */
+    boolean seesBetween(Agent a, WorldServer w, Entity mob) {
+        double ex = a.posX, ey = a.posY + a.getEyeHeight(), ez = a.posZ;
+        double dx = mob.posX - ex, dy = mob.posY + mob.getEyeHeight() - ey, dz = mob.posZ - ez, len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        for (double s = 0.3; s < len; s += 0.2) {
+            int x = MathHelper.floor_double(ex + dx * s / len), y = MathHelper.floor_double(ey + dy * s / len), z = MathHelper.floor_double(ez + dz * s / len);
+            if (w.getBlock(x, y, z).getMaterial().isSolid()) return Exploration.visible(a, w, x, y, z);
+        }
+        return false;
+    }
+
+    /**
+     * (3.1) Once a second in a wave: a hostile going for an agent or the base whose straight way (up to 4 blocks) runs into
+     * a block the crew put (or a pit it dug), with an agent within see of the mob seeing it: the block's decision gets
+     * block_credit (once a mob and block a wave, capped), by the event's chain
+     */
+    void blockCredit(Crew c, WorldServer w) {
+        int[] o = DefenseWorld.centre(c, w);
+        for (EntityLiving mob : Waves.enemies()) {
+            if (mob.isDead) continue;
+            Entity tg = mob.getAttackTarget();
+            double gx = tg != null ? tg.posX : o != null ? o[0] + 0.5 : Double.NaN, gz = tg != null ? tg.posZ : o != null ? o[2] + 0.5 : Double.NaN;
+            if (Double.isNaN(gx)) continue;
+            double dx = gx - mob.posX, dz = gz - mob.posZ, len = Math.hypot(dx, dz);
+            if (len < 1) continue;
+            int fy = MathHelper.floor_double(mob.boundingBox.minY + 0.1);
+            RlCause.Link hit = null;
+            long pos = 0;
+            for (double s = 0.8; s <= Math.min(4, len) && hit == null; s += 0.5) {
+                int x = MathHelper.floor_double(mob.posX + dx * s / len), z = MathHelper.floor_double(mob.posZ + dz * s / len);
+                for (int y : new int[] { fy, fy + 1 }) {
+                    if (!w.getBlock(x, y, z).getMaterial().isSolid()) continue;
+                    pos = RlCause.key(x, y, z);
+                    hit = cause.at(pos);
+                    if (hit == null) { s = 99; break; }   // the first obstacle is the world's own
+                    break;
+                }
+                if (hit == null && s < 99 && w.isAirBlock(x, fy - 1, z)) {   // a pit in its way
+                    RlCause.Link d = cause.dugAt(RlCause.key(x, fy - 1, z));
+                    if (d != null) { hit = d; pos = RlCause.key(x, fy - 1, z); }
+                }
+            }
+            if (hit == null) continue;
+            boolean seen = false;
+            for (Agent a : c.agents) if (!a.isDead && a.getDistanceToEntity(mob) <= RlSpec.FIGHT_SEE && a.canEntityBeSeen(mob)) seen = true;
+            Mine m = mineOf(hit.agent);
+            if (!seen || m == null || m.fight == null) continue;
+            double p = m.fight.block(mob.getEntityId(), pos);
+            if (p > 0 && w("block_credit") > 0) pay(hit.agent, "block_credit", p / w("block_credit"), java.util.Collections.singletonList(hit));
+        }
+    }
+
+    /** a ray from p along v (a tick's step) meets the box within 40 steps (gravity left out: the flight is short) */
+    static boolean aimed(double px, double py, double pz, double vx, double vy, double vz, net.minecraft.util.AxisAlignedBB b) {
+        double t0 = 0, t1 = 40;
+        double[][] s = { { px, vx, b.minX, b.maxX }, { py, vy, b.minY, b.maxY }, { pz, vz, b.minZ, b.maxZ } };
+        for (double[] k : s) {
+            if (Math.abs(k[1]) < 1e-9) { if (k[0] < k[2] || k[0] > k[3]) return false; continue; }
+            double a = (k[2] - k[0]) / k[1], bb = (k[3] - k[0]) / k[1];
+            t0 = Math.max(t0, Math.min(a, bb));
+            t1 = Math.min(t1, Math.max(a, bb));
+            if (t0 > t1) return false;
+        }
+        return true;
     }
 
     static String id(Agent a) { return String.valueOf(a.skin()); }
@@ -470,6 +793,10 @@ public class RlEnv {
         stall = new RlScore.Stall();
         stockValue = sources = 0;
         breadMade = births = 0;
+        wastedPoints = 0;
+        arrows.clear();
+        foundBy.clear();
+        scoutUsed = 0;
         worldChanges.clear();
         rewardEvents.clear();
         events.clear();
@@ -614,6 +941,15 @@ public class RlEnv {
                     int holes = 0;
                     for (Defense.Perimeter p : DefenseWorld.walls()) { int st = DefenseWorld.standing(w, p); if (st > 0) holes += p.cells.size() - st; }
                     if (holes > 0) for (Agent a : Crew.instance.agents) pay(id(a), "perimeter.holes_at_wave", holes, null);
+                    if (outcomes()) {   // (3.1) ready for the wave: the ring whole, the moat whole
+                        Defense.Perimeter rg = DefenseWorld.ring;
+                        boolean wall = rg != null && !rg.cells.isEmpty() && DefenseWorld.standing(w, rg) >= rg.cells.size();
+                        boolean moat = DefenseWorld.moat != null && moatFrac(w) >= 1;
+                        for (Agent a : Crew.instance.agents) {
+                            if (wall) pay(id(a), "ready.wall", 1, null);
+                            if (moat) pay(id(a), "ready.moat", 1, null);
+                        }
+                    }
                 }
             }
         });
@@ -625,6 +961,10 @@ public class RlEnv {
         if (c == null) return;
         for (Agent a : c.agents) if (!a.isDead) reward.add(id(a), "time", 1 / 20.0);
         FarmSkills.grow(w, RlSpec.GROW);
+        if (outcomes() && sc.waves != null && Waves.cycle.phase == WaveCycle.Phase.WAVE) {   // (3.1) arrows dodged or stopped, blocks the mobs go round
+            if (ticks % 2 == 0) arrowsTick(c, w);
+            if (ticks % 20 == 10) blockCredit(c, w);
+        }
         if (ticks % 20 == 0) {
             progress(c, w);
             measure(c, w);
@@ -651,6 +991,14 @@ public class RlEnv {
             if (a.isDead) { m.dangerAt = -1; continue; }
             m.tally = Defense.of(a.who()).copy();
             if (stall.check(id(a), t)) pay(id(a), "stall", 1, null);
+            if (outcomes() && m.afk != null) {   // (3.1) idling: dearer the longer it goes on
+                double f = m.afk.second(t, a.posX, a.posZ, m.real);
+                if (f > 0) pay(id(a), "afk", f, null);
+            }
+            m.real = false;
+            if (outcomes() && m.wd != null) m.wd.phase(t, nightNow(w));
+            if (outcomes() && m.fight != null) fightSecond(a, m, w, t);
+            if (outcomes()) range(a, m, w);
             // a danger past: alive, out of the lava and not burning 3 s after, with water put for it: saved
             if (m.dangerAt >= 0 && ticks - m.dangerAt >= 60 && !a.handleLavaMovement() && a.fallDistance < 1) {
                 if (!a.isBurning() && m.water != null) effect(a, "agent_saved", m.water, 0, null);
@@ -801,10 +1149,20 @@ public class RlEnv {
     /** the reward of an agent with the chain of its causes (none given: the agent's decision running now) */
     double pay(String agent, String key, double n, List<RlCause.Link> chain) {
         if (n == 0 || reward == null) return 0;
+        if (outcomes() && key.equals("curiosity.novel") && sc != null && sc.waves != null && Waves.cycle.phase == WaveCycle.Phase.WAVE
+                && !Waves.enemies().isEmpty()) return 0;   // (3.1) no curiosity while a wave's mobs live
         double p = reward.add(agent, key, n);
         if (p == 0) return 0;
         String comp = RlSpec.component(key);
         if (p > 0 && RlScore.progress(comp)) stall.progress(agent, ticks / 20.0);
+        if (p > 0 && RlScore.progress(comp) && !comp.equals("skill_ok")) real(agent);   // a measured gain (an OK alone: by its new things, ended)
+        if (outcomes()) {   // (3.1) the wasted day: a useful stretch, or a night's penalty naming the wasted ones before it
+            Mine m = mineOf(agent);
+            if (m != null && m.wd != null) {
+                if (p > 0 && RlScore.progress(comp)) m.wd.useful();
+                if (p < 0 && wastedKeys.contains(key)) wasted(agent, m, p);
+            }
+        }
         List<RlCause.Link> ch = chain != null && !chain.isEmpty() ? RlCause.chain(chain.toArray(new RlCause.Link[0])) : RlCause.chain(cause.now(agent));
         String head = ch.isEmpty() ? "-" : String.valueOf(ch.get(0).id);
         String ek = agent + "|" + key + "|" + head;
@@ -995,6 +1353,8 @@ public class RlEnv {
         }
         if (!"OK".equals(result)) e.pay(k, "skill_fail", 1, null);
         else if (effect(tool, before, after)) e.pay(k, "skill_ok", 1, null);   // an OK with nothing measurable to show pays nothing (wait, look_around)
+        if ("OK".equals(result) && gained(before, after)) mm.real = true;   // a new thing in the bag (blocks put round itself are not)
+        if ("OK".equals(result) && (tool.equals("place_at") || tool.equals("pillar") || tool.equals("dig_at")) && hostileNear(a, 8)) e.real(k);   // (3.1) digging in with a mob near: holding where it stands, no idling
         if (before != null && after != null && (tool.equals("craft") || tool.equals("smelt"))) {
             int bread = count(after, "bread") - count(before, "bread");
             if (tool.equals("craft") && bread > 0) e.breadMade += bread;
@@ -1032,6 +1392,13 @@ public class RlEnv {
         return o;
     }
 
+    /** the bag has more of something than before (a thing got, made, picked up) */
+    static boolean gained(Map<String, Integer> before, Map<String, Integer> after) {
+        if (before == null || after == null) return false;
+        for (Map.Entry<String, Integer> e : after.entrySet()) if (e.getValue() > (before.containsKey(e.getKey()) ? before.get(e.getKey()) : 0)) return true;
+        return false;
+    }
+
     /** a step OK that changed something one can check: the bag (contract 2: no pay for an OK of words alone) */
     static boolean effect(String tool, Map<String, Integer> before, Map<String, Integer> after) {
         if (tool.equals("wait") || tool.equals("look_around")) return false;
@@ -1043,9 +1410,15 @@ public class RlEnv {
         RlEnv e = instance;
         if (e == null || e.reward == null || e.state == State.IDLE || e.done) return;
         String k = id(a);
-        e.pay(k, "accident".equals(cause) || "starve".equals(cause) ? "accident" : "death", 1, null);
+        Mine m = e.mine(a);
+        double soft = e.outcomes() && m.finds != null ? m.finds.soft(e.ticks / 20.0) : 0;   // (3.1) it found something worth it first: a death costs less
+        e.pay(k, "accident".equals(cause) || "starve".equals(cause) ? "accident" : "death", 1 - soft, null);
         Defense.Perimeter p = DefenseWorld.ring;
-        if (Waves.state().phase == WaveCycle.Phase.WAVE && p != null && !p.inside(a.posX, a.posZ)) e.pay(k, "perimeter.out_died", 1, null);
+        int[] o = Crew.instance == null ? null : DefenseWorld.centre(Crew.instance, a.worldObj instanceof WorldServer ? (WorldServer) a.worldObj : null);
+        double d = o == null ? 0 : Math.hypot(a.posX - o[0] - 0.5, a.posZ - o[2] - 0.5);
+        m.deaths.add(d);
+        if (Waves.state().phase == WaveCycle.Phase.WAVE && p != null && !p.inside(a.posX, a.posZ))   // (3.1) by the distance from the base
+            e.pay(k, "perimeter.out_died", e.outcomes() ? RlScore.outDied(d, RlSpec.OUT_SCALE, RlSpec.OUT_CAP) * (1 - soft) : 1, null);
     }
 
     // ---- the causes (RlCause, RlCauseHooks): what the world and the bodies tell -----------------------------------
@@ -1103,6 +1476,8 @@ public class RlEnv {
         e.cause.broken(key);
         RlCause.Link l = e.cause.current.get(id(a));
         if (l != null) e.worldChanges.add(l.via("broke"));
+        if (l != null) e.cause.dug(key, l);   // (3.1) a cell dug: a pit, the moat (block_credit)
+        if (e.outcomes()) e.scoutCredit(a, key);   // an ore a scout of the crew found
         if (RlWorld.now.grownLogs.remove(key)) e.sustain.add(e.ticks / 20.0, RlScore.WOOD_RENEW, 1);
     }
 
@@ -1195,6 +1570,17 @@ public class RlEnv {
             if (RlCause.curious(kind) && head != null) pay(head.agent, "curiosity.novel", 1, chain);
             Events.log("rl: discovery " + n[0] + (head == null ? "" : " by agent " + head.agent + " (" + head.kind + ")") + ((Boolean) n[2] ? " — first ever" : ""));
             if ((Boolean) n[2]) discovery((String) n[0], head == null ? "" : head.agent, chain);
+        }
+        if ((kind.equals("mob_hurt") || kind.equals("mob_killed")) && by != null) mine(by).real = true;   // a hit on a mob: no idling
+        if (outcomes() && by != null && v != null && head != null && ("hit".equals(head.via) || "shot".equals(head.via))) {   // (3.1) the trade
+            Mine fm = mine(by);
+            if (fm.fight != null && kind.equals("mob_killed")) payPoints(head.agent, "trade.kill", fm.fight.kill(ticks / 20.0, v.getEntityId()));
+            else if (fm.fight != null && kind.equals("mob_hurt")) payPoints(head.agent, "trade.recover", fm.fight.hit(ticks / 20.0, v.getEntityId()));
+        }
+        if (kind.equals("agent_hurt") && v instanceof Agent) {   // (3.1) the damage it took: the trade's and the dodge's
+            Mine hm = mine((Agent) v);
+            hm.lastHurt = ticks / 20.0;
+            if (hm.fight != null) hm.fight.hurtBy(ticks / 20.0, amount);
         }
         if (kind.equals("mob_killed") && head != null) {
             pay(head.agent, "perimeter.kill", 1, chain);
@@ -1337,6 +1723,29 @@ public class RlEnv {
                     ach.add(id(a), l);
                 }
             info.add("achievements", ach);
+            if (outcomes()) {   // (3.1) the share of the day's time wasted, by agent, and the points named back to it
+                JsonObject wf = new JsonObject();
+                if (c != null) for (Agent a : c.agents) { Mine m = mine(a); if (m.wd != null) wf.addProperty(id(a), RlReward.round(m.wd.wastedFrac())); }
+                info.add("wasted_frac", wf);
+                info.addProperty("wasted_points", RlReward.round(wastedPoints));
+                info.addProperty("scout_used", scoutUsed);
+                JsonObject rg = new JsonObject();   // the range from the base by agent and time of day; where it died
+                if (c != null) for (Agent a : c.agents) {
+                    Mine m = mine(a);
+                    JsonObject x = new JsonObject();
+                    String[] ph = { "day", "night", "wave" };
+                    for (int i = 0; i < 3; i++) {
+                        JsonArray v = new JsonArray();
+                        for (double q : m.range[i]) v.add(new JsonPrimitive(RlReward.round(q)));
+                        x.add(ph[i], v);
+                    }
+                    JsonArray dd = new JsonArray();
+                    for (double q : m.deaths) dd.add(new JsonPrimitive(RlReward.round(q)));
+                    x.add("died_at", dd);
+                    rg.add(id(a), x);
+                }
+                info.add("range", rg);
+            }
             Events.log("rl: episode " + episode + " " + sc.name + " done (" + doneReason + ") at " + ticks / 20 + " game s, " + wall + " ms, reward " + reward.episodeJson());
         }
         if (raw) info.add("raw", rawOut);
@@ -1362,8 +1771,13 @@ public class RlEnv {
             got.put(who, k);
         }
         for (String k : new ArrayList<String>(assignedKeys())) assigned.remove(k);
-        for (Map.Entry<Integer, Integer> e : got.entrySet())   // each a decision of its own: its id (the chains' and the answer's)
-            assigned.addProperty(String.valueOf(e.getKey()), cause.decide(String.valueOf(e.getKey()), ticks, RlSpec.ACTIONS.get(e.getValue()).id).id);
+        boolean nightNow = nightNow(w);
+        for (Map.Entry<Integer, Integer> e : got.entrySet()) {   // each a decision of its own: its id (the chains' and the answer's)
+            long did = cause.decide(String.valueOf(e.getKey()), ticks, RlSpec.ACTIONS.get(e.getValue()).id).id;
+            assigned.addProperty(String.valueOf(e.getKey()), did);
+            Mine mm = mine.get(e.getKey());
+            if (mm != null && mm.wd != null && outcomes()) mm.wd.decide(did, ticks / 20.0, nightNow);   // (3.1) the day's stretches
+        }
         boolean noop = false;
         for (Map.Entry<Integer, Integer> e : got.entrySet())
             if (e.getValue() == 0) {   // nothing: the episode ends at once with its penalty (the world back at the next reset)

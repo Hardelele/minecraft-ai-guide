@@ -104,8 +104,14 @@ public final class Exploration {
         if (due != null && now < due && due - now <= PERIOD) return;
         if (m.next.size() >= 128 && !m.next.containsKey(a.getEntityId())) m.next.clear();
         m.next.put(a.getEntityId(), now + PERIOD);
-        scan(m, view(w), a.posX, a.posY + a.getEyeHeight(), a.posZ, (int) Math.floor(a.boundingBox.minY));
+        observer = a;
+        try { scan(m, view(w), a.posX, a.posY + a.getEyeHeight(), a.posZ, (int) Math.floor(a.boundingBox.minY)); } finally { observer = null; }
     }
+
+    /** (3.1) who looks now, and who hears of a block seen for the first time (RlEnv: what a scout found) */
+    static Agent observer;
+    interface Finds { void found(Agent a, int x, int y, int z, String block); }
+    static Finds finds;
     static void scan(Memory m, View v, double x, double eyeY, double z, int feetY) {
         Pos feet = new Pos((int) Math.floor(x), feetY, (int) Math.floor(z));
         m.trail.remove(feet); m.trail.add(feet); trim(m.trail, TRAIL_LIMIT);
@@ -149,6 +155,8 @@ public final class Exploration {
         } else m.ground.remove(feet);
     }
     private static void remember(Memory m, Pos p, String block) {
+        boolean fresh = !m.seen.containsKey(p);
+        if (fresh && observer != null && finds != null && block != null) finds.found(observer, p.x, p.y, p.z, block);
         m.seen.remove(p);
         if (block != null && !block.equals("minecraft:air")) m.seen.put(p, block);
         while (m.seen.size() > LIMIT) m.seen.remove(m.seen.keySet().iterator().next());

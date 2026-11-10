@@ -16,6 +16,8 @@ import mask_rules  # noqa: E402
 import gen_spec  # noqa: E402
 
 bad = 0
+# the outcome rewards' weights (RlEnv.OUTCOMES, off unless -Daiguide.rl.outcomes=true): new in 3.1, not contract 3's
+OUTCOME_WEIGHTS = ("afk", "block_credit", "cover.arrow", "cover.melee", "dodge.arrow", "dodge.melee", "ready.moat", "ready.wall", "trade.kill", "trade.recover")
 
 
 def check(ok, what):
@@ -37,7 +39,7 @@ def main():
     check(a3["version"] == o3["version"] == r3["version"] == 3 and a3["hash"] == "553dfd026d9d" and o3["hash"] == "7821a391980f", "rl/v3 is contract 3 as it was")
     check([(a["id"], a["tool"], a["args"], a["mask"]) for a in act["actions"][:124]] == [(a["id"], a["tool"], a["args"], a["mask"]) for a in a3["actions"]],
           "the first 124 are contract 3's, rules and all")
-    check({k: v for k, v in rew["weights"].items() if k not in ("safety.shelter", "retry_fail", "switch_ok")} == r3["weights"] and rew["weights"]["safety.shelter"] == 0,
+    check({k: v for k, v in rew["weights"].items() if k not in ("safety.shelter", "retry_fail", "switch_ok") + OUTCOME_WEIGHTS} == r3["weights"] and rew["weights"]["safety.shelter"] == 0,
           "the weights are contract 3's, the shelter measured at 0")
     check(a1["version"] == o1["version"] == 1, "rl/v1 is contract 1")
     ids = [a["id"] for a in act["actions"]]

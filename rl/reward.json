@@ -10,6 +10,16 @@
     "skill_ok": 0.02,
     "retry_fail": -0.03,
     "switch_ok": 0.05,
+    "afk": -0.005,
+    "trade.kill": 0.1,
+    "trade.recover": 0.2,
+    "dodge.melee": 0.03,
+    "dodge.arrow": 0.03,
+    "cover.melee": 0.03,
+    "cover.arrow": 0.03,
+    "block_credit": 0.05,
+    "ready.wall": 1.0,
+    "ready.moat": 0.5,
     "damage": -0.01,
     "death": -1.0,
     "accident": -1.5,
@@ -451,6 +461,50 @@
       ]
     },
     "stall_s": 60,
+    "afk": {
+      "tau_s": 15.0,
+      "cap": 20.0,
+      "move_blocks": 4.0,
+      "note": "a game second of idling (no measured gain, no new thing in the bag, no hit on a mob, not more than move_blocks from where it began) pays weights.afk x min(cap, (idle s / tau_s)^2)"
+    },
+    "wasted_day": {
+      "window_s": 300.0,
+      "share": 0.5,
+      "night_keys": [
+        "death",
+        "perimeter.breach",
+        "perimeter.mob_seconds"
+      ],
+      "useful": "a real deed (a measured gain of a scale, a goal, a new thing in the bag, a hit on a mob) or an OK that changed the bag (skill_ok: a wall's, a moat's, a shelter's blocks put, a sword made, food eaten)",
+      "note": "a penalty of night_keys at night or in a wave names, in a reward event 'wasted_day' (no payment of its own), the decisions of the window_s before the night with nothing useful of them; its points, share x the penalty x the wasted part of the window, train.py's --credit moves back to them"
+    },
+    "fight": {
+      "hp_scale": 10.0,
+      "window_s": 10.0,
+      "low_hp": 8.0,
+      "high_hp": 16.0,
+      "back_s": 60.0,
+      "decay": 0.5,
+      "cap_trade": 0.4,
+      "cap_dodge": 0.3,
+      "reach": 2.0,
+      "leash_base": 12.0,
+      "leash_mob": 6.0,
+      "cap_cover": 0.3,
+      "cap_block": 0.3,
+      "see": 16.0,
+      "note_cover": "cover.melee: a hostile within reach + 1 at it with a block between (it does not see the agent), no hit taken in the next second, the agent sees that block; cover.arrow: an arrow aimed at its body stopped in a block it sees; decay and cap as the dodge's; not while it is far from the base in a waves scenario. block_credit: a hostile going for an agent or the base whose straight way (4 blocks ahead) runs into a block the crew put, or a pit it dug, while an agent within see of it sees the mob: once a (mob, block) a wave, to the decision that put or dug it by the event's chain; ready.wall/ready.moat: the ring wall / the moat whole at a wave's start. Altogether capped under what holding the base pays (clean_wave 1.0, wave_cleared 0.5, kills)",
+      "note": "trade.kill x max(0, 1 - health lost in window_s / hp_scale) for a kill; trade.recover when health went under low_hp, came back to high_hp and the agent hit a mob within back_s; dodge.melee: a hostile within reach (horizontally) targeting it and no hit taken in the next second; dodge.arrow: an arrow aimed at its body gone by; a dodge only when the agent is not shut in and is within leash_base of the base or leash_mob of the mob (else it is flight: no bonus, the idling's and the wasted day's); the same mob dodged again without a hit on it: decay^k; the points of a wave (a minute without waves) at most cap_trade and cap_dodge"
+    },
+    "death_scout": {
+      "out_scale": 32.0,
+      "out_cap": 3.0,
+      "scout_window_s": 180.0,
+      "scout_per": 0.15,
+      "scout_cap": 0.5,
+      "scout_share": 0.5,
+      "note": "perimeter.out_died (a death in a wave outside the ring) is measured min(out_cap, distance from the base / out_scale) instead of 1; the ores an agent saw first (diamond 3, gold 1.5, iron and obsidian 1, redstone 0.5, coal 0.3) within scout_window_s make its death cost less by min(scout_cap, scout_per x their worth); an ore it found mined by another of the crew names it in an event scout_credit, scout_share x what that ore's mine.* pays, moved to the find's decision by the credit; curiosity.novel is not paid while a wave's mobs live"
+    },
     "window_s": 120,
     "horizons_y": [
       40,

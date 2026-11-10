@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
 import sys
 from pathlib import Path
@@ -57,6 +58,24 @@ CAL = json.loads((spec.ROOT / "rl" / "sim-calibration.json").read_text(encoding=
 # the gate's opening while no door shuts it (absent: 1, 1, 0 - the simulator as it was)
 WCAL = {"kill": 1.0, "hurt": 1.0, "gate_leak": 0.0, **CAL.get("waves", {})}
 LOSSES_PER_WAVE = 6   # the game's: WaveCycle.Config.lossesPerWave (-Daiguide.waves.losses)
+OUTCOMES = os.environ.get("AIGUIDE_RL_OUTCOMES") == "1"   # the outcomes' rewards begun here: off (RlEnv.OUTCOMES; rl/reward-outcomes goes on with them)
+_AFK = json.loads((spec.ROOT / "rl" / "reward.json").read_text(encoding="utf-8")).get("constants", {}).get("afk", {})
+
+
+class Afk:
+    """(3.1) idling, RlScore.Afk as it is: the time without a real deed (a measured gain, a new thing, a hit on a mob)
+    and within move blocks of where it began; a second of it pays weights.afk x min(cap, (t / tau)^2)"""
+
+    def __init__(self, tau: float = _AFK.get("tau_s", 15.0), cap: float = _AFK.get("cap", 20.0), move: float = _AFK.get("move_blocks", 4.0)):
+        self.tau, self.cap, self.move = tau, cap, move
+        self.since, self.ax, self.az, self.anchored = 0.0, 0.0, 0.0, False
+
+    def second(self, t: float, x: float, z: float, real: bool) -> float:
+        if not self.anchored or real or math.hypot(x - self.ax, z - self.az) > self.move:
+            self.since, self.ax, self.az, self.anchored = t, x, z, True
+            return 0.0
+        s = (t - self.since) / self.tau
+        return min(self.cap, s * s)
 RESPAWN_S = 1.0       # the game's: Crew.respawn, a second after the death
 SK = CAL["skills"]
 V2 = spec.VERSION >= 2
@@ -209,6 +228,8 @@ class Agent:
         self.post = False
         self.free_at = 0.0
         self.alive = True
+        self.real = False        # (3.1) a real deed since the last second (Afk; OUTCOMES)
+        self.afk = None
         self.pending = None      # (action, ok, reason, began)
         self.holding = False
         self.acc = 0.0
@@ -853,6 +874,8 @@ class SimEnv:
                                 "ticks": int(self.t * 20)})
         if p > 0 and (comp in spec.SCALES or comp in ("goal", "skill_ok")):
             a.progress_t = self.t     # RlScore.progress: the stall's clock starts again
+            if comp != "skill_ok":
+                a.real = True         # a measured gain: no idling (RlEnv.real)
 
     def give_all(self, key, n=1.0, causes=None):
         for a in self.agents:
@@ -860,6 +883,8 @@ class SimEnv:
 
     def got(self, a: Agent, k: str, v: int, key: str | None = None):
         a.add(k, v)
+        if v > 0:
+            a.real = True   # a new thing in the bag: no idling
         if key:
             self.give(a, key, v)
         if k not in self.items_seen:
@@ -1834,6 +1859,14 @@ class SimEnv:
                     self.give(a, "time", dt)
             self.world(dt)
             self.measure()
+            if V31 and OUTCOMES:   # (3.1) idling, dearer the longer it goes on (RlScore.Afk; the simulator's place is its distance from the base)
+                for a in self.agents:
+                    if a.alive:
+                        a.afk = a.afk or Afk()
+                        f = a.afk.second(self.t, a.dist, 0.0, a.real)
+                        if f:
+                            self.give(a, "afk", f * dt)
+                    a.real = False
             if V2 and not self.sim_only:
                 for a in self.agents:   # RlScore.Stall
                     if a.alive and self.t - a.progress_t >= STALL_S:

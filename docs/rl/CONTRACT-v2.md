@@ -526,6 +526,13 @@ redstone, diamond, obsidian, gravel: увиденное в 32 по горизо�
 лавой и над обрывом, обложиться 4 блоками (`walls_around` 4, не `enclosed`); маски тех же фактов. `test_rl_spec2.py`:
 маски Java = Python и для новых действий, первые 124 действия и веса — v3, `rl/v3` — прежние хеши.
 
+**Награды за исходы (черновик, выключены).** Веса есть в `rl/reward.json`, но платятся только с
+`-Daiguide.rl.outcomes=true` (`RlEnv.OUTCOMES`; в Python-симуляторе — `AIGUIDE_RL_OUTCOMES=1`, там пока только
+AFK): `afk` −0.005 за решение простоя, растёт с длиной простоя; `trade.kill` +0.1 и `trade.recover` +0.2 — размен в
+бою; `dodge.melee`, `dodge.arrow` +0.03 — увернулся; `cover.melee`, `cover.arrow` +0.03 — прикрыл своего;
+`block_credit` +0.05 — блок, остановивший моба; `ready.wall` +1.0, `ready.moat` +0.5 — оборона готова к началу волны.
+Калибровки нет; доводит ветка `rl/reward-outcomes`. Логика без игры — `RlScore` (`Afk`, `WastedDay`, `Fight`, `Finds`).
+
 ## Журнал изменений
 
 - 1 — исходные 38 действий, 137 признаков, общая награда за навыки.
