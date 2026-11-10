@@ -187,8 +187,9 @@ class RewardCore:
         wd = abs(self.o["crew.damage"])
         v = 0.0
         for tg in th["targets"]:
-            if tg == "base":
-                v = max(v, abs(self.o["base.breach"]))
+            if tg == "base":   # a breach (unless it is in already) and the mob-seconds of its stay inside
+                stay = max(0.0, th["until"] - self.t)
+                v = max(v, (0.0 if th["inside"] else abs(self.o["base.breach"])) + abs(self.o["base.mob_seconds"]) * stay)
             else:
                 hits = float(self.p["threat"]["agent_hits"])
                 v = max(v, hits * th["dmg"] * wd - th["taken"].get(tg, 0.0) * wd)
@@ -308,12 +309,16 @@ class RewardCore:
 
     def ev_noop(self, e):
         self.pay(e["agent"], "noop", self.o["noop"])
-        # the surrender: every open threat counts as done
+
+    def ev_fall(self, e):
+        """the base given up (noop) or lost: every open threat counts as done, a threat to the base as a breach and the
+        mob-seconds of its staying inside (until its wave's end)"""
         for mob in list(self.threats):
             th = self.threats.pop(mob)
             if "base" in th["targets"]:
+                stay = max(0.0, th["until"] - self.t)
                 for k in self.alive():
-                    self.pay(k, "surrender", self.o["base.breach"])
+                    self.pay(k, "surrender", (0.0 if th["inside"] else self.o["base.breach"]) + self.o["base.mob_seconds"] * stay)
             else:
                 wd = abs(self.o["crew.damage"])
                 for tg in th["targets"]:
@@ -359,7 +364,10 @@ class RewardCore:
     def ev_breach(self, e):
         for k in self.alive():
             self.loss(k, "base.breach", self.o["base.breach"])
-        self.threats.pop(int(e["mob"]), None)
+        th = self.threats.get(int(e["mob"]))
+        if th is not None:   # in: what turned it did not hold; its threat now is its stay inside
+            th["inside"] = True
+            th["contrib"] = {}
 
     def ev_inside(self, e):
         ms = float(e["mob_s"])
@@ -370,8 +378,9 @@ class RewardCore:
         key = e["key"]
         if key not in self.sw:
             raise KeyError("no scale weight " + key)
-        pts = self.sw[key] * float(e["delta"]) * self.factor(key)
-        if pts == 0:
+        raw = self.sw[key] * float(e["delta"])   # the measured change: progress whether or not the scenario pays it
+        pts = raw * self.factor(key)
+        if raw == 0:
             return
         payees = self.alive() if e["agent"] == "*" else [str(e["agent"])]
         causes = [int(c) for c in e.get("causes") or () if int(c) in self.dec]
@@ -379,19 +388,21 @@ class RewardCore:
         find = self.finds.get(res) if res is not None else None
         for k in payees:
             self.pay(k, key, pts)
-            if pts <= 0:
+            if raw <= 0:
                 continue
             if e["agent"] != "*" or not causes:
                 self.progress(k)
                 if k in self.cur:
                     self.productive(self.cur[k])
+            if pts <= 0:
+                continue
             if find is not None:
                 self.transfer(k, find[1], "credit.scout", float(self.p["scout"]["share"]) * pts, find[0])
             elif causes:
                 m = float(self.p["scale_move"]) * pts / len(causes)
                 for c in causes:
                     self.transfer(k, self.dec[c]["agent"], "credit.scale", m, c)
-        if pts > 0:
+        if raw > 0:
             for c in causes:
                 self.productive(c)
                 self.progress(self.dec[c]["agent"])
@@ -413,7 +424,8 @@ class RewardCore:
         mob = int(e["mob"])
         th = self.threats.get(mob)
         if th is None:
-            th = self.threats[mob] = {"targets": [], "dmg": 0.0, "contrib": {}, "taken": {}}
+            th = self.threats[mob] = {"targets": [], "dmg": 0.0, "contrib": {}, "taken": {}, "until": self.t, "inside": False}
+        th["until"] = max(th["until"], self.t + float(e.get("stay_s", 0.0)))
         tg = e["target"]
         tg = "base" if tg == "base" else str(tg)
         if tg not in th["targets"]:

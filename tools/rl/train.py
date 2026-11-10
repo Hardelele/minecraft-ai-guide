@@ -292,7 +292,10 @@ def main():
     ap.add_argument("--curiosity", type=float, default=-1.0, help="the simulator's curiosity.novel weight (-1: the contract's, 0: off)")
     ap.add_argument("--recurrent", type=int, default=0, help="a GRU memory of this size in the policy (0: the MLP); no Java export")
     ap.add_argument("--chunk", type=int, default=16, help="--recurrent: decisions a training sequence")
+    ap.add_argument("--reward", default="v3", choices=["v3", "v4"], help="the simulator's reward: v3 rl/reward.json's weights, v4 the outcomes and "
+                    "the causal credit (docs/rl/REWARD-v4.md; its credits' moves are applied whatever --credit)")
     a = ap.parse_args()
+    os.environ["AIGUIDE_REWARD"] = a.reward   # the simulator's workers read it
 
     below_normal()
     torch.set_num_threads(a.threads)
@@ -430,7 +433,7 @@ def main():
                 ev_by: dict = collections.defaultdict(list)   # the step's reward events with causes, by agent
                 for ev in inf0.get("events") or ():
                     if ev.get("type") == "reward" and ev.get("chain"):
-                        ev_by[int(ev["agent"])].append({"key": ev["key"], "points": float(ev["points"]),
+                        ev_by[int(ev["agent"])].append({"key": ev["key"], "points": float(ev["points"]), "move": ev.get("move"),
                                                         "t": ev.get("ticks", inf0.get("ticks", 0)) / 20.0,
                                                         "causes": [int(c["decision_id"]) for c in ev["chain"]
                                                                    if isinstance(c, dict) and "decision_id" in c and c.get("via") != "step"]})   # step: no cause traced
@@ -519,7 +522,7 @@ def main():
                 res[e] = o
             sim_s += time.perf_counter() - ts
         # ---- delayed credit on the raw rewards: by the named causes, then the learned redistribution -------------
-        cst = CR.redistribute(streams, a.credit, a.credit_tau) if a.credit else {}
+        cst = CR.redistribute(streams, a.credit, a.credit_tau) if a.credit or a.reward == "v4" else {}
         if rud is not None:
             pol.eval()
             rud.train()

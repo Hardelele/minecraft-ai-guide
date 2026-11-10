@@ -9,6 +9,7 @@ that decision.
    split evenly over the causes found in the batch (a cause in an earlier batch is gone: its share stays). beta 0.5:
    the step that saw the event keeps half, so the policy still learns to finish what was started; tau (default
    3600 s) only damps credit to causes from long ago, it does not decide it. The sum of the rewards is unchanged.
+   An event with `move` (the reward v4's credit, docs/rl/REWARD-v4.md) moves that share of its points, undamped.
 
 2. Learned (`Rudder`, after RUDDER, Arjona-Medina et al. 2019): a small GRU reads an agent's episode, observation and
    action by step, and predicts the episode's return; the change of its prediction at a step is that step's
@@ -40,6 +41,9 @@ def redistribute(streams: dict, beta: float = 0.5, tau: float = 3600.0) -> dict:
         for tr in L:
             for ev in tr[EVENTS] or ():
                 st["events"] += 1
+                mv = ev.get("move")   # the reward v4's credit: its share to move (all of it), no decay with the lag
+                if mv is None and not beta:
+                    continue
                 found = [where[c] for c in ev.get("causes", ()) if c in where]
                 found = [f for f in found if streams[f[0]][f[1]] is not tr]
                 if not found:
@@ -49,7 +53,7 @@ def redistribute(streams: dict, beta: float = 0.5, tau: float = 3600.0) -> dict:
                 for kk, ii in found:
                     src = streams[kk][ii]
                     lag = max(0.0, float(ev.get("t", tr[T])) - float(src[T]))
-                    m = beta * p * math.exp(-lag / tau) / len(found)
+                    m = (mv * p if mv is not None else beta * p * math.exp(-lag / tau)) / len(found)
                     src[REW] += m
                     tr[REW] -= m
                     st["moved"] += abs(m)

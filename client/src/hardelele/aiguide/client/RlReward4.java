@@ -56,6 +56,8 @@ final class RlReward4 {
         double dmg;
         final Map<Long, Contrib> contrib = new LinkedHashMap<Long, Contrib>();
         final Map<String, Double> taken = new HashMap<String, Double>();
+        double until;
+        boolean inside;
     }
 
     static final class Find {
@@ -231,7 +233,7 @@ final class RlReward4 {
     double value(Threat th) {
         double wd = Math.abs(o.get("crew.damage")), v = 0;
         for (String tg : th.targets) {
-            if (tg.equals("base")) v = Math.max(v, Math.abs(o.get("base.breach")));
+            if (tg.equals("base")) v = Math.max(v, (th.inside ? 0 : Math.abs(o.get("base.breach"))) + Math.abs(o.get("base.mob_seconds")) * Math.max(0, th.until - t));
             else {
                 Double tk = th.taken.get(tg);
                 v = Math.max(v, num("threat", "agent_hits") * th.dmg * wd - (tk == null ? 0 : tk) * wd);
@@ -364,10 +366,12 @@ final class RlReward4 {
             if (dg != null) dg.add(d);
         } else if (type.equals("noop")) {
             pay(str(e, "agent"), "noop", o.get("noop"));
+        } else if (type.equals("fall")) {
             for (Long mob : new ArrayList<Long>(threats.keySet())) {
                 Threat th = threats.remove(mob);
                 if (th.targets.contains("base")) {
-                    for (String k : alive()) pay(k, "surrender", o.get("base.breach"));
+                    double stay = Math.max(0, th.until - t);
+                    for (String k : alive()) pay(k, "surrender", (th.inside ? 0 : o.get("base.breach")) + o.get("base.mob_seconds") * stay);
                 } else {
                     double wd = Math.abs(o.get("crew.damage"));
                     for (String tg : th.targets) {
@@ -411,7 +415,8 @@ final class RlReward4 {
             s.danger = null;
         } else if (type.equals("breach")) {
             for (String k : alive()) loss(k, "base.breach", o.get("base.breach"));
-            threats.remove(e.get("mob").getAsLong());
+            Threat th = threats.get(e.get("mob").getAsLong());
+            if (th != null) { th.inside = true; th.contrib.clear(); }
         } else if (type.equals("inside")) {
             double ms = e.get("mob_s").getAsDouble();
             for (String k : alive()) loss(k, "base.mob_seconds", o.get("base.mob_seconds") * ms);
@@ -432,7 +437,8 @@ final class RlReward4 {
         } else if (type.equals("threat")) {
             long mob = e.get("mob").getAsLong();
             Threat th = threats.get(mob);
-            if (th == null) threats.put(mob, th = new Threat());
+            if (th == null) { threats.put(mob, th = new Threat()); th.until = t; }
+            th.until = Math.max(th.until, t + dbl(e, "stay_s", 0));
             String tg = str(e, "target");
             if (!th.targets.contains(tg)) th.targets.add(tg);
             th.dmg = Math.max(th.dmg, dbl(e, "dmg", 0));
@@ -492,8 +498,8 @@ final class RlReward4 {
         String key = str(e, "key");
         Double w = sw.get(key);
         if (w == null) throw new IllegalArgumentException("no scale weight " + key);
-        double pts = w * e.get("delta").getAsDouble() * factor(key);
-        if (pts == 0) return;
+        double raw = w * e.get("delta").getAsDouble(), pts = raw * factor(key);   // the measured change: progress whether or not the scenario pays it
+        if (raw == 0) return;
         boolean crew = str(e, "agent").equals("*");
         List<String> payees = new ArrayList<String>();
         if (crew) payees.addAll(alive());
@@ -502,18 +508,19 @@ final class RlReward4 {
         Find find = e.has("res") && !e.get("res").isJsonNull() ? finds.get(str(e, "res")) : null;
         for (String k : payees) {
             pay(k, key, pts);
-            if (pts <= 0) continue;
+            if (raw <= 0) continue;
             if (!crew || causes.isEmpty()) {
                 progress(k);
                 productive(cur.get(k));
             }
+            if (pts <= 0) continue;
             if (find != null) transfer(k, find.agent, "credit.scout", num("scout", "share") * pts, find.decision);
             else if (!causes.isEmpty()) {
                 double m = p.get("scale_move").getAsDouble() * pts / causes.size();
                 for (Long c : causes) transfer(k, dec.get(c).agent, "credit.scale", m, c);
             }
         }
-        if (pts > 0) for (Long c : causes) { productive(c); progress(dec.get(c).agent); }
+        if (raw > 0) for (Long c : causes) { productive(c); progress(dec.get(c).agent); }
     }
 
     /** the agent's points since its last decision (its components into `components`, cleared) */
