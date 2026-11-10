@@ -276,6 +276,8 @@ def main():
     ap.add_argument("--start-stage", type=int, default=0)
     ap.add_argument("--reward-clip", type=float, default=0.0, help="a decision's reward floored at -this for the update (0: off; the goal's +5 is kept); "
                     "3.1's retry_fail grows with each failure in a row: a loop of 300 costs hundreds and swamps the rest")
+    ap.add_argument("--noop-extra", type=float, default=0.0, help="more paid for noop in the update (0: off): where losing costs more than "
+                    "-1 (the waves fitted to the game), giving up is the policy's best answer otherwise")
     ap.add_argument("--uniform", action="store_true", help="the stages drawn alike (a stage named twice: twice as often), no curriculum")
     ap.add_argument("--stage-max", type=int, default=0, help="epochs on a curriculum stage at most (0: until passed)")
     ap.add_argument("--init", default=None, help="a checkpoint to start from")
@@ -448,6 +450,8 @@ def main():
                         continue
                     tr = pending.pop(k)
                     tr[5] = float(r) if not a.reward_clip else max(-a.reward_clip, float(r))
+                    if tr[2] == 0 and a.noop_extra:   # the update's own price of giving up (the environment pays its -1 as ever)
+                        tr[5] -= a.noop_extra
                     tr[6] = o["done"]
                     if o["done"]:
                         tr[9] = max(0.0, t_e - tr[8])
