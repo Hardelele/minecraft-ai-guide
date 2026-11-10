@@ -90,6 +90,9 @@ public final class RlEngine {
         o.addProperty("chunk_maps", maps);
         o.addProperty("navigators", navigators);
         o.addProperty("path_searches", FastPath.searches());
+        o.addProperty("path_cache_hits", FastPath.cacheHits());
+        o.addProperty("path_cache_stored", FastPath.cacheStored());
+        o.addProperty("path_cache_misses", FastPath.cacheMisses());
         o.addProperty("path_checked", FastPath.checked());
         o.addProperty("path_mismatches", FastPath.mismatches());
         if (FastPath.mismatches() > 0) o.addProperty("path_last_mismatch", FastPath.lastMismatch());

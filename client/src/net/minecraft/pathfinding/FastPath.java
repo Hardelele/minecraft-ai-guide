@@ -1,6 +1,9 @@
 package net.minecraft.pathfinding;
 
 import java.lang.reflect.Field;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.WeakHashMap;
 import net.minecraft.block.Block;
 import net.minecraft.block.material.Material;
 import net.minecraft.entity.Entity;
@@ -9,7 +12,9 @@ import net.minecraft.entity.monster.EntityZombie;
 import net.minecraft.entity.passive.EntityChicken;
 import net.minecraft.init.Blocks;
 import net.minecraft.util.MathHelper;
+import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.world.ChunkCache;
+import net.minecraft.world.IWorldAccess;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.Chunk;
 
@@ -22,15 +27,23 @@ import net.minecraft.world.chunk.Chunk;
  * IntHashMap, which keeps a HashSet of its keys besides). In this package: PathPoint's fields are package-private.
  * Every chunk the game's ChunkCache would ask for is asked for too (a chunk loaded by a path search stays loaded).
  * -Daiguide.rl.engine.check=N: every Nth search also by the game's own, the two compared point by point (mismatches()).
+ * The exact cache (Cache; off with -Daiguide.rl.engine.pathcache=false): a search asked again with all it depends on the
+ * same (the start and end cells, the size, the range, the flags, the fall allowed, the entity's own cell and lava) and no
+ * block changed since in the chunks it could read (target +- range + 3, start +- 3) gets the same points back; a
+ * chunk that may still be decorated is never trusted (decoration sets blocks unannounced). Checked by the same CHECK.
  */
 public final class FastPath {
     private FastPath() {}
 
     static final int CHECK = Integer.getInteger("aiguide.rl.engine.check", 0);
-    static long searches, checked, mismatched;
+    static final boolean CACHE = !"false".equals(System.getProperty("aiguide.rl.engine.pathcache"));
+    static long searches, checked, mismatched, hits, stored, changedDuring, unloaded, unpopulated;
     static String lastMismatch = "";
 
     public static long searches() { return searches; }
+    public static long cacheHits() { return hits; }
+    public static long cacheStored() { return stored; }
+    public static String cacheMisses() { return "changed during " + changedDuring + ", unloaded " + unloaded + ", unpopulated " + unpopulated; }
     public static long checked() { return checked; }
     public static long mismatches() { return mismatched; }
     public static String lastMismatch() { return lastMismatch; }
@@ -88,8 +101,8 @@ public final class FastPath {
     public static PathEntity entityPathToEntity(World w, Entity e, Entity target, float range, boolean openDoors, boolean closedDoors,
                                                 boolean avoidsWater, boolean canSwim) {
         searches++;
-        Search s = new Search(w, e, (int) (range + 16.0F), MathHelper.floor_double(e.posY + 1.0), openDoors, closedDoors, avoidsWater, canSwim);
-        PathEntity p = s.createEntityPathTo(e, target.posX, target.boundingBox.minY, target.posZ, range);
+        PathEntity p = find(w, e, (int) (range + 16.0F), MathHelper.floor_double(e.posY + 1.0), openDoors, closedDoors, avoidsWater, canSwim,
+                target.posX, target.boundingBox.minY, target.posZ, range);
         if (CHECK > 0 && searches % CHECK == 0) {
             checked++;
             String why = differ(p, w.getPathEntityToEntity(e, target, range, openDoors, closedDoors, avoidsWater, canSwim));
@@ -105,8 +118,8 @@ public final class FastPath {
     public static PathEntity entityPathToXYZ(World w, Entity e, int x, int y, int z, float range, boolean openDoors, boolean closedDoors,
                                              boolean avoidsWater, boolean canSwim) {
         searches++;
-        Search s = new Search(w, e, (int) (range + 8.0F), MathHelper.floor_double(e.posY), openDoors, closedDoors, avoidsWater, canSwim);
-        PathEntity p = s.createEntityPathTo(e, x + 0.5F, y + 0.5F, z + 0.5F, range);
+        PathEntity p = find(w, e, (int) (range + 8.0F), MathHelper.floor_double(e.posY), openDoors, closedDoors, avoidsWater, canSwim,
+                x + 0.5F, y + 0.5F, z + 0.5F, range);
         if (CHECK > 0 && searches % CHECK == 0) {
             checked++;
             PathEntity g = w.getEntityPathToXYZ(e, x, y, z, range, openDoors, closedDoors, avoidsWater, canSwim);
@@ -117,6 +130,184 @@ public final class FastPath {
             }
         }
         return p;
+    }
+
+    /** a search, or its points again from the cache when nothing it depends on changed */
+    static PathEntity find(World w, Entity e, int l, int j, boolean openDoors, boolean closedDoors, boolean avoidsWater, boolean canSwim,
+                           double x, double y, double z, float range) {
+        if (!CACHE || canSwim && e.isInWater()) {   // (the start in water: the game's walk up through it, not cached)
+            Search s = new Search(w, e, l, j, openDoors, closedDoors, avoidsWater, canSwim);
+            return s.createEntityPathTo(e, x, y, z, range);
+        }
+        Cache c = cache(w);
+        Key k = new Key();
+        k.sx = MathHelper.floor_double(e.boundingBox.minX);
+        k.sy = MathHelper.floor_double(e.boundingBox.minY + 0.5);
+        k.sz = MathHelper.floor_double(e.boundingBox.minZ);
+        k.ex = MathHelper.floor_double(x - (double) (e.width / 2.0F));
+        k.ey = MathHelper.floor_double(y);
+        k.ez = MathHelper.floor_double(z - (double) (e.width / 2.0F));
+        k.w = MathHelper.floor_float(e.width + 1.0F);
+        k.h = MathHelper.floor_float(e.height + 1.0F);
+        k.range = Float.floatToIntBits(range);
+        k.flags = (openDoors ? 1 : 0) | (closedDoors ? 2 : 0) | (avoidsWater ? 4 : 0);
+        k.fall = e.getMaxFallHeight();
+        k.px = MathHelper.floor_double(e.posX);   // canEntityStandAt's rails rule looks at the entity's own cell
+        k.py = MathHelper.floor_double(e.posY);
+        k.pz = MathHelper.floor_double(e.posZ);
+        k.lava = e.handleLavaMovement();
+        int r = (int) Math.ceil(range) + 3;
+        int ax0 = Math.min(k.ex - r, Math.min(k.sx, k.px) - 3) >> 4, ax1 = Math.max(k.ex + r, Math.max(k.sx, k.px) + 3) >> 4;
+        int az0 = Math.min(k.ez - r, Math.min(k.sz, k.pz) - 3) >> 4, az1 = Math.max(k.ez + r, Math.max(k.sz, k.pz) + 3) >> 4;
+        Cache.Entry got = c.map.get(k);
+        if (got != null && c.unchanged(w, ax0, az0, ax1, az1, got.at)) {
+            int i = MathHelper.floor_double(e.posX), kz = MathHelper.floor_double(e.posZ);   // the chunks the game's ChunkCache asks for: asked for
+            for (int cx = (i - l) >> 4; cx <= (i + l) >> 4; cx++)
+                for (int cz = (kz - l) >> 4; cz <= (kz + l) >> 4; cz++) w.getChunkFromChunkCoords(cx, cz);
+            hits++;
+            return got.copy();
+        }
+        long at = c.changes;
+        Search s = new Search(w, e, l, j, openDoors, closedDoors, avoidsWater, canSwim);
+        PathEntity p = s.createEntityPathTo(e, x, y, z, range);
+        if (c.changes != at) changedDuring++;
+        else if (c.populated(w, ax0, az0, ax1, az1)) {   // (a chunk the search loaded may have set blocks: then not kept)
+            if (c.map.size() >= Cache.MAX) c.map.clear();
+            c.map.put(k, new Cache.Entry(p, at));
+            stored++;
+        }
+        return p;
+    }
+
+    static final Map<World, Cache> caches = new WeakHashMap<World, Cache>();
+
+    /** blocks set past the world's notices (the arena's restore writes whole chunks): nothing kept of it trusted */
+    public static void worldRewritten(World w) {
+        Cache c = caches.get(w);
+        if (c != null) { c.map.clear(); c.changes++; }
+    }
+
+    static Cache cache(World w) {
+        Cache c = caches.get(w);
+        if (c == null) {
+            caches.put(w, c = new Cache());
+            w.addWorldAccess(c);
+        }
+        return c;
+    }
+
+    static final class Key {
+        int sx, sy, sz, ex, ey, ez, w, h, range, flags, fall, px, py, pz;
+        boolean lava;
+
+        @Override public boolean equals(Object o) {
+            if (!(o instanceof Key)) return false;
+            Key q = (Key) o;
+            return sx == q.sx && sy == q.sy && sz == q.sz && ex == q.ex && ey == q.ey && ez == q.ez && w == q.w && h == q.h && range == q.range
+                    && flags == q.flags && fall == q.fall && px == q.px && py == q.py && pz == q.pz && lava == q.lava;
+        }
+
+        @Override public int hashCode() {
+            int r = sx;
+            r = r * 31 + sy; r = r * 31 + sz; r = r * 31 + ex; r = r * 31 + ey; r = r * 31 + ez; r = r * 31 + w; r = r * 31 + h;
+            r = r * 31 + range; r = r * 31 + flags; r = r * 31 + fall; r = r * 31 + px; r = r * 31 + py; r = r * 31 + pz;
+            return r * 31 + (lava ? 1 : 0);
+        }
+    }
+
+    /**
+     * A world's searches kept, and when the blocks of each chunk last changed: the world tells its listeners of every
+     * block set with a notice (flag 2), and of a range redrawn. Sets without a notice (flag 4 only: a sapling's growth,
+     * leaves' and fire's metadata, a piston's moving block) change nothing a path search reads but the piston's;
+     * a chunk being populated sets blocks with none: such chunks are never trusted.
+     */
+    static final class Cache implements IWorldAccess {
+        static final int MAX = 8192;
+        final HashMap<Key, Entry> map = new HashMap<Key, Entry>();
+        final HashMap<Long, Long> stamp = new HashMap<Long, Long>();
+        long changes = 1;
+
+        static final class Entry {
+            final int[] pts;   // x, y, z of each point; null: no path
+            final long at;
+
+            Entry(PathEntity p, long at) {
+                this.at = at;
+                if (p == null) { pts = null; return; }
+                pts = new int[p.getCurrentPathLength() * 3];
+                for (int i = 0; i < p.getCurrentPathLength(); i++) {
+                    PathPoint q = p.getPathPointFromIndex(i);
+                    pts[3 * i] = q.xCoord;
+                    pts[3 * i + 1] = q.yCoord;
+                    pts[3 * i + 2] = q.zCoord;
+                }
+            }
+
+            PathEntity copy() {
+                if (pts == null) return null;
+                PathPoint[] a = new PathPoint[pts.length / 3];
+                for (int i = 0; i < a.length; i++) a[i] = new PathPoint(pts[3 * i], pts[3 * i + 1], pts[3 * i + 2]);
+                return new PathEntity(a);
+            }
+        }
+
+        static long ck(int cx, int cz) { return ((long) cx << 32) ^ (cz & 0xffffffffL); }
+
+        void changed(int x, int z) { stamp.put(ck(x >> 4, z >> 4), ++changes); }
+
+        boolean unchanged(World w, int cx0, int cz0, int cx1, int cz1, long at) {
+            for (int cx = cx0; cx <= cx1; cx++)
+                for (int cz = cz0; cz <= cz1; cz++) {
+                    Long t = stamp.get(ck(cx, cz));
+                    if (t != null && t > at) return false;
+                }
+            for (int cx = cx0; cx <= cx1; cx++)   // (unset: a chunk loaded anew since, its sets meanwhile untold)
+                for (int cz = cz0; cz <= cz1; cz++)
+                    if (!w.getChunkProvider().chunkExists(cx, cz) || !w.getChunkFromChunkCoords(cx, cz).func_150802_k()) return false;   // (isPopulated)
+            return true;
+        }
+
+        /**
+         * No block of these chunks can change unannounced. The world tells its listeners of a block set (flag 2) only in
+         * a chunk that isPopulated: decorated, "light populated" and "ticked" (both set by the world's tick of a chunk
+         * near a player: the arenas have none, so they stay false and nothing is told). So: each chunk loaded, it and its
+         * three neighbours at -x, -z decorated (a chunk's decoration writes into its +x/+z neighbours: once those four are
+         * done nothing decorates it any more); and its two flags set here, so its sets from now on are told. They gate
+         * nothing else on a server without players (the chunks and block changes sent to players; the edge light fixed
+         * when a player's tick reaches the chunk, which never comes in an arena; the light itself is not touched).
+         */
+        boolean populated(World w, int cx0, int cz0, int cx1, int cz1) {
+            for (int cx = cx0 - 1; cx <= cx1; cx++)
+                for (int cz = cz0 - 1; cz <= cz1; cz++) {
+                    if (!w.getChunkProvider().chunkExists(cx, cz)) { unloaded++; return false; }
+                    Chunk ch = w.getChunkFromChunkCoords(cx, cz);
+                    if (!ch.isTerrainPopulated) { unpopulated++; return false; }
+                }
+            for (int cx = cx0; cx <= cx1; cx++)
+                for (int cz = cz0; cz <= cz1; cz++) {
+                    Chunk ch = w.getChunkFromChunkCoords(cx, cz);
+                    ch.field_150815_m = true;
+                    ch.isLightPopulated = true;
+                }
+            return true;
+        }
+
+        @Override public void markBlockForUpdate(int x, int y, int z) { changed(x, z); }
+        @Override public void markBlockForRenderUpdate(int x, int y, int z) { changed(x, z); }
+        @Override public void markBlockRangeForRenderUpdate(int x1, int y1, int z1, int x2, int y2, int z2) {
+            for (int cx = Math.min(x1, x2) >> 4; cx <= Math.max(x1, x2) >> 4; cx++)
+                for (int cz = Math.min(z1, z2) >> 4; cz <= Math.max(z1, z2) >> 4; cz++) stamp.put(ck(cx, cz), ++changes);
+        }
+        @Override public void playSound(String s, double x, double y, double z, float v, float p) {}
+        @Override public void playSoundToNearExcept(EntityPlayer e, String s, double x, double y, double z, float v, float p) {}
+        @Override public void spawnParticle(String s, double x, double y, double z, double a, double b, double c) {}
+        @Override public void onEntityCreate(Entity e) {}
+        @Override public void onEntityDestroy(Entity e) {}
+        @Override public void playRecord(String s, int x, int y, int z) {}
+        @Override public void broadcastSound(int t, int x, int y, int z, int d) {}
+        @Override public void playAuxSFX(EntityPlayer e, int t, int x, int y, int z, int d) {}
+        @Override public void destroyBlockPartially(int id, int x, int y, int z, int p) {}
+        @Override public void onStaticEntitiesChanged() {}
     }
 
     static String differ(PathEntity a, PathEntity b) {
