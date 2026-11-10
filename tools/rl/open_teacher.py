@@ -49,7 +49,7 @@ def bag_of(vec, item):
     return int(round(math.expm1(float(vec[VEC["bag_" + item]]) * LOG64)))
 
 
-def record(port, weights, scenarios, episodes, name, seed0=500, temperature=0.3, max_s=600):
+def record(port, weights, scenarios, episodes, name, seed0=500, temperature=0.3, max_s=600, perturb=0.0, perturb_steps=8):
     pol = load_teacher(weights)
     env = OpenEnv(port)
     OUT.mkdir(parents=True, exist_ok=True)
@@ -59,7 +59,8 @@ def record(port, weights, scenarios, episodes, name, seed0=500, temperature=0.3,
         for ep in range(episodes):
             sc = scenarios[ep % len(scenarios)]
             seed = seed0 + ep
-            r = env.ask({"op": "reset", "scenario": sc, "seed": seed, "crew": 1, "contract": "3.1", "record_open": True})
+            r = env.ask({"op": "reset", "scenario": sc, "seed": seed, "crew": 1, "contract": "3.1", "record_open": True,
+                         "perturb": perturb, "perturb_steps": perturb_steps})
             frames, chosen, macros = [], collections.Counter(), []
             while True:
                 frames += r["info"].get("open", [])
@@ -210,10 +211,12 @@ def main():
     ap.add_argument("--seed", type=int, default=500)
     ap.add_argument("--file", default=str(OUT / "rec.jsonl.gz"))
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--perturb", type=float, default=0.0, help="record: DAgger by perturbation, the chance a step that random keys take the body")
+    ap.add_argument("--perturb-steps", type=int, default=8)
     ap.add_argument("--track", action="store_true", help="verify: the legs and the head steered to the teacher's next position (the hands as recorded)")
     a = ap.parse_args()
     if a.what == "record":
-        record(a.port, a.weights, a.scenarios.split(","), a.episodes, a.name, a.seed)
+        record(a.port, a.weights, a.scenarios.split(","), a.episodes, a.name, a.seed, perturb=a.perturb, perturb_steps=a.perturb_steps)
     elif a.what == "verify":
         verify(a.port, a.file, a.limit, a.track)
     else:

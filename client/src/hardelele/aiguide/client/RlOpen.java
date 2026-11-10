@@ -472,7 +472,42 @@ public final class RlOpen {
         final OpenEyes.Ctx ctx = new OpenEyes.Ctx();
         int inStep, steps;
 
-        Rec(RlEnv env) { this.env = env; OpenRec.on = true; OpenRec.accs.clear(); }
+        /**
+         * DAgger by perturbation (DART): with "perturb" p a step an agent's body is taken from the macro for "perturb_steps"
+         * steps and driven by random keys (the legs, the head: a stumble, a look away); then the macro goes on from where
+         * the body is, and its labels there are the teacher's in states its own play would not reach (the learner's
+         * kind of states: a foot off the path, the aim off the log). The perturbed steps are recorded unrep (no BC).
+         */
+        final double perturb;
+        final int perturbSteps;
+        final java.util.Random rnd;
+        final Map<Integer, Integer> perturbing = new HashMap<Integer, Integer>();
+        final Map<Integer, OpenBody> pbody = new HashMap<Integer, OpenBody>();
+
+        Rec(RlEnv env, JsonObject msg) {
+            this.env = env;
+            OpenRec.on = true;
+            OpenRec.accs.clear();
+            perturb = msg.has("perturb") ? msg.get("perturb").getAsDouble() : 0;
+            perturbSteps = msg.has("perturb_steps") ? msg.get("perturb_steps").getAsInt() : 8;
+            rnd = new java.util.Random(env.seed * 7 + 1);
+        }
+
+        /** at a step's start: a perturbation begins, goes on (new random keys now and then) or ends (the macro has the body again) */
+        void perturbStep(Agent a, WorldServer w) {
+            Integer left = perturbing.get(a.skin());
+            if (left == null && perturb > 0 && rnd.nextDouble() < perturb) left = perturbSteps;
+            if (left == null) return;
+            if (left <= 0) { perturbing.remove(a.skin()); a.open = null; return; }
+            perturbing.put(a.skin(), left - 1);
+            OpenBody b = pbody.get(a.skin());
+            if (b == null) pbody.put(a.skin(), b = new OpenBody(a.skin()));
+            if (a.open != b) { a.open = b; b.aimed = false; b.selected = Math.max(0, a.bag.indexOf(a.getHeldItem())); a.getNavigator().clearPathEntity(); }
+            if (left == perturbSteps || rnd.nextDouble() < 0.4) {
+                int[] h = { rnd.nextInt(OpenSpec.MOVES.length), rnd.nextDouble() < 0.15 ? 1 : 0, 2 + rnd.nextInt(4), rnd.nextDouble() < 0.7 ? 0 : 1 + rnd.nextInt(4), 0 };
+                b.begin(a, w, h);
+            } else b.begin(a, w, new int[] { b.move, b.jump, 0, 0, 0 });
+        }
 
         static final String[] UNREP = { "put:", "take:", "smelt:", "equip:", "enchant:", "lure:", "breed:", "shoot:", "place:bookshelf" };
 
@@ -497,6 +532,9 @@ public final class RlOpen {
                 JsonObject ob = e.observe(a, w, ctx, null, sel < 0 ? a.bag.size() : sel);
                 start.put(a.skin(), new Object[] { ob, RlEnv.ints(OpenBody.mask(a, w)), a.body.yawNow(), a.body.pitchNow(), a.posX, a.posY, a.posZ, a.getHeldItem(), a.jumpedAt });
                 OpenRec.acc(a.skin()).clear();
+                boolean was = perturbing.containsKey(a.skin());
+                perturbStep(a, w);
+                if (was || perturbing.containsKey(a.skin())) OpenRec.acc(a.skin()).unrep = true;   // (the random keys' step: not the teacher's)
             }
         }
 

@@ -163,15 +163,31 @@ class RSSM(nn.Module):
         return h, self.sample(post), post, prior
 
     def observe(self, embed, acts_prev, first, h=None, z=None):
-        """over a sequence (B, T): the posterior states; acts_prev[t] is the action before obs t (one-hot)"""
+        """over a sequence (B, T): the posterior states; acts_prev[t] is the action before obs t (one-hot). The loop does
+        only what the recurrence needs (the GRU, the posterior and its sample); the priors and the posterior's embed
+        part are computed for all steps at once (fewer launches: the update is launch-bound)"""
         B, T = embed.shape[:2]
         if h is None:
             h, z = self.initial(B, embed.device)
-        hs, zs, posts, priors = [], [], [], []
+        lin0 = self.post[0]
+        dh = self.deter
+        e_part = embed @ lin0.weight[:, dh:].t() + lin0.bias      # (B, T, hidden)
+        w_h = lin0.weight[:, :dh]
+        keep = (1 - first.float()).unsqueeze(-1)
+        hs, zs, posts = [], [], []
         for t in range(T):
-            h, z, post, prior = self.obs_step(h, z, acts_prev[:, t], embed[:, t], first[:, t])
-            hs.append(h); zs.append(z); posts.append(post); priors.append(prior)
-        return torch.stack(hs, 1), torch.stack(zs, 1), torch.stack(posts, 1), torch.stack(priors, 1)
+            k = keep[:, t]
+            h, z, a = h * k, z * k, acts_prev[:, t] * k
+            h = self.gru(self.inp(torch.cat([z, a], -1)), h)
+            x = h @ w_h.t() + e_part[:, t]
+            for m in list(self.post)[1:]:
+                x = m(x)
+            post = self._dist(x)
+            z = self.sample(post)
+            hs.append(h); zs.append(z); posts.append(post)
+        H = torch.stack(hs, 1)
+        prior = self._dist(self.prior(H))
+        return H, torch.stack(zs, 1), torch.stack(posts, 1), prior
 
     @staticmethod
     def kl(p, q, free=1.0):

@@ -162,6 +162,10 @@ def main():
     ap.add_argument("--out", default="build/rl/open/runs/run")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--init", default="")
+    ap.add_argument("--async", dest="asyn", action="store_true", help="the collector in its own process, all the arenas at once (run_async.py)")
+    ap.add_argument("--stage", default="pickaxe", choices=["pickaxe", "night"])
+    ap.add_argument("--lead", type=int, default=20, help="--async: updates the collector may run ahead of (train-every steps each)")
+    ap.add_argument("--bc-batch", type=int, default=32, help="--async: the teacher's rows an update")
     a = ap.parse_args()
     torch.set_num_threads(a.threads)
     torch.manual_seed(a.seed)
@@ -181,14 +185,14 @@ def main():
         teach = Replay(400_000, a.seed + 1)
         n, bc = load_teacher([p for p in a.teacher.split(",") if p], teach)
         print(f"teacher: {n} steps, {bc} to imitate", flush=True)
-    mf = open(out / "metrics.csv", "w", newline="")
+    mf = open(out / "updates.csv", "a", newline="")
     mw = None
     ef = open(out / "episodes.jsonl", "a")
     updates, t0 = 0, time.time()
 
-    def log(m, phase):
+    def log(m, phase, steps=None, upd=None):
         nonlocal mw
-        m = {"update": updates, "phase": phase, "env_steps": env_steps, "wall_s": round(time.time() - t0, 1), **{k: round(v, 5) for k, v in m.items()}}
+        m = {"update": updates if upd is None else upd, "phase": phase, "env_steps": env_steps if steps is None else steps, "wall_s": round(time.time() - t0, 1), **{k: round(v, 5) for k, v in m.items()}}
         if mw is None:
             keys = list(m.keys()) + [k for k in ("bc/nll", "bc/acc_move", "bc/acc_jump", "bc/acc_yaw", "bc/acc_pitch", "bc/acc_act", "wm/loss_teacher", "wm/vox_teacher", "wm/vec_teacher") if k not in m]
             for k in ("ac/ret", "ac/r_ext", "ac/curiosity", "ac/cur_off", "ac/entropy", "ac/scale", "ac/actor", "ac/critic"):
@@ -212,6 +216,11 @@ def main():
     if a.bc_steps:
         torch.save({"model": agent.state_dict(), "cfg": cfg, "updates": updates}, out / "bc.pt")
     # 2. its own play
+    if a.asyn:
+        from dreamer.run_async import main_async
+        env_steps, updates = main_async(a, agent, cfg, rep, teach, out, t0, updates, log)
+        print(f"done: {env_steps} env steps, {updates} updates, {time.time() - t0:.0f} s -> {out}")
+        return
     ports = [int(p) for p in a.ports.split(",")]
     kw = {} if a.env == "fake" else {"crew": a.crew, "days": a.days, "time": a.time, "waves": a.waves}
     runners = [Runner(make_env(a.env, p), rep, agent, a.env + str(p), a.seed + i, kw) for i, p in enumerate(ports)]

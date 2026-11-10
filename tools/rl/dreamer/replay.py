@@ -22,6 +22,8 @@ class Replay:
         self.stream = np.full(capacity, -1, np.int64)      # which stream (an agent's episode)
         self.rew_ok = np.zeros(capacity, bool)             # the reward known (a teacher's record: no)
         self.bc = np.zeros(capacity, bool)                 # a teacher's label to imitate
+        self.next = np.full(capacity, -1, np.int64)       # the stream's next step (streams interleave: several arenas)
+        self.last = {}                                     # stream -> its newest step
         self.i = 0
         self.size = 0
         self.rng = np.random.default_rng(seed)
@@ -41,13 +43,20 @@ class Replay:
         self.stream[k] = stream
         self.rew_ok[k] = rew_ok
         self.bc[k] = bc
+        self.next[k] = -1
+        p = self.last.get(stream)
+        if p is not None and self.stream[p] == stream:
+            self.next[p] = k
+        self.last[stream] = k
+        if len(self.last) > 100000:
+            self.last = {st: q for st, q in self.last.items() if self.stream[q] == st}
         self.i = (self.i + 1) % self.n
         self.size = min(self.size + 1, self.n)
 
     def end(self, stream, rew, cont):
         """an episode's end with no observation after it: its last reward and end go to the stream's last step"""
-        k = (self.i - 1) % self.n
-        if self.stream[k] == stream:
+        k = self.last.get(stream, -1)
+        if k >= 0 and self.stream[k] == stream:
             self.rew[k] += rew
             self.cont[k] = cont
 
@@ -58,14 +67,15 @@ class Replay:
         cand = np.flatnonzero(self.bc[:self.size]) if only_bc else None
         while len(idx) < B and tries < B * 50:
             tries += 1
-            s = int(self.rng.choice(cand)) if only_bc else int(self.rng.integers(0, self.size))
-            s = max(0, s - int(self.rng.integers(0, T)))
-            e = s + T
-            if e > self.size or (self.size == self.n and s <= self.i < e):
-                continue
-            if self.stream[s] != self.stream[e - 1]:
-                continue
-            idx.append(np.arange(s, e))
+            s0 = int(self.rng.choice(cand)) if only_bc else int(self.rng.integers(0, self.size))
+            st, chain, k = self.stream[s0], [s0], s0
+            while len(chain) < T:
+                k = self.next[k]
+                if k < 0 or self.stream[k] != st:
+                    break
+                chain.append(k)
+            if len(chain) == T:
+                idx.append(np.asarray(chain))
         if not idx:
             return None
         ix = np.stack(idx)

@@ -297,7 +297,7 @@ public class RlEnv {
                     } else {
                         if (open != null) { open.close(); open = null; }
                         reset(w, r.msg);
-                        rec = r.msg.has("record_open") && r.msg.get("record_open").getAsBoolean() ? new RlOpen.Rec(this) : null;   // the teacher's record
+                        rec = r.msg.has("record_open") && r.msg.get("record_open").getAsBoolean() ? new RlOpen.Rec(this, r.msg) : null;   // the teacher's record
                         OpenRec.on = rec != null;
                     }
                     replyTo = r.conn;

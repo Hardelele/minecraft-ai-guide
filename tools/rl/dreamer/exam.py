@@ -32,7 +32,7 @@ def bag(vec, item):
 
 
 def run(env, agent, exam, seed, rng, greedy):
-    kw = {"pickaxe": dict(time=0, max_steps=3000, waves="off"), "sword": dict(time=0, max_steps=3000, waves="off"),
+    kw = {"wood": dict(time=0, max_steps=1500, waves="off"), "pickaxe": dict(time=0, max_steps=3000, waves="off"), "sword": dict(time=0, max_steps=3000, waves="off"),
           "night": dict(time=11000, days=1)}[exam]
     o = env.reset(seed=seed, **kw)
     state, prev, sticky, ach = {}, {}, {}, set()
@@ -67,7 +67,7 @@ def run(env, agent, exam, seed, rng, greedy):
                 state[a], prev[a], acts[a] = (h[i], z[i]), act[i], act[i].tolist()
         o = env.step(acts)
     st = o["info"].get("stats", {})
-    ok = {"pickaxe": best["wooden_pickaxe"] > 0, "sword": best["wooden_sword"] + best["stone_sword"] > 0,
+    ok = {"wood": best["log"] > 0 or "mineWood" in ach, "pickaxe": best["wooden_pickaxe"] > 0, "sword": best["wooden_sword"] + best["stone_sword"] > 0,
           "night": o["info"].get("done_reason") == "days" and not st.get("deaths_night", 0) and not st.get("breaches", 0)}[exam]
     return {"exam": exam, "seed": seed, "pass": ok, "done_reason": o["info"].get("done_reason"), "best": best, "achievements": sorted(ach), "stats": st}
 
