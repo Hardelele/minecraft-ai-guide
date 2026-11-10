@@ -69,6 +69,32 @@ final class MindSkills {
         }
     }
 
+    /**
+     * A skill whose goal is on the surface (the base, home) taken from under the ground: up first (ascend's way: the
+     * stairs, else steps dug up over itself), then the skill. On the surface already: the skill as it is.
+     */
+    static Skill upFirst(Crew c, Agent a, WorldServer w, final Skill then) {
+        if (c == null || then.result != null || RlWorld.now.mouth == null || RlWorld.now.stairs.isEmpty() || !MineSkills.underground(c, a)) return then;
+        final Skill up = MineSkills.ascend(c, a, w);
+        if (up.result != null) return then;
+        Skill s = new Skill() {
+            boolean upDone;
+            Result run(Agent ag, WorldServer ww) {
+                if (!upDone) {
+                    Result r = up.step(ag, ww);
+                    if (r == Result.RUNNING) return r;
+                    if (r.failed()) { reason = up.reason; detail = "under the ground, no way up: " + up.detail; return r; }
+                    upDone = true;
+                }
+                Result r = then.step(ag, ww);
+                if (r.done()) { reason = then.reason; detail = "up from the mine, then: " + then.detail; }
+                return r;
+            }
+        };
+        s.lease = up.lease + then.lease;
+        return s;
+    }
+
     static Skill failed(String reason, String detail) {
         return new Skill() { Result run(Agent a, WorldServer w) { return Result.BLOCKED; } }.no(reason, detail);
     }
@@ -98,7 +124,11 @@ final class MindSkills {
         int n = call.num("count", 1);
         switch (call.tool) {
             case "look_around": return new Look();
-            case "go_to": return goTo(c, a, w, call.arg("target"));
+            case "go_to": {
+                String tg = call.arg("target") == null ? "" : call.arg("target").trim().toLowerCase(Locale.ROOT);
+                Skill g = goTo(c, a, w, call.arg("target"));
+                return tg.startsWith("base") || tg.startsWith("home") ? upFirst(c, a, w, g) : g;   // the base is on the surface
+            }
             case "chop_tree": return chop(c, a, w, call.arg("at"));
             case "mine": return mine(c, a, w, call.arg("block"), clamp(n, 1, 32));
             case "craft": return craft(c, a, w, call.arg("item"), clamp(n, 1, 64));
@@ -475,6 +505,14 @@ final class MindSkills {
         return "the right tool";
     }
 
+    /** a cell beside the block to stand in and dig it from (its level or one lower), or null */
+    static int[] mineSpot(WorldServer w, int[] p) {
+        for (int[] d : new int[][] { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } })
+            for (int dy = 0; dy >= -1; dy--)
+                if (Crew.stand(w, p[0] + d[0], p[1] + dy, p[2] + d[1])) return new int[] { p[0] + d[0], p[1] + dy, p[2] + d[1] };
+        return null;
+    }
+
     static Skill mine(final Crew c, Agent a, WorldServer w, String name, int n) {
         String t = name == null ? "" : name.trim().toLowerCase(Locale.ROOT).replace("minecraft:", "").replace(' ', '_');
         if (t.equals("cobblestone") || t.equals("cobble") || t.equals("rock")) t = "stone";
@@ -498,10 +536,9 @@ final class MindSkills {
             if (!pick.isEmpty() && Math.hypot(p[0] - pick.get(0)[0], p[2] - pick.get(0)[2]) > 6) continue;   // a few together
             checks++;
             if (!Ground.digLeavesWay(c, w, p[0], p[1], p[2], "gather")) continue;   // the dig would leave a pit with no way back
-            int[] spot = null;   // where one stands to dig it
-            for (int[] d : new int[][] { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } })
-                for (int dy = 0; dy >= -1 && spot == null; dy--)
-                    if (Crew.stand(w, p[0] + d[0], p[1] + dy, p[2] + d[1])) spot = new int[] { p[0] + d[0], p[1] + dy, p[2] + d[1] };
+            int[] spot = mineSpot(w, p);   // where one stands to dig it
+            // an ore (not stone) with no place beside it to stand, or none a walk gets to: not picked (it came to BLOCKED, 43 % of the allowed)
+            if (b != Blocks.stone && (spot == null || !reached(a, w, spot))) continue;
             pick.add(spot == null ? new int[] { p[0], p[1], p[2] } : new int[] { p[0], p[1], p[2], spot[0], spot[1], spot[2] });
         }
         if (pick.isEmpty()) {
