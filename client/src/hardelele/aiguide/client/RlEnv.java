@@ -1670,17 +1670,13 @@ public class RlEnv {
             if (MindSkills.hdist(a, p) <= 32 && Math.abs(p[1] - a.posY) <= 12 && w.getBlock(p[0], p[1], p[2]) == b && !c.board.reserved(a, p[0], p[1], p[2])) near.add(p);
         if (near.isEmpty() || b == Blocks.stone) return near.size();
         MindSkills.nearestFirst(near, a);   // as mine picks: where it may dig and a way back is left (the first few looked at)
-        int n = 0, checks = 0, paths = 0;
-        boolean reach = false;
+        int n = 0, checks = 0;
         for (int[] p : near) {
             if (checks++ > 12) break;
             if (Reacts.standsOn(a, w, p[0], p[1], p[2]) || !Ground.mayDig(c, p[0], p[1], p[2], "gather") || !Ground.digLeavesWay(c, w, p[0], p[1], p[2], "gather")) continue;
-            int[] spot = MindSkills.mineSpot(w, p);   // and, as mine now asks, a place beside it a walk gets to (the first few searched)
-            if (spot == null) continue;
-            if (!reach && paths++ < 3) reach = MindSkills.reached(a, w, spot);
-            n++;
+            n++;   // (a walk to it not asked: mine falls back to the ones it does not get to, and digs its way often enough)
         }
-        return reach ? n : 0;
+        return n;
     }
 
     static void station(Map<String, Double> r, Crew c, Agent a, WorldServer w, String name, Roles.Role role, double within) {

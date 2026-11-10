@@ -537,7 +537,7 @@ final class MindSkills {
         List<int[]> near = new ArrayList<int[]>();
         for (int[] p : seen) if (hdist(a, p) <= 32 && Math.abs(p[1] - a.posY) <= 12) near.add(p);
         nearestFirst(near, a);
-        List<int[]> pick = new ArrayList<int[]>();
+        List<int[]> pick = new ArrayList<int[]>(), later = new ArrayList<int[]>();
         int checks = 0;
         for (int[] p : near) {
             if (pick.size() >= n || checks > 24) break;
@@ -548,10 +548,14 @@ final class MindSkills {
             checks++;
             if (!Ground.digLeavesWay(c, w, p[0], p[1], p[2], "gather")) continue;   // the dig would leave a pit with no way back
             int[] spot = mineSpot(w, p);   // where one stands to dig it
-            // an ore (not stone) with no place beside it to stand, or none a walk gets to: not picked (it came to BLOCKED, 43 % of the allowed)
-            if (b != Blocks.stone && (spot == null || !reached(a, w, spot))) continue;
-            pick.add(spot == null ? new int[] { p[0], p[1], p[2] } : new int[] { p[0], p[1], p[2], spot[0], spot[1], spot[2] });
+            int[] q = spot == null ? new int[] { p[0], p[1], p[2] } : new int[] { p[0], p[1], p[2], spot[0], spot[1], spot[2] };
+            // an ore (not stone) with a place beside it a walk gets to first (the others came to BLOCKED, 43 % of the random
+            // policy's); the others only when there is none such: Mine digs its way to them often enough (iron on the engine:
+            // leaving them out took v31eng1's iron from 5/8 to 2/8)
+            if (b != Blocks.stone && (spot == null || !reached(a, w, spot))) { if (later.size() < n) later.add(q); continue; }
+            pick.add(q);
         }
+        if (pick.isEmpty()) pick.addAll(later);
         if (pick.isEmpty()) {
             if (b != Blocks.stone) return failed("NOT_SEEN", "no " + idOf(b) + " the crew has seen within reach of a walk (or all taken): look_around, or go_to where it was seen");
             // no stone seen: safe steps down from here, the way the agent looks (each step a column of three, a floor under each)
