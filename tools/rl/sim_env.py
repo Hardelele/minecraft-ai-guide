@@ -41,18 +41,43 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import achievements as ACH  # noqa: E402
+import reward_core as RCORE  # noqa: E402
 import sim_near as NEAR  # noqa: E402
 import spec  # noqa: E402
 from spec import ACTIONS, IDX, RECIPES, SCEN, WEIGHTS  # noqa: E402
 
 RING, MOAT, POSTS = 64, 80, 4      # a ring of radius 8, height 2 (cells), its moat, its posts
 CAL = json.loads((spec.ROOT / "rl" / "sim-calibration.json").read_text(encoding="utf-8"))
+# the waves' fight fitted to the engine (tools/rl/calibrate_waves.py): the kills' and the hits' multipliers, the leak of
+# the gate's opening while no door shuts it (absent: 1, 1, 0 - the simulator as it was)
+WCAL = {"kill": 1.0, "hurt": 1.0, "gate_leak": 0.0, **CAL.get("waves", {})}
+LOSSES_PER_WAVE = 6   # the game's: WaveCycle.Config.lossesPerWave (-Daiguide.waves.losses)
+OUTCOMES = os.environ.get("AIGUIDE_RL_OUTCOMES") == "1"   # the outcomes' rewards begun here: off (RlEnv.OUTCOMES; rl/reward-outcomes goes on with them)
+_AFK = json.loads((spec.ROOT / "rl" / "reward.json").read_text(encoding="utf-8")).get("constants", {}).get("afk", {})
+
+
+class Afk:
+    """(3.1) idling, RlScore.Afk as it is: the time without a real deed (a measured gain, a new thing, a hit on a mob)
+    and within move blocks of where it began; a second of it pays weights.afk x min(cap, (t / tau)^2)"""
+
+    def __init__(self, tau: float = _AFK.get("tau_s", 15.0), cap: float = _AFK.get("cap", 20.0), move: float = _AFK.get("move_blocks", 4.0)):
+        self.tau, self.cap, self.move = tau, cap, move
+        self.since, self.ax, self.az, self.anchored = 0.0, 0.0, 0.0, False
+
+    def second(self, t: float, x: float, z: float, real: bool) -> float:
+        if not self.anchored or real or math.hypot(x - self.ax, z - self.az) > self.move:
+            self.since, self.ax, self.az, self.anchored = t, x, z, True
+            return 0.0
+        s = (t - self.since) / self.tau
+        return min(self.cap, s * s)
+RESPAWN_S = 1.0       # the game's: Crew.respawn, a second after the death
 SK = CAL["skills"]
 V2 = spec.VERSION >= 2
 V31 = "pillar:up" in IDX   # contract 3.1: digging and building round itself, the memory of failures (sim_near)
@@ -204,6 +229,8 @@ class Agent:
         self.post = False
         self.free_at = 0.0
         self.alive = True
+        self.real = False        # (3.1) a real deed since the last second (Afk; OUTCOMES)
+        self.afk = None
         self.pending = None      # (action, ok, reason, began)
         self.holding = False
         self.acc = 0.0
@@ -231,6 +258,7 @@ class Agent:
         self.ditch = False       # 3.1: a ditch with no way over between it and the base (go home: NO_PATH)
         self.lava_front = False  # 3.1: lava in the tunnel's floor before the ore (mine an ore: NO_PATH)
         self.pit_fails = 0       # walks out of a pit two deep that failed (the escape reflex after three)
+        self.box: list[int] = []  # v4: the decisions that put the blocks round it where it stands (its cover)
 
     def n(self, k):
         return self.bag.get(k, 0)
@@ -282,7 +310,7 @@ class SimEnv:
     _did = 0   # decision ids: unique in a process
 
     def __init__(self, seed: int = 0, shaping: float = 0.0, weights: dict | None = None, noise: bool = True,
-                 curiosity: float = -1.0, obstacles: float = 1.0, force: str | None = None):
+                 curiosity: float = -1.0, obstacles: float = 1.0, force: str | None = None, reward: str | None = None):
         """noise=False: the calibration's failures off (no fresh or sticky failures, no tables out of reach, no empty
         chops): the mechanics alone, for the tests; curiosity: curiosity.novel's weight (-1: the contract's)"""
         self.noise = noise
@@ -295,6 +323,10 @@ class SimEnv:
         self.changed = True
         self.obstacles = obstacles   # 3.1: the chances of the situations "not reachable this way" times this
         self.force = force           # 3.1: one of them always: "hang", "ditch", "lava" (play.py's checks)
+        # the reward: "v3" (rl/reward.json's weights) or "v4" (docs/rl/REWARD-v4.md: the outcomes and the causal credit,
+        # tools/rl/reward_core.py from the events this gives); the environment variable AIGUIDE_REWARD for train.py's workers
+        self.reward_kind = reward or os.environ.get("AIGUIDE_REWARD", "v3")
+        self.v4 = False
 
     # ---- the episode ------------------------------------------------------------------------------------
     def reset(self, scenario: str = "wood", seed: int | None = None, crew: int = 1, target: str | None = None):
@@ -311,6 +343,22 @@ class SimEnv:
             self.w = dict(self.w)
             self.w["curiosity.novel"] = self.curiosity
         self.target = target if target in ACH.ACH else None
+        # v4: the delay:* scenarios keep their own weights (the credit's checks); every other one is paid by outcomes
+        self.v4 = self.reward_kind == "v4" and not scenario.startswith("delay:")
+        if self.v4:
+            self.core = RCORE.RewardCore(None if self.sim_only else scenario)
+            self.fev: list[dict] = []         # the events since the last frame
+            self.rng4 = random.Random(7919 if seed is None else seed + 7919)   # the events' own draws: the world as in v3
+            self.mobs_out: list[int] = []     # the wave's mobs outside the wall, inside it
+            self.mobs_in: list[int] = []
+            self.mob_next = 0
+            self.night_mobs: dict[int, list[int]] = {}   # the night scenario: each agent's mobs about
+            self.goal_sent = False
+            self.found_q: dict[str, list[str]] = {}       # a kind of ore -> its finds not yet used
+            self.n_found = 0
+            self.b_seen = 0                   # the builders already named as the scales' causes
+            self._actor: Agent | None = None
+            self._hurt_mob: int | None = None
         sc_scales = self.sc.get("scales", {})
         self.factors = dict(sc_scales) if isinstance(sc_scales, dict) else {k: 1.0 for k in sc_scales}
         self.hunger = bool(self.sc.get("hunger")) and V2
@@ -802,8 +850,12 @@ class SimEnv:
             tr[key] = v
             if was is not None and not first and v != was:
                 self.give_all(key, v - was, causes=causes)
-        crew_delta("safety.wall", self.wall / RING if self.ring else 0.0)
-        crew_delta("safety.moat", self.moat / MOAT)
+        bc = None
+        if self.v4:   # the wall's, the moat's, the gate's builders since the last measure: the causes of their change
+            bc = [b[0] for b in self.builders[self.b_seen:]] or None
+            self.b_seen = len(self.builders)
+        crew_delta("safety.wall", self.wall / RING if self.ring else 0.0, bc)
+        crew_delta("safety.moat", self.moat / MOAT, bc)
         crew_delta("safety.light", min(1.0, self.torches / 12))
         crew_delta("safety.gate", 1.0 if self.door and not self.gate_open else 0.0)
         crew_delta("enchant.table", 1.0 if self.ench_table else 0.0)
@@ -832,6 +884,8 @@ class SimEnv:
 
     # ---- rewards ----------------------------------------------------------------------------------------
     def give(self, a: Agent, key: str, n: float = 1.0, causes: list | None = None):
+        if self.v4:
+            return self.give4(a, key, n, causes)
         w = self.w.get(key)
         if w is None:
             return
@@ -848,6 +902,141 @@ class SimEnv:
                                 "ticks": int(self.t * 20)})
         if p > 0 and (comp in spec.SCALES or comp in ("goal", "skill_ok")):
             a.progress_t = self.t     # RlScore.progress: the stall's clock starts again
+            if comp != "skill_ok":
+                a.real = True         # a measured gain: no idling (RlEnv.real)
+
+    # ---- the reward v4: the events (rl/events.json) for tools/rl/reward_core.py ----------------------------------
+    def give4(self, a: Agent, key: str, n: float, causes: list | None):
+        """v3's payments as v4's events: the outcomes and the scales; the rest (time, stall, skill_ok, kill, ...) is
+        not paid (the kills, the wall's mobs, the covers are events of their own, where they happen)"""
+        comp = key.split(".")[0]
+        if key == "noop":
+            self.fev.append({"type": "noop", "agent": a.i})
+        elif key == "goal":
+            if not self.goal_sent:
+                self.goal_sent = True
+                self.fev.append({"type": "goal"})
+        elif key == "damage":
+            e = {"type": "damage", "agent": a.i, "hp": float(n)}
+            if self._hurt_mob is not None:
+                e["mob"] = self._hurt_mob
+            self.fev.append(e)
+        elif key == "curiosity.novel":
+            self.fev.append({"type": "novel", "agent": a.i, "decision": a.did})
+        elif comp in spec.SCALES and comp not in ("perimeter", "curiosity") and n:
+            e = {"type": "scale", "agent": a.i, "key": key, "delta": float(n)}
+            ids = [c["decision_id"] if isinstance(c, dict) else int(c) for c in (causes or ()) if c]
+            if ids:
+                e["causes"] = ids
+            if comp == "mine" and n > 0:   # an ore the crew found: its finder's
+                q = self.found_q.get(key)
+                if q:
+                    e["res"] = q.pop(0)
+            self.fev.append(e)
+
+    def phase4(self) -> str:
+        if self.phase in ("prep", "wave", "break"):
+            return self.phase
+        return "night" if self.night_or_wave() or self.sc.get("night") else "day"
+
+    def flush(self, dt: float):
+        """a frame for the core: the agents' state, the events since the last one; its moves into info.events"""
+        evs = [{"type": "agent", "agent": a.i, "x": float(a.dist), "y": 64.0 - 24.0 * a.depth, "z": 0.0, "hp": float(max(0.0, a.health)),
+                "alive": bool(a.alive), "base_dist": float(a.dist)} for a in self.agents]
+        moves = self.core.frame({"t": self.t, "dt": dt, "phase": self.phase4(), "events": evs + self.fev})
+        self.fev = []
+        for m in moves:
+            m["ticks"] = int(self.t * 20)
+        self.events += moves
+
+    def perim(self) -> bool:
+        """the base's perimeter: v3's once the ring is built; v4's in a waves run from the start (the game's ring is
+        planned at the reset: a mob in the base is in it whether its wall stands or not)"""
+        return self.ring or (self.v4 and bool(self.waves))
+
+    def fall4(self, why: str):
+        """v4: the base given up (noop) or lost in a waves run: the threats still to come (the rest of this wave's, the
+        waves' to the end) and the open ones count as done (reward_core's fall)"""
+        if not self.waves:
+            self.fev.append({"type": "fall", "why": why})
+            return
+        left = max(0, int(self.enemies)) - len(self.mobs_out) if self.phase == "wave" else 0
+        t, ph, until, n = self.t, self.phase, self.phase_until, self.wave_num
+        for _ in range(max(0, left)):
+            self.mob_next += 1
+            self.fev.append({"type": "threat", "mob": self.mob_next, "kind": "zombie", "target": "base", "dmg": 3.0, "stay_s": max(0.0, until - t)})
+        end = float(self.sc["seconds"])
+        while True:   # the waves still to come before the run's end
+            if ph == "wave":
+                ph, until = "break", until + (60 if self.sc["seconds"] > 1200 else 20)
+                continue
+            if until >= end:
+                break
+            n += 1
+            mult = 0.7 if self.waves == "easy" else 1.0
+            k = float(max(1, math.floor(mult * (2 + 1.6 * n + 0.12 * n * n))))
+            k = round(k * (1 - min(0.3, self.torches / 40)))
+            stay = min(240.0, end - until)
+            for _ in range(int(k)):
+                self.mob_next += 1
+                self.fev.append({"type": "threat", "mob": self.mob_next, "kind": "zombie", "target": "base", "dmg": 3.0, "stay_s": stay})
+            ph, until = "wave", until + 240
+        self.fev.append({"type": "fall", "why": why})
+
+    def mob4(self) -> int:
+        self.mob_next += 1
+        return self.mob_next
+
+    def found4(self, a: Agent | None, kind: str, n: int):
+        """v4: a resource seen for the first time by the agent at work: its find (an ore: what mining it may give)"""
+        key, amount = {"coal": ("mine.coal", 3), "iron": ("mine.iron", 3), "gold": ("mine.gold", 2), "redstone": ("mine.redstone", 4),
+                       "diamond": ("mine.diamond", 1), "obsidian": ("mine.obsidian", 1), "trees": ("stock.value", 0.125)}.get(kind, (None, 0))
+        if key is None or a is None:
+            return
+        for _ in range(n):
+            self.n_found += 1
+            res = "%s%d" % (kind, self.n_found)
+            self.fev.append({"type": "found", "agent": a.i, "decision": a.did, "res": res, "key": key, "amount": amount})
+            if key.startswith("mine."):
+                self.found_q.setdefault(key, []).append(res)
+
+    def wall4(self, m: int):
+        """v4: a wave's mob resolved outside: the wall (half or more standing) turned it on its way in, seen from the base"""
+        if not self.ring or self.wall < RING // 2 or not self.builders:
+            return
+        by = list(dict.fromkeys(b[0] for b in self.builders[-8:]))
+        seen = [a.i for a in self.agents if a.alive and a.dist < 10 and a.depth == 0]
+        full = self.wall >= RING - 2
+        self.fev.append({"type": "path_changed", "mob": m, "effect": "blocked" if full else "detour",
+                         "delay_s": 0.0 if full else 20.0 * self.wall / RING, "on_route": True, "by": by, "seen": seen})
+
+    def kill4(self, a: Agent, k: int, inside: bool, chain: list | None):
+        pool = self.mobs_in if inside else self.mobs_out
+        d = chain[0]["decision_id"] if chain and isinstance(chain[0], dict) else a.did
+        for _ in range(k):
+            if not pool:
+                break
+            m = pool.pop(0)
+            if not inside:
+                self.wall4(m)
+            self.fev.append({"type": "kill", "mob": m, "agent": a.i, "decision": d, "seen": [a.i]})
+
+    def gone4(self):
+        for m in self.mobs_out:
+            self.wall4(m)
+            self.fev.append({"type": "mob_gone", "mob": m, "why": "wave_end"})
+        for m in self.mobs_in:
+            self.fev.append({"type": "mob_gone", "mob": m, "why": "wave_end"})
+        self.mobs_out, self.mobs_in = [], []
+
+    def night4(self, a: Agent, m: float) -> list[int]:
+        """the night scenario's mobs after the agent: as many as there are about (they come with the time)"""
+        mine = self.night_mobs.setdefault(a.i, [])
+        while len(mine) < int(math.ceil(m)):
+            x = self.mob4()
+            mine.append(x)
+            self.fev.append({"type": "threat", "mob": x, "kind": "zombie", "target": a.i, "dmg": 3.0})
+        return mine
 
     def give_all(self, key, n=1.0, causes=None):
         for a in self.agents:
@@ -855,6 +1044,8 @@ class SimEnv:
 
     def got(self, a: Agent, k: str, v: int, key: str | None = None):
         a.add(k, v)
+        if v > 0:
+            a.real = True   # a new thing in the bag: no idling
         if key:
             self.give(a, key, v)
         if k not in self.items_seen:
@@ -931,6 +1122,8 @@ class SimEnv:
         SimEnv._did += 1
         a.did, a.kind, a.did_t = SimEnv._did, name, self.t
         self.assigned[a.i] = a.did
+        if self.v4:
+            self.fev.append({"type": "decision", "agent": a.i, "id": a.did, "kind": name})
         raw = self.raw(a)
         if not spec.allowed(act, raw):   # RlEnv: a masked action is a failed step, nothing done
             a.pending = (act, False, "MASKED", self.t)
@@ -1018,9 +1211,15 @@ class SimEnv:
         name = ACTIONS[act]
         self.changed = False
         if ok:
+            if self.v4:
+                self._actor = a
             res = self.effect(a, name, self.rng)
+            if self.v4:
+                self._actor = None
             if res:
                 ok, reason = False, res
+        if self.v4 and ok and (name in PUT31 or name.startswith("place:block@") or name == "pillar:up"):
+            a.box.append(a.did)
         if name in MOVES or name.startswith("place:"):
             a.stuck.clear()
         if V31 and not local(name) and (ok or name in MOVES):
@@ -1038,6 +1237,7 @@ class SimEnv:
             self.give(a, "damage", hp)
         a.near = None
         a.pit_fails = 0
+        a.box = []
         if not ok:
             return
         p_ditch = 1.0 if self.force == "ditch" else 0.2 * self.obstacles
@@ -1087,6 +1287,8 @@ class SimEnv:
             n = min(h, k)
             setattr(self, hidden, h - n)
             setattr(self, attr, getattr(self, attr) + n)
+            if self.v4:
+                self.found4(self._actor, attr, n)
 
     def see_ore(self, lv: int, k: str, p: float, n: int = 1):
         h = self.hidden[lv].get(k, 0)
@@ -1094,6 +1296,8 @@ class SimEnv:
             n = min(h, n)
             self.hidden[lv][k] = h - n
             self.seen[lv][k] = self.seen[lv].get(k, 0) + n
+            if self.v4:
+                self.found4(self._actor, k, n)
 
     def xp(self, a: Agent, pts: float):
         """experience points to levels, 1.7.10's first levels (17 points a level)"""
@@ -1804,6 +2008,8 @@ class SimEnv:
         else:
             self.enemies -= k
         self.kills += k
+        if self.v4:
+            self.kill4(a, k, inside, chain)
         weapon = weapon or a.best_item("sword")
         causes = chain if chain is not None else [self.hit(a), self.cause(a, weapon)]
         self.give(a, "kill", k, causes=causes)
@@ -1829,6 +2035,16 @@ class SimEnv:
                     self.give(a, "time", dt)
             self.world(dt)
             self.measure()
+            if V31 and OUTCOMES:   # (3.1) idling, dearer the longer it goes on (RlScore.Afk; the simulator's place is its distance from the base)
+                for a in self.agents:
+                    if a.alive:
+                        a.afk = a.afk or Afk()
+                        f = a.afk.second(self.t, a.dist, 0.0, a.real)
+                        if f:
+                            self.give(a, "afk", f * dt)
+                    a.real = False
+            if self.v4:
+                self.flush(dt)
             if V2 and not self.sim_only:
                 for a in self.agents:   # RlScore.Stall
                     if a.alive and self.t - a.progress_t >= STALL_S:
@@ -1840,10 +2056,15 @@ class SimEnv:
                 self.done, self.reason = True, "time"
 
     def world(self, dt: float):
+        self.respawn()
         wave = self.phase == "wave"
-        open_ = 2 if self.gate_open else 0
+        gateway = self.gate_open or not self.door   # the gate's 1x2 opening stands open until a door is in it (as in the game)
+        open_ = 2 if gateway else 0
         wallf = max(0.0, self.wall - open_) / RING if self.ring else 0.0
-        leak = (1 - wallf) * (1 - 0.4 * self.moat / MOAT) * (0.7 if self.moat_liquid else 1.0)
+        leak = 1 - wallf
+        if self.ring and gateway:   # the mobs find the opening: most of a wave comes in through it (WCAL: from the engine)
+            leak = max(leak, WCAL["gate_leak"])
+        leak *= (1 - 0.4 * self.moat / MOAT) * (0.7 if self.moat_liquid else 1.0)
         if self.crops:   # crops, saplings, young animals grow
             ripe = [c for c in self.crops if c[0] <= self.t]
             if ripe:
@@ -1901,13 +2122,25 @@ class SimEnv:
                 continue
             if self.sheltered(a) and self.night_or_wave():   # 3.1: shut in, the mobs do not reach it
                 self.ob["shelter_s"] += dt
+                if self.v4 and self.sc.get("night"):   # the mobs try at it and the blocks round it turn them
+                    mine = self.night4(a, self.sc["night"] + self.t / 60)
+                    if self.rng4.random() < min(1.0, 0.035 * len(mine) * dt):
+                        self.fev.append({"type": "attack_failed", "mob": self.rng4.choice(mine), "target": a.i, "reason": "cover",
+                                         "by": list(a.box), "seen": [a.i]})
                 continue
             if self.sc.get("night") and a.alive:   # the night scenario: mobs about, more with the time
                 m = self.sc["night"] + self.t / 60
                 deep = a.near is not None and a.depth == 0 and a.near.pit() >= 2
+                if self.v4:
+                    self._hurt_mob = self.rng4.choice(self.night4(a, m))
                 self.hurt(a, 0.035 * m * (0.5 if deep else 1.0), dt)
+                self._hurt_mob = None
                 if a.held and self.poisson(0.01 * a.held * dt):
                     self.kills += 1
+                    if self.v4:
+                        mine = self.night4(a, m)
+                        x = mine.pop(self.rng4.randrange(len(mine)))
+                        self.fev.append({"type": "kill", "mob": x, "agent": a.i, "decision": a.did, "seen": [a.i]})
                 if a.health <= 0:
                     self.die(a, out=True)
                 continue
@@ -1916,25 +2149,25 @@ class SimEnv:
             e = max(0.0, self.enemies)
             if e <= 0 and self.inside <= 0:
                 continue
-            inside = a.dist < 8 and self.ring
+            inside = a.dist < 8 and self.perim()
             if a.dist > 10:   # out in the field during a wave
-                self.hurt(a, 0.08 * math.sqrt(e), dt)
+                self.hurt(a, WCAL["hurt"] * 0.08 * math.sqrt(e), dt)
             elif a.holding and a.post:
-                self.hurt(a, 0.025 * math.sqrt(e) * (0.4 + leak), dt)
+                self.hurt(a, WCAL["hurt"] * 0.025 * math.sqrt(e) * (0.4 + leak), dt)
                 unarmed = 1.0 if a.held else self.sc.get("unarmed", 1.0)
-                k = min(self.poisson((0.05 + 0.04 * a.held) * unarmed * dt * min(1.0, e / 2)), int(math.ceil(self.enemies)))
+                k = min(self.poisson(WCAL["kill"] * (0.05 + 0.04 * a.held) * unarmed * dt * min(1.0, e / 2)), int(math.ceil(self.enemies)))
                 if k:
                     self.kill(a, k)
             else:
-                self.hurt(a, 0.025 * e * (leak if inside else 1.0), dt, inside=bool(inside))
+                self.hurt(a, WCAL["hurt"] * 0.025 * e * (leak if inside else 1.0), dt, inside=bool(inside))
                 if leak > 0.3 or not self.ring:
                     unarmed = 1.0 if a.held else self.sc.get("unarmed", 1.0)
-                    k = min(self.poisson(0.012 * (1 + a.held) * unarmed * dt), int(math.ceil(self.enemies)))
+                    k = min(self.poisson(WCAL["kill"] * 0.012 * (1 + a.held) * unarmed * dt), int(math.ceil(self.enemies)))
                     if k:
                         self.kill(a, k)
             if inside and self.inside > 0:   # what got in hits the agents inside, they fight it
-                self.hurt(a, 0.05 * self.inside, dt, inside=True)
-                k = min(self.poisson(0.04 * (1 + a.held) * (1.0 if a.held else self.sc.get("unarmed", 1.0)) * dt), int(math.ceil(self.inside)))
+                self.hurt(a, WCAL["hurt"] * 0.05 * self.inside, dt, inside=True)
+                k = min(self.poisson(WCAL["kill"] * 0.04 * (1 + a.held) * (1.0 if a.held else self.sc.get("unarmed", 1.0)) * dt), int(math.ceil(self.inside)))
                 if k:
                     self.kill(a, k, inside=True)
             if a.health <= 0:
@@ -1948,7 +2181,7 @@ class SimEnv:
                 if k:
                     who = next((b for b in self.agents if b.i == self.moat_liquid[1]["agent"]), self.agents[0])
                     self.kill(who, k, chain=[self.moat_liquid[1]])
-            if self.ring and self.enemies > 0:   # the perimeter: mobs that get inside the wall
+            if self.perim() and self.enemies > 0:   # the perimeter: mobs that get inside the wall
                 k = min(self.poisson(0.02 * self.enemies * leak * dt), int(self.enemies))
                 if k:
                     self.enemies -= k
@@ -1956,12 +2189,22 @@ class SimEnv:
                     self.breaches += k
                     self.wave_breaches += k
                     self.give_all("perimeter.breach", k)
+                    if self.v4:
+                        for _ in range(k):
+                            if self.mobs_out:
+                                m = self.mobs_out.pop(0)
+                                self.mobs_in.append(m)
+                                self.fev.append({"type": "breach", "mob": m})
             if self.inside > 0:
                 self.mob_s += self.inside * dt
                 self.wave_mob_s += self.inside * dt
                 self.give_all("perimeter.mob_seconds", self.inside * dt)
+                if self.v4:
+                    self.fev.append({"type": "inside", "mob_s": float(self.inside * dt)})
             if self.enemies <= 0.5 and self.inside <= 0.5:
                 self.enemies = self.inside = 0
+                if self.v4:
+                    self.gone4()
                 self.cleared += 1
                 self.give_all("wave_cleared")
                 self.give_all("perimeter.wave_cleared")
@@ -1971,10 +2214,15 @@ class SimEnv:
                         self.give(a, "perimeter.clean_wave", causes=[self.link(next(x for x in self.agents if x.i == b[2]), b[0], b[1], b[3],
                                                                                "block:cobblestone") for b in self.builders[-8:]])
                 self.phase, self.phase_until = "break", self.t + (60 if self.sc["seconds"] > 1200 else 20)
-            elif self.wave_losses >= len(self.agents):
+            elif self.wave_losses >= LOSSES_PER_WAVE:   # the game's rule (WaveCycle.lossesPerWave): the crew's deaths in one wave
                 self.done, self.reason = True, "lost"
+                if self.v4:
+                    self.fall4("lost")
 
     def die(self, a: Agent, out: bool, accident: bool = False):
+        if self.v4:
+            self.fev.append({"type": "death", "agent": a.i, "cause": "accident" if accident else "mob", "base_dist": float(a.dist)})
+            a.box = []
         if not accident:
             self.give(a, "death")
         if out and self.phase == "wave":
@@ -1999,6 +2247,14 @@ class SimEnv:
             a.pending = None
             self.ended(a, act, "DIED", self.t - began)
         a.free_at = self.t + 10.0
+        a.respawn_at = self.t + RESPAWN_S
+
+    def respawn(self):
+        """as the game's crew (Crew.respawn): a second after its death the agent is back at the base, full health, an empty bag"""
+        for a in self.agents:
+            at = getattr(a, "respawn_at", None)
+            if not a.alive and at is not None and self.t >= at:
+                a.alive, a.health, a.dist, a.free_at, a.respawn_at = True, 20.0, 0.0, self.t, None
 
     def next_phase(self):
         if self.phase in ("prep", "break"):
@@ -2013,12 +2269,20 @@ class SimEnv:
             self.wave_breaches = 0
             self.wave_mob_s = 0.0
             self.phase, self.phase_until = "wave", self.t + 240
+            if self.v4:   # the wave's mobs: threats to the base from their coming
+                self.gone4()
+                for _ in range(int(self.enemies)):
+                    m = self.mob4()
+                    self.mobs_out.append(m)
+                    self.fev.append({"type": "threat", "mob": m, "kind": "zombie", "target": "base", "dmg": 3.0, "stay_s": 240.0})
             if self.ring:
                 self.give_all("holes_at_wave", RING - self.wall)
                 self.give_all("perimeter.holes_at_wave", RING - self.wall)
         elif self.phase == "wave":   # its time is up: the mobs go
             self.enemies = 0
             self.inside = 0
+            if self.v4:
+                self.gone4()
             self.phase, self.phase_until = "break", self.t + 20
 
     # ---- the protocol -----------------------------------------------------------------------------------
@@ -2027,6 +2291,15 @@ class SimEnv:
                "t": self.t}
         if not first:
             self.measure()
+        if self.v4:
+            if self.done and self.sc.get("night"):   # the night is over: its mobs leave (what turned them is settled)
+                for ms in self.night_mobs.values():
+                    for m in ms:
+                        self.fev.append({"type": "mob_gone", "mob": m, "why": "despawn"})
+                self.night_mobs = {}
+            self.flush(0.0)
+            for a in ready:
+                a.acc, a.comp = self.core.take(a.i)
         for a in ready:
             if self.shaping and not first:
                 phi = 0.0 if final else self.potential()
@@ -2045,7 +2318,8 @@ class SimEnv:
             a.acc, a.comp = 0.0, {}
         out["info"] = {"t": self.t, "ticks": int(self.t * 20), "scenario": self.scenario, "done_reason": self.reason,
                        "success": self.success() if self.done else False, "cleared": self.cleared,
-                       "goal_progress": self.progress(), "episode_components": dict(self.comp) if self.done else {},
+                       "goal_progress": self.progress(),
+                       "episode_components": (dict(self.core.episode) if self.v4 else dict(self.comp)) if self.done else {},
                        "achievements": self.crew_ach(), "breaches": self.breaches, "mob_seconds": round(self.mob_s, 1),
                        "clean_waves": self.clean, "novel": self.novel, "repeat_fail": self.repeat_fail, "discoveries": self.discoveries, "kills": self.kills,
                        "spawned": self.spawned, "assigned": dict(self.assigned), "events": self.events,
@@ -2070,10 +2344,14 @@ class SimEnv:
             a = self.agents[i]
             if act == IDX["noop"]:
                 self.give(a, "noop")
+                if self.v4:
+                    self.fall4("noop")
                 a.last, a.outcome = act, "none"
                 self.done, self.reason = True, "noop"
                 return self.close()
             self.begin(a, act)
+        if self.v4:
+            self.flush(0.0)
         while not self.done:
             for a in self.agents:
                 if a.alive and a.pending is not None and a.free_at <= self.t + 1e-9:

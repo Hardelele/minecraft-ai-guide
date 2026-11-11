@@ -9,7 +9,11 @@ progress bonus (the simulator's, gamma*phi' - phi: it does not change which poli
 Everything goes to build/rl/runs/<run>/: metrics.csv (a row an epoch), episodes.csv, curriculum.log, ckpt.pt,
 final.pt, snapshots/policy-epoch-N.bin (the weights after epoch N, for "the agent after epoch 1 / 10").
 An epoch is one PPO iteration: a rollout of --rollout decisions over all the envs, then --epochs passes over it.
-The CPU is kept light: torch on 2 threads, the simulator in --workers processes at below-normal priority.
+The CPU is kept light: torch on 2 threads, the simulator in --workers processes at below-normal priority, and the
+resource governor (tools/rl/governor.py) over the whole run: threads, arenas stepping, pauses by what the PC has spare.
+Asynchronous collection (--async, on by default for the engine and rl/env's servers): a worker gets its next actions as
+soon as its own step comes back, not when the slowest arena's has (a skill takes 1-60 game seconds: in lockstep the
+others waited); decided by the policy as it is when the observation comes, so a decision may be one update stale.
 """
 from __future__ import annotations
 
@@ -43,6 +47,9 @@ CREW = {"wood": (1, 2), "pickaxe": (1, 2), "sword": (1, 2), "iron": (1, 2), "foo
         "waves:easy": (2, 4), "waves:normal": (2, 4), "waves:long": (2, 4), "armor": (1, 2), "bow": (1, 2), "mine_trip": (1, 2),
         "diamond": (1, 2), "farm": (1, 2), "pasture": (1, 2), "enchant": (1, 2), "achievements": (1, 3), "night:shelter": (1, 2)}
 COMPONENTS = sorted({k.split(".")[0] for k in spec.WEIGHTS} | {"shaping", "novel_effect"})
+# the reward v4's (docs/rl/REWARD-v4.md): its outcomes and each cause of credit apart (the scales keep their parts' names)
+COMPONENTS_V4 = ["noop", "goal", "afk", "surrender", "crew.damage", "crew.death", "base.breach", "base.mob_seconds", "credit.kill", "credit.block",
+                 "credit.cover", "credit.dodge", "credit.survive", "credit.scout", "credit.wasted_day", "credit.scale", "curiosity.novel"]
 OB_KEYS = ("hang", "hang_logs", "ditch_met", "ditch_bridged", "lava_met", "lava_passed", "shelter_s", "switch_ok", "retry_fail", "pit_stuck")
 SNAP = {1, 2, 3, 5, 10, 15, 20, 30, 50, 75, 100, 150, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000}
 
@@ -168,6 +175,28 @@ class Envs:
     def local(self, e):
         return e % self.w, e // self.w
 
+    def of(self, k):
+        """worker k's envs"""
+        return list(range(k, self.n, self.w))
+
+    def send(self, k, acts):
+        """worker k's envs a step (acts by env), not waiting for it"""
+        self.conns[k].send(("step", {e // self.w: a for e, a in acts.items()}))
+
+    def recv(self, k):
+        return {li * self.w + k: strip(o) for li, o in self.conns[k].recv().items()}
+
+    def wait(self, ks, timeout=None):
+        """of the workers ks (stepping), those whose step came back (at least one, unless the timeout passed)"""
+        from multiprocessing.connection import wait as mpwait
+        by = {id(self.conns[k]): k for k in ks}
+        return [by[id(c)] for c in mpwait([self.conns[k] for k in ks], timeout)]
+
+    def reset1(self, e, job):
+        k, li = self.local(e)
+        self.conns[k].send(("reset1", (li, job)))
+        return strip(self.conns[k].recv())
+
     def reset_all(self, jobs):   # jobs[e] = (scenario, seed, crew)
         per = [[] for _ in range(self.w)]
         for e, j in enumerate(jobs):
@@ -276,11 +305,17 @@ def main():
     ap.add_argument("--start-stage", type=int, default=0)
     ap.add_argument("--reward-clip", type=float, default=0.0, help="a decision's reward floored at -this for the update (0: off; the goal's +5 is kept); "
                     "3.1's retry_fail grows with each failure in a row: a loop of 300 costs hundreds and swamps the rest")
+    ap.add_argument("--noop-extra", type=float, default=0.0, help="more paid for noop in the update (0: off): where losing costs more than "
+                    "-1 (the waves fitted to the game), giving up is the policy's best answer otherwise")
     ap.add_argument("--uniform", action="store_true", help="the stages drawn alike (a stage named twice: twice as often), no curriculum")
     ap.add_argument("--stage-max", type=int, default=0, help="epochs on a curriculum stage at most (0: until passed)")
     ap.add_argument("--init", default=None, help="a checkpoint to start from")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--threads", type=int, default=2)
+    ap.add_argument("--async", dest="async_", default="auto", choices=["auto", "on", "off"],
+                    help="each worker stepped as soon as its own step is back (auto: on for the engine and rl/env's servers)")
+    ap.add_argument("--no-governor", action="store_true", help="without the resource governor (tools/rl/governor.py)")
+    ap.add_argument("--gov-log", default="", help="the governor's decision log (default <run>/governor.jsonl)")
     # delayed credit (tools/rl/credit.py): by the causes events name, learned (RUDDER), the discount by game time
     ap.add_argument("--credit", type=float, default=0.0, help="share of an event's points moved to its causes (0: off)")
     ap.add_argument("--credit-tau", type=float, default=3600.0, help="game seconds: the moved share's decay with the lag")
@@ -290,7 +325,10 @@ def main():
     ap.add_argument("--curiosity", type=float, default=-1.0, help="the simulator's curiosity.novel weight (-1: the contract's, 0: off)")
     ap.add_argument("--recurrent", type=int, default=0, help="a GRU memory of this size in the policy (0: the MLP); no Java export")
     ap.add_argument("--chunk", type=int, default=16, help="--recurrent: decisions a training sequence")
+    ap.add_argument("--reward", default="v3", choices=["v3", "v4"], help="the simulator's reward: v3 rl/reward.json's weights, v4 the outcomes and "
+                    "the causal credit (docs/rl/REWARD-v4.md; its credits' moves are applied whatever --credit)")
     a = ap.parse_args()
+    os.environ["AIGUIDE_REWARD"] = a.reward   # the simulator's workers read it
 
     below_normal()
     torch.set_num_threads(a.threads)
@@ -320,7 +358,34 @@ def main():
             engine_env.stop(ports)
             sys.exit("the engine's arenas did not start")
         a.url = ",".join("127.0.0.1:%d" % p for p in ports)
+        import atexit
+        atexit.register(engine_env.stop, ports)   # (a crash too: no JVM left behind)
     envs = Envs(a.envs, a.workers, a.env, a.seed, a.shaping, a.url, a.curiosity)
+    async_ = a.async_ == "on" or (a.async_ == "auto" and a.env in ("engine", "real"))
+    # ---- the resource governor: its advice read between steps (threads, arenas stepping, pause, the GPU's duty) ----
+    gov, gov_file = None, os.environ.get("AIGUIDE_GOVERNOR")
+    if not a.no_governor and not gov_file:   # (under `governor.py run` the wrapper governs: its advice from the file)
+        import governor as GOV
+        gov = GOV.Governor(log=a.gov_log or str(out / "governor.jsonl"), max_threads=a.threads, max_arenas=envs.w).start()
+        import atexit
+        atexit.register(gov.stop)   # (a crash while paused: the children resumed, never left suspended)
+
+    def advice():
+        if gov is not None:
+            return gov.advice()
+        if gov_file:
+            import governor as GOV
+            d = GOV.read_advice(gov_file)
+            if d:
+                return dict(d, threads=min(a.threads, d.get("threads", a.threads)))
+        return {"mode": "off", "threads": a.threads, "arenas": envs.w, "pause": False, "gpu_duty": 1.0}
+
+    def phase(ph):
+        if gov is not None:
+            gov.status["phase"] = ph
+            gov.status["gpu_mb"] = torch.cuda.memory_reserved() / 2 ** 20 if dev.type == "cuda" else 0.0
+    adv_t, adv = 0.0, advice()
+    gov_stats = collections.Counter()   # seconds paused, arenas parked, the GPU's sleep: for the metrics
     retnorm = RetNorm(a.gamma_s ** 20 if a.gamma_s else a.gamma)
     import credit as CR
     rud = CR.RudderTrainer(spec.D, spec.A, dev) if a.rudder else None
@@ -341,6 +406,10 @@ def main():
         return sc, int(rng.integers(1 << 30)), int(rng.integers(lo, hi + 1)), target
 
     res = envs.reset_all([job() for _ in range(envs.n)])
+    todo = set(range(envs.n))   # envs at a decision (their observation in res, not sent)
+    stepping: set = set()       # workers stepping (sent, not back): async, they carry over into the next epoch
+    arrived: dict = {}          # steps back while paused, not yet looked at
+    back_at: dict = {}          # worker -> when its last step came back
     ep_info = [{"ret": 0.0, "dec": 0, "noop": 0} for _ in range(envs.n)]
     # a transition: [obs, mask, act, logp, val, rew (raw until the batch), done, next_val, t (game s at its decision),
     # dt (game s to the next), decision id, reward events, its step in the episode, the episode's record]
@@ -370,10 +439,32 @@ def main():
         infer_s = 0.0
         sim_s = 0.0
         pol.eval()
+        phase("collect")
         while n_done < a.rollout:
+            if time.time() - adv_t > 1.0:
+                adv_t, adv = time.time(), advice()
+            if adv.get("pause"):   # the governor's pause: nothing sent (the children are suspended), the steps out drained
+                tp = time.perf_counter()
+                for k in (envs.wait(list(stepping), 0.5) if stepping else ()):
+                    stepping.discard(k)
+                    arrived.update(envs.recv(k))
+                if not stepping:
+                    time.sleep(0.5)
+                gov_stats["paused_s"] += time.perf_counter() - tp
+                if not arrived:
+                    continue
+            # the workers whose envs all wait for a decision now (lockstep: all of them), as many as the governor lets step
+            go = []
+            if not arrived:
+                free = sorted((k for k in range(envs.w) if k not in stepping and all(e in todo for e in envs.of(k))), key=lambda k: back_at.get(k, 0.0))
+                room = max(1 if not stepping else 0, int(adv.get("arenas", envs.w)) - len(stepping))
+                go = free[:room] if async_ else (free if not stepping else [])
+                gov_stats["parked"] += len(free) - len(go) if async_ else 0
+            send_envs = [e for k in go for e in envs.of(k)]
             # every env's agents at a decision now: one batch
             keys, obs, msk, tnow = [], [], [], []
-            for e, o in enumerate(res):
+            for e in send_envs:
+                o = res[e]
                 t_e = float(o.get("t", o.get("info", {}).get("ticks", 0) / 20.0))
                 for ag, v, m in zip(o["agents"], o["obs"], o["mask"]):
                     keys.append((e, ag))
@@ -381,21 +472,22 @@ def main():
                     msk.append(m)
                     tnow.append(t_e)
             ti = time.perf_counter()
-            obs = np.asarray(obs, np.float32)   # one array: the transitions keep its rows, not lists of floats
-            ot = torch.tensor(obs, device=dev)
-            mt = torch.tensor(np.asarray(msk, bool), device=dev)
-            pol.norm.update(ot)
-            with torch.no_grad():
-                if a.recurrent:
-                    fresh = [k not in hstate for k in keys]
-                    h_in = torch.stack([hstate[k] if k in hstate else pol.init_state(1, dev)[0] for k in keys])
-                    act, logp, val, _, h_out = pol.act(ot, mt, h_in)
-                    h_np = h_in.cpu().numpy()
-                    for j, k in enumerate(keys):
-                        hstate[k] = h_out[j]
-                else:
-                    act, logp, val, _ = pol.act(ot, mt)
-            act, logp, val = act.cpu().numpy(), logp.cpu().numpy(), val.cpu().numpy()
+            obs = np.asarray(obs, np.float32).reshape(len(keys), spec.D)   # one array: the transitions keep its rows, not lists of floats
+            if keys:   # (async: a step back with nobody at a decision, or nothing sent while paused: no batch)
+                ot = torch.tensor(obs, device=dev)
+                mt = torch.tensor(np.asarray(msk, bool), device=dev)
+                pol.norm.update(ot)
+                with torch.no_grad():
+                    if a.recurrent:
+                        fresh = [k not in hstate for k in keys]
+                        h_in = torch.stack([hstate[k] if k in hstate else pol.init_state(1, dev)[0] for k in keys])
+                        act, logp, val, _, h_out = pol.act(ot, mt, h_in)
+                        h_np = h_in.cpu().numpy()
+                        for j, k in enumerate(keys):
+                            hstate[k] = h_out[j]
+                    else:
+                        act, logp, val, _ = pol.act(ot, mt)
+                act, logp, val = act.cpu().numpy(), logp.cpu().numpy(), val.cpu().numpy()
             infer_s += time.perf_counter() - ti
             acts = collections.defaultdict(dict)
             for j, k in enumerate(keys):
@@ -416,7 +508,21 @@ def main():
                     stats["noop"] += 1
                 ep_info[k[0]]["dec"] += 1
             ts = time.perf_counter()
-            res2 = envs.step(dict(acts), {})
+            for k in go:   # sent: each worker its envs' actions (an env with no agent deciding: an empty step)
+                envs.send(k, {e: acts.get(e, {}) for e in envs.of(k)})
+                stepping.add(k)
+                todo.difference_update(envs.of(k))
+            res2, arrived = arrived, {}
+            if not res2 and stepping:   # lockstep: all of them back; async: the first back, and any others back by then
+                ks = envs.wait(list(stepping), None)
+                if not async_:
+                    ks = list(stepping)
+                elif len(ks) < len(stepping):
+                    ks = ks + envs.wait([k for k in stepping if k not in ks], 0.0)
+                for k in ks:
+                    stepping.discard(k)
+                    back_at[k] = time.perf_counter()   # (parked: the longest waiting stepped first)
+                    res2.update(envs.recv(k))
             resets = {}
             for e, o in res2.items():
                 inf0 = o.get("info", {})
@@ -428,7 +534,7 @@ def main():
                 ev_by: dict = collections.defaultdict(list)   # the step's reward events with causes, by agent
                 for ev in inf0.get("events") or ():
                     if ev.get("type") == "reward" and ev.get("chain"):
-                        ev_by[int(ev["agent"])].append({"key": ev["key"], "points": float(ev["points"]),
+                        ev_by[int(ev["agent"])].append({"key": ev["key"], "points": float(ev["points"]), "move": ev.get("move"),
                                                         "t": ev.get("ticks", inf0.get("ticks", 0)) / 20.0,
                                                         "causes": [int(c["decision_id"]) for c in ev["chain"]
                                                                    if isinstance(c, dict) and "decision_id" in c and c.get("via") != "step"]})   # step: no cause traced
@@ -448,6 +554,8 @@ def main():
                         continue
                     tr = pending.pop(k)
                     tr[5] = float(r) if not a.reward_clip else max(-a.reward_clip, float(r))
+                    if tr[2] == 0 and a.noop_extra:   # the update's own price of giving up (the environment pays its -1 as ever)
+                        tr[5] -= a.noop_extra
                     tr[6] = o["done"]
                     if o["done"]:
                         tr[9] = max(0.0, t_e - tr[8])
@@ -509,13 +617,15 @@ def main():
                         print(cur.log[-1], flush=True)
                     ep_info[e] = {"ret": 0.0, "dec": 0, "noop": 0}
                     resets[e] = job()
-            if resets:
-                res2.update(envs.step({}, resets))
+            for e, job_ in resets.items():
+                res2[e] = envs.reset1(e, job_)
             for e, o in res2.items():
                 res[e] = o
+                todo.add(e)
             sim_s += time.perf_counter() - ts
+        phase("update")
         # ---- delayed credit on the raw rewards: by the named causes, then the learned redistribution -------------
-        cst = CR.redistribute(streams, a.credit, a.credit_tau) if a.credit else {}
+        cst = CR.redistribute(streams, a.credit, a.credit_tau) if a.credit or a.reward == "v4" else {}
         if rud is not None:
             pol.eval()
             rud.train()
@@ -569,6 +679,16 @@ def main():
                     chunks.append(([bidx[id(tr)] for tr in part], part[0][14], resets))
         streams.clear()
         pol.train()
+        adv = advice()
+        if torch.get_num_threads() != max(1, int(adv.get("threads", a.threads))):
+            torch.set_num_threads(max(1, int(adv.get("threads", a.threads))))
+        duty = float(adv.get("gpu_duty", 1.0))
+
+        def breathe(t_):   # the governor's GPU duty: the update sleeps between its minibatches (League: a quarter)
+            if duty < 1.0:
+                z = (time.perf_counter() - t_) * (1.0 / max(duty, 0.05) - 1.0)
+                time.sleep(z)
+                gov_stats["gpu_sleep_s"] += z
         bo = torch.tensor(np.asarray(B_obs, np.float32), device=dev)
         bm = torch.tensor(np.asarray(B_msk, bool), device=dev)
         ba = torch.tensor(B_act, device=dev)
@@ -592,6 +712,7 @@ def main():
             for _ in range(a.epochs):
                 perm = torch.randperm(len(chunks), device=dev)
                 for s0 in range(0, len(chunks), per):
+                    t_mb = time.perf_counter()
                     cb = perm[s0:s0 + per]
                     ix, va = IXc[cb], VALID[cb]
                     lp, ent, v = pol.evaluate_seq(bo[ix], bm[ix], ba[ix], H0[cb], RS[cb])
@@ -610,9 +731,11 @@ def main():
                         lst["vl"].append(vl.item())
                         lst["ent"].append(em.item())
                         lst["kl"].append((((ratio - 1) - torch.log(ratio)) * va).sum().item() / va.sum().item())
+                    breathe(t_mb)
         for _ in range(0 if a.recurrent else a.epochs):
             perm = torch.randperm(n, device=dev)
             for s in range(0, n, a.minibatch):
+                t_mb = time.perf_counter()
                 idx = perm[s:s + a.minibatch]
                 loss, pg, vl, ent, ratio = ppo_loss(pol, bo[idx], bm[idx], ba[idx], blp[idx], badv[idx], bret[idx], a.clip, a.vf, ent_coef)
                 opt.zero_grad()
@@ -624,6 +747,7 @@ def main():
                     lst["vl"].append(vl.item())
                     lst["ent"].append(ent.mean().item())
                     lst["kl"].append(((ratio - 1) - torch.log(ratio)).mean().item())
+                breathe(t_mb)
         total_dec += stats["dec"]
         # ---- the epoch's row ---------------------------------------------------------------------------------
         row = {"epoch": epoch, "minutes": round((time.time() - t0) / 60, 2), "decisions": total_dec, "episodes": len(eps),
@@ -645,7 +769,11 @@ def main():
                **{k_: round(v_ / max(1, len(eps)), 3) for k_, v_ in sorted(stats.items()) if k_.startswith("ob_")},
                "credit_linked": cst.get("linked", ""), "credit_moved": round(cst.get("moved", 0.0), 3) if cst else "",
                "credit_lag_s": round(cst.get("lag_s", 0.0), 1) if cst else "",
-               "rudder_loss": round(rud.loss, 4) if rud is not None else ""}
+               "rudder_loss": round(rud.loss, 4) if rud is not None else "",
+               "gov_mode": adv.get("mode", ""), "gov_threads": adv.get("threads", ""), "gov_arenas": adv.get("arenas", ""),
+               "gov_paused_s": round(gov_stats["paused_s"], 1), "gov_parked": gov_stats["parked"],
+               "gov_gpu_sleep_s": round(gov_stats["gpu_sleep_s"], 1), "async": int(async_),
+               "wall_s_per_decision": round((time.time() - t0) / max(1, total_dec), 5)}
         for s in cur.stages:
             got = [x[1] for x in eps if x[0] == s]
             row["succ_" + s] = round(float(np.mean(got)), 3) if got else ""
@@ -663,7 +791,7 @@ def main():
         ren = sum(x[12][0] for x in eps if x[0] in ("farm", "pasture", "waves:long"))
         use = sum(x[12][1] for x in eps if x[0] in ("farm", "pasture", "waves:long"))
         row["sustain"] = round(ren / use, 4) if use > 0 else ""   # renewable food eaten / food used (the hunger scenarios)
-        for c in COMPONENTS:   # the reward by component, a mean an agent an episode
+        for c in (COMPONENTS_V4 if a.reward == "v4" else COMPONENTS):   # the reward by component, a mean an agent an episode
             got = [x[6].get(c, 0.0) / max(1, x[8]) for x in eps]
             row["comp_" + c] = round(float(np.mean(got)), 4) if got else ""
         if mw is None:
@@ -687,6 +815,10 @@ def main():
                "rates": {s: cur.rate(s) for s in cur.stages}, "curriculum": cur.log}
     (out / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
     print(json.dumps(summary, indent=1))
+    if gov is not None:
+        gov.stop()
+    for k in list(stepping):   # async: the steps still out, back before the close
+        envs.recv(k)
     envs.close()
     if engine is not None:
         import engine_env

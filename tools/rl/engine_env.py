@@ -79,10 +79,16 @@ def ours():
 def jvm_args(xmx, opt, jfr, extra=()):
     a = [JAVA, "-Xms512M", "-Xmx" + xmx, "-XX:+UseG1GC", "-Dfile.encoding=UTF-8", "-Daiguide.rl.fast=true", "-Daiguide.rl.contract=3.1",
          "-Daiguide.places=false", "-Daiguide.record=false"]
+    if os.environ.get("AIGUIDE_REWARD") == "v4":   # the reward v4 (docs/rl/REWARD-v4.md): train.py --reward v4
+        a.append("-Daiguide.rl.reward4=true")
     if opt:
         a.append("-Daiguide.rl.engine=true")
-    if CHECK:
-        a.append("-Daiguide.rl.engine.check=%d" % CHECK)
+    check = CHECK or int(os.environ.get("AIGUIDE_ENGINE_CHECK") or 0)   # (the env: for runs through train.py or engine_bench.py)
+    if check:
+        a.append("-Daiguide.rl.engine.check=%d" % check)
+    if os.environ.get("AIGUIDE_ENGINE_PATHCACHE") == "0":   # the exact path cache off (FastPath.Cache)
+        a.append("-Daiguide.rl.engine.pathcache=false")
+    a += (os.environ.get("AIGUIDE_ENGINE_OPTS") or "").split()   # more -D's for a look (a test's, a trace's)
     if jfr:
         a += ["-XX:+UnlockCommercialFeatures", "-XX:+FlightRecorder", "-XX:FlightRecorderOptions=stackdepth=512",
               "-XX:StartFlightRecording=delay=%ds,duration=%ds,filename=%s,settings=profile" % (jfr[1], jfr[2], jfr[0])]

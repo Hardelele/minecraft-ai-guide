@@ -69,6 +69,42 @@ final class MindSkills {
         }
     }
 
+    /**
+     * A skill whose goal is on the surface (the base, home) from under the ground: the skill as it is first; if its walk
+     * finds no way (NO_PATH) and the agent is under the ground, up (ascend's way: the stairs, else steps dug up over
+     * itself), then the skill again, made anew from up there. On the surface, or no mine: the skill as it is.
+     */
+    static Skill upFirst(final Crew c, Agent a, WorldServer w, final java.util.function.Supplier<Skill> make) {
+        final Skill first = make.get();
+        if (c == null || first.result != null || RlWorld.now.mouth == null || RlWorld.now.stairs.isEmpty() || !MineSkills.underground(c, a)) return first;
+        Skill s = new Skill() {
+            Skill cur = first, up;
+            boolean again;
+            Result run(Agent ag, WorldServer ww) {
+                if (up != null) {
+                    Result r = up.step(ag, ww);
+                    if (r == Result.RUNNING) return r;
+                    if (r.failed()) { reason = up.reason; detail = "no way on foot, and no way up from under the ground: " + up.detail; return r; }
+                    up = null;
+                    cur = make.get();
+                    again = true;
+                }
+                Result r = cur.step(ag, ww);
+                if (r == Result.RUNNING) return r;
+                if (!again && r == Result.NO_PATH && MineSkills.underground(c, ag)) {   // no way from down here: up first, then again
+                    up = MineSkills.ascend(c, ag, ww);
+                    if (up.result == null) { lease += up.lease; return Result.RUNNING; }
+                    up = null;
+                }
+                reason = cur.reason;
+                detail = (again ? "up from the mine, then: " : "") + cur.detail;
+                return r;
+            }
+        };
+        s.lease = first.lease;
+        return s;
+    }
+
     static Skill failed(String reason, String detail) {
         return new Skill() { Result run(Agent a, WorldServer w) { return Result.BLOCKED; } }.no(reason, detail);
     }
@@ -98,7 +134,12 @@ final class MindSkills {
         int n = call.num("count", 1);
         switch (call.tool) {
             case "look_around": return new Look();
-            case "go_to": return goTo(c, a, w, call.arg("target"));
+            case "go_to": {
+                String tg = call.arg("target") == null ? "" : call.arg("target").trim().toLowerCase(Locale.ROOT);
+                if (!tg.startsWith("base") && !tg.startsWith("home")) return goTo(c, a, w, call.arg("target"));
+                final String target = call.arg("target");
+                return upFirst(c, a, w, () -> goTo(c, a, w, target));   // the base is on the surface
+            }
             case "chop_tree": return chop(c, a, w, call.arg("at"));
             case "mine": return mine(c, a, w, call.arg("block"), clamp(n, 1, 32));
             case "craft": return craft(c, a, w, call.arg("item"), clamp(n, 1, 64));
@@ -322,6 +363,12 @@ final class MindSkills {
 
     /** the trunks the crew has seen within r: { x, y (the lowest log seen), z }, nearest first; others' reserved left out unless asked */
     static List<int[]> trunks(Crew c, Agent a, WorldServer w, double r, boolean reservedToo) {
+        // the logs it remembers near looked at again (a felled tree is forgotten, #1053), and a forgotten trunk's
+        // failed walks with it (the crew's "not reached" and the agent's own): nothing to go back to
+        for (int[] g : Exploration.recheck(a, w, LOGS, 10, 48)) {
+            crewUnreached.remove(Crew.key(g[0], g[1], g[2]));
+            a.walks.forget(Crew.key(g[0], g[1], g[2]));
+        }
         Map<Long, int[]> col = new LinkedHashMap<Long, int[]>();
         for (Block b : new Block[] { Blocks.log, Blocks.log2 })
             for (int[] p : Exploration.knownBlocks(w, b)) {
@@ -343,6 +390,8 @@ final class MindSkills {
         nearestFirst(l, a);
         return l;
     }
+
+    static final java.util.Set<String> LOGS = new java.util.HashSet<String>(java.util.Arrays.asList("minecraft:log", "minecraft:log2"));
 
     /** a cache of the path finder's answers: agent and trunk -> { tick, 1 reached / 0 not } (10 s) */
     static final Map<Long, long[]> reachCache = new java.util.HashMap<Long, long[]>();
@@ -436,6 +485,11 @@ final class MindSkills {
         }
         Skill s = wrap(new TaskBoard.Seq(new Crew.Chop(base[0], base[1], base[2]), new Crew.Collect(base[0] + 0.5, base[1], base[2] + 0.5, 5)), r -> {
             if (r != Result.NO_PATH) return null;
+            Exploration.recheck(a, w, LOGS, 10, 48);   // there now: is it still standing? (a felled tree is no failure to remember, #1053)
+            boolean still = false;
+            for (int[] p : Exploration.knownBlocks(w, Blocks.log)) if (p[0] == trunk[0] && p[2] == trunk[2]) still = true;
+            for (int[] p : Exploration.knownBlocks(w, Blocks.log2)) if (p[0] == trunk[0] && p[2] == trunk[2]) still = true;
+            if (!still) return new String[] { "GONE", "the tree at " + base[0] + " " + base[1] + " " + base[2] + " is not there any more" };
             a.walks.failed(Crew.key(trunk[0], trunk[1], trunk[2]), Crew.key((int) Math.floor(a.posX), (int) Math.floor(a.posY), (int) Math.floor(a.posZ)), w.getTotalWorldTime());   // not this one again soon
             unreached(trunk, w.getTotalWorldTime());   // nor by the others
             return new String[] { "NO_PATH", "no spot beside the tree at " + base[0] + " " + base[1] + " " + base[2] + " to chop it from" };
@@ -462,6 +516,14 @@ final class MindSkills {
         return "the right tool";
     }
 
+    /** a cell beside the block to stand in and dig it from (its level or one lower), or null */
+    static int[] mineSpot(WorldServer w, int[] p) {
+        for (int[] d : new int[][] { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } })
+            for (int dy = 0; dy >= -1; dy--)
+                if (Crew.stand(w, p[0] + d[0], p[1] + dy, p[2] + d[1])) return new int[] { p[0] + d[0], p[1] + dy, p[2] + d[1] };
+        return null;
+    }
+
     static Skill mine(final Crew c, Agent a, WorldServer w, String name, int n) {
         String t = name == null ? "" : name.trim().toLowerCase(Locale.ROOT).replace("minecraft:", "").replace(' ', '_');
         if (t.equals("cobblestone") || t.equals("cobble") || t.equals("rock")) t = "stone";
@@ -475,7 +537,7 @@ final class MindSkills {
         List<int[]> near = new ArrayList<int[]>();
         for (int[] p : seen) if (hdist(a, p) <= 32 && Math.abs(p[1] - a.posY) <= 12) near.add(p);
         nearestFirst(near, a);
-        List<int[]> pick = new ArrayList<int[]>();
+        List<int[]> pick = new ArrayList<int[]>(), later = new ArrayList<int[]>();
         int checks = 0;
         for (int[] p : near) {
             if (pick.size() >= n || checks > 24) break;
@@ -485,12 +547,15 @@ final class MindSkills {
             if (!pick.isEmpty() && Math.hypot(p[0] - pick.get(0)[0], p[2] - pick.get(0)[2]) > 6) continue;   // a few together
             checks++;
             if (!Ground.digLeavesWay(c, w, p[0], p[1], p[2], "gather")) continue;   // the dig would leave a pit with no way back
-            int[] spot = null;   // where one stands to dig it
-            for (int[] d : new int[][] { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } })
-                for (int dy = 0; dy >= -1 && spot == null; dy--)
-                    if (Crew.stand(w, p[0] + d[0], p[1] + dy, p[2] + d[1])) spot = new int[] { p[0] + d[0], p[1] + dy, p[2] + d[1] };
-            pick.add(spot == null ? new int[] { p[0], p[1], p[2] } : new int[] { p[0], p[1], p[2], spot[0], spot[1], spot[2] });
+            int[] spot = mineSpot(w, p);   // where one stands to dig it
+            int[] q = spot == null ? new int[] { p[0], p[1], p[2] } : new int[] { p[0], p[1], p[2], spot[0], spot[1], spot[2] };
+            // an ore (not stone) with a place beside it a walk gets to first (the others came to BLOCKED, 43 % of the random
+            // policy's); the others only when there is none such: Mine digs its way to them often enough (iron on the engine:
+            // leaving them out took v31eng1's iron from 5/8 to 2/8)
+            if (b != Blocks.stone && (spot == null || !reached(a, w, spot))) { if (later.size() < n) later.add(q); continue; }
+            pick.add(q);
         }
+        if (pick.isEmpty()) pick.addAll(later);
         if (pick.isEmpty()) {
             if (b != Blocks.stone) return failed("NOT_SEEN", "no " + idOf(b) + " the crew has seen within reach of a walk (or all taken): look_around, or go_to where it was seen");
             // no stone seen: safe steps down from here, the way the agent looks (each step a column of three, a floor under each)

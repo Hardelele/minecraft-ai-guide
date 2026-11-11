@@ -226,6 +226,295 @@ final class RlScore {
         double idle(String agent, double t) { Double s = since.get(agent); return s == null ? 0 : t - s; }
     }
 
+    /**
+     * (3.1) Idling (AFK): the time an agent has gone without a real deed (a measured gain, a new thing in the bag, a hit
+     * on a mob) and without going more than move blocks from where its idling began; standing, waiting, blocks put
+     * round itself, the same failure again all count. A second of it pays the "afk" weight times min(cap, (t/tau)^2):
+     * at once nothing, a minute of it more than a death (contract 3.1, rl/reward.json constants.afk). The Python
+     * simulator has the same (sim_env.Afk; tools/tests/test_rl_afk.py: Java = Python).
+     */
+    static final class Afk {
+        final double tau, cap, move;
+        double since, ax, az;
+        boolean anchored;
+        Afk(double tau, double cap, double move) { this.tau = tau; this.cap = cap; this.move = move; }
+
+        /** a game second at t, the agent at x z, real: a real deed in it; the factor of the second's afk */
+        double second(double t, double x, double z, boolean real) {
+            if (!anchored || real || Math.hypot(x - ax, z - az) > move) {
+                since = t;
+                ax = x;
+                az = z;
+                anchored = true;
+                return 0;
+            }
+            double s = (t - since) / tau;
+            return Math.min(cap, s * s);
+        }
+
+        double idle(double t) { return anchored ? t - since : 0; }
+    }
+
+    /**
+     * (3.1) The day's wasted time, for the delayed credit: each decision by day (not at night nor in a wave) is a stretch
+     * of time, useful when a real deed or a measured step (an OK that changed the bag: a wall, a moat, a sword, a
+     * shelter's blocks, food) came of it, else wasted (walks, waits, failures). A penalty at night (a death, a breach,
+     * mob-seconds) names the wasted decisions of the window before the night began: share x penalty x the wasted
+     * part of that window, moved back to them by train.py's credit (no new payment: the event's points are part of
+     * the penalty paid). The Python simulator has the same (sim_env.WastedDay; tools/tests/test_rl_afk.py).
+     */
+    static final class WastedDay {
+        final double window, share;
+        final java.util.List<double[]> segs = new java.util.ArrayList<double[]>();   // { decision id, from, to, useful }
+        long cur = -1;
+        double curFrom, nightFrom = -1;
+        boolean curUseful, night;
+        double dayTotal, dayWasted;   // the episode's: the share of the day wasted (a metric)
+        WastedDay(double window, double share) { this.window = window; this.share = share; }
+
+        /** a new decision at t (night: it is night or a wave now) */
+        void decide(long id, double t, boolean nightNow) {
+            phase(t, nightNow);
+            close(t);
+            if (!night) { cur = id; curFrom = t; curUseful = false; }
+        }
+
+        /** something useful came of the decision running */
+        void useful() { curUseful = true; }
+
+        /** the time of day at t: at the night's start the day's stretch closes, at its end a new day */
+        void phase(double t, boolean nightNow) {
+            if (nightNow && !night) { close(t); nightFrom = t; night = true; }
+            else if (!nightNow && night) { night = false; }
+        }
+
+        void close(double t) {
+            if (cur >= 0 && t > curFrom) {
+                segs.add(new double[] { cur, curFrom, t, curUseful ? 1 : 0 });
+                dayTotal += t - curFrom;
+                if (!curUseful) dayWasted += t - curFrom;
+            }
+            cur = -1;
+            while (segs.size() > 256) segs.remove(0);
+        }
+
+        /** a penalty p (< 0) at night at t: { points to move, the wasted decisions' ids... } or null */
+        double[] night(double t, double p) {
+            if (!night || nightFrom < 0 || p >= 0) return null;
+            double from = nightFrom - window, all = 0, wasted = 0;
+            java.util.List<Double> ids = new java.util.ArrayList<Double>();
+            for (double[] s : segs) {
+                double a = Math.max(from, s[1]), b = Math.min(nightFrom, s[2]);
+                if (b <= a) continue;
+                all += b - a;
+                if (s[3] == 0) { wasted += b - a; ids.add(s[0]); }
+            }
+            if (all <= 0 || ids.isEmpty()) return null;
+            double[] out = new double[1 + ids.size()];
+            out[0] = share * p * wasted / all;
+            for (int i = 0; i < ids.size(); i++) out[1 + i] = ids.get(i);
+            return out;
+        }
+
+        double wastedFrac() { return dayTotal <= 0 ? 0 : dayWasted / dayTotal; }
+    }
+
+    /**
+     * (3.1) The fight's bonuses, capped so that defending the base stays the most paid: a trade (a kill with little
+     * health lost in the window before it, the most for none; low health, healed, back to hitting a mob in time) and a
+     * dodge (a real threat met with no hit taken: the environment decides the threat, the leash and that the agent is
+     * not shut in). Each returns the points to pay (its weight given); a dodge of the same mob again without a hit on it
+     * is worth decay^k; the trade's and the dodge's points of a wave (or of a minute without waves) are capped. The
+     * Python simulator has the same (sim_env.Fight; tools/tests/test_rl_afk.py).
+     */
+    static final class Fight {
+        final double hpScale, window, low, high, back, decay, capTrade, capDodge, wKill, wRecover, wDodge;
+        final ArrayDeque<double[]> hurt = new ArrayDeque<double[]>();   // { t, amount }
+        final Map<Integer, Integer> dodged = new HashMap<Integer, Integer>();
+        double lowAt = -1, healedAt = -1, capFrom = 0, trade, dodge;
+        int wave = -1;
+        Fight(double hpScale, double window, double low, double high, double back, double decay, double capTrade, double capDodge,
+              double wKill, double wRecover, double wDodge) {
+            this.hpScale = hpScale; this.window = window; this.low = low; this.high = high; this.back = back; this.decay = decay;
+            this.capTrade = capTrade; this.capDodge = capDodge; this.wKill = wKill; this.wRecover = wRecover; this.wDodge = wDodge;
+        }
+
+        /** the caps' period: a new wave (its number), or a minute when there are no waves (wave < 0) */
+        void period(double t, int waveNow) {
+            if (waveNow >= 0 ? waveNow != wave : t - capFrom >= 60) {
+                wave = waveNow; capFrom = t; trade = dodge = coverPts = blockPts = 0;
+                covered.clear(); blocked.clear();
+            }
+        }
+
+        void hurtBy(double t, double amount) { hurt.add(new double[] { t, amount }); prune(t); }
+
+        void prune(double t) { while (!hurt.isEmpty() && t - hurt.peek()[0] > window) hurt.poll(); }
+
+        double lost(double t) { prune(t); double s = 0; for (double[] h : hurt) s += h[1]; return s; }
+
+        /** its health now: low marks the start of a retreat, high after it that it is healed */
+        void health(double t, double hp) {
+            if (hp < low && lowAt < 0) { lowAt = t; healedAt = -1; }
+            else if (lowAt >= 0 && healedAt < 0 && hp >= high) healedAt = t;
+            if (healedAt >= 0 && t - healedAt > back) { lowAt = healedAt = -1; }   // healed but never back in the fight
+        }
+
+        /** it killed the mob at t: the trade's points (its dodges of it forgotten) */
+        double kill(double t, int mob) {
+            dodged.remove(mob);
+            return capT(wKill * Math.max(0, 1 - lost(t) / hpScale));
+        }
+
+        /** it hit the mob at t: a healed agent back in the fight is paid once */
+        double hit(double t, int mob) {
+            dodged.remove(mob);
+            if (healedAt < 0 || t - healedAt > back) return 0;
+            lowAt = healedAt = -1;
+            return capT(wRecover);
+        }
+
+        /** a real threat of the mob met with no hit taken: decayed by the dodges of it before, capped */
+        double dodge(int mob) {
+            int k = dodged.containsKey(mob) ? dodged.get(mob) : 0;
+            dodged.put(mob, k + 1);
+            double p = Math.min(wDodge * Math.pow(decay, k), Math.max(0, capDodge - dodge));
+            dodge += p;
+            return p;
+        }
+
+        double capT(double p) { p = Math.min(p, Math.max(0, capTrade - trade)); trade += p; return p; }
+
+        // a cover that worked (an arrow into a block, a mob kept off by one) and a block a mob had to go round: capped the same way
+        double capCover, capBlock, wCover, wBlock, coverPts, blockPts;
+        final Map<Integer, Integer> covered = new HashMap<Integer, Integer>();
+        final java.util.Set<Long> blocked = new java.util.HashSet<Long>();
+
+        Fight cover(double capCover, double capBlock, double wCover, double wBlock) {
+            this.capCover = capCover; this.capBlock = capBlock; this.wCover = wCover; this.wBlock = wBlock;
+            return this;
+        }
+
+        /** a cover that kept the mob off: decayed by the times before against it, capped */
+        double cover(int mob) {
+            int k = covered.containsKey(mob) ? covered.get(mob) : 0;
+            covered.put(mob, k + 1);
+            double p = Math.min(wCover * Math.pow(decay, k), Math.max(0, capCover - coverPts));
+            coverPts += p;
+            return p;
+        }
+
+        /** a mob that had to go round (or fell into) a block of the crew: once a pair (mob, block) a period, capped */
+        double block(int mob, long pos) {
+            if (!blocked.add(pos * 31 + mob)) return 0;
+            double p = Math.min(wBlock, Math.max(0, capBlock - blockPts));
+            blockPts += p;
+            return p;
+        }
+    }
+
+    /** (3.1) a death outside the base: the measure of perimeter.out_died by the distance d from the base, min(cap, d / scale) */
+    static double outDied(double d, double scale, double cap) { return Math.min(cap, Math.max(0, d) / scale); }
+
+    /**
+     * (3.1) What a scout found (ores newly seen): each find's value counts within window seconds; a death then costs
+     * less by min(cap, per x the values), the finds kept in the crew's memory all the same
+     */
+    static final class Finds {
+        final double window, per, cap;
+        final ArrayDeque<double[]> finds = new ArrayDeque<double[]>();   // { t, value }
+        Finds(double window, double per, double cap) { this.window = window; this.per = per; this.cap = cap; }
+        void found(double t, double value) { finds.add(new double[] { t, value }); }
+        double soft(double t) {
+            while (!finds.isEmpty() && t - finds.peek()[0] > window) finds.poll();
+            double v = 0;
+            for (double[] f : finds) v += f[1];
+            return Math.min(cap, per * v);
+        }
+    }
+
+    /** a found block's value for the scout (ores by worth; 0: not a find) */
+    static double findValue(String block) {
+        String b = block.replace("minecraft:", "");
+        if (b.equals("diamond_ore")) return 3;
+        if (b.equals("gold_ore")) return 1.5;
+        if (b.equals("iron_ore") || b.equals("obsidian")) return 1;
+        if (b.equals("redstone_ore") || b.equals("lit_redstone_ore")) return 0.5;
+        if (b.equals("coal_ore")) return 0.3;
+        return 0;
+    }
+
+    /** "afk e.json out.json": the factors of a run of seconds ({t, x, z, real} each), for tools/tests/test_rl_afk.py */
+    public static void main(String[] args) throws Exception {
+        if (args.length < 3 || !args[0].equals("afk")) { System.err.println("RlScore afk <events.json> <out.json>"); return; }
+        com.google.gson.JsonObject in = new com.google.gson.JsonParser().parse(new String(java.nio.file.Files.readAllBytes(new java.io.File(args[1]).toPath()), "UTF-8")).getAsJsonObject();
+        Afk a = new Afk(in.get("tau").getAsDouble(), in.get("cap").getAsDouble(), in.get("move").getAsDouble());
+        com.google.gson.JsonArray out = new com.google.gson.JsonArray();
+        for (com.google.gson.JsonElement e : in.getAsJsonArray("events")) {
+            com.google.gson.JsonArray v = e.getAsJsonArray();
+            out.add(new com.google.gson.JsonPrimitive(a.second(v.get(0).getAsDouble(), v.get(1).getAsDouble(), v.get(2).getAsDouble(), v.get(3).getAsInt() != 0)));
+        }
+        com.google.gson.JsonObject res = new com.google.gson.JsonObject();
+        res.add("afk", out);
+        if (in.has("wasted")) {   // the wasted day's ops: ["decide", id, t, night], ["useful"], ["phase", t, night], ["night", t, p]
+            com.google.gson.JsonObject wi = in.getAsJsonObject("wasted");
+            WastedDay wd = new WastedDay(wi.get("window").getAsDouble(), wi.get("share").getAsDouble());
+            com.google.gson.JsonArray wo = new com.google.gson.JsonArray();
+            for (com.google.gson.JsonElement e : wi.getAsJsonArray("ops")) {
+                com.google.gson.JsonArray v = e.getAsJsonArray();
+                String op = v.get(0).getAsString();
+                if (op.equals("decide")) wd.decide(v.get(1).getAsLong(), v.get(2).getAsDouble(), v.get(3).getAsInt() != 0);
+                else if (op.equals("useful")) wd.useful();
+                else if (op.equals("phase")) wd.phase(v.get(1).getAsDouble(), v.get(2).getAsInt() != 0);
+                else if (op.equals("night")) {
+                    double[] r = wd.night(v.get(1).getAsDouble(), v.get(2).getAsDouble());
+                    com.google.gson.JsonArray ra = new com.google.gson.JsonArray();
+                    if (r != null) for (double x : r) ra.add(new com.google.gson.JsonPrimitive(x));
+                    wo.add(ra);
+                }
+            }
+            res.add("wasted", wo);
+            res.addProperty("wasted_frac", wd.wastedFrac());
+        }
+        if (in.has("fight")) {   // ["period", t, wave], ["hurt", t, amount], ["health", t, hp], ["kill", t, mob], ["hit", t, mob], ["dodge", mob]
+            com.google.gson.JsonObject fi = in.getAsJsonObject("fight");
+            Fight f = new Fight(fi.get("hp_scale").getAsDouble(), fi.get("window").getAsDouble(), fi.get("low").getAsDouble(), fi.get("high").getAsDouble(),
+                    fi.get("back").getAsDouble(), fi.get("decay").getAsDouble(), fi.get("cap_trade").getAsDouble(), fi.get("cap_dodge").getAsDouble(),
+                    fi.get("w_kill").getAsDouble(), fi.get("w_recover").getAsDouble(), fi.get("w_dodge").getAsDouble())
+                    .cover(fi.get("cap_cover").getAsDouble(), fi.get("cap_block").getAsDouble(), fi.get("w_cover").getAsDouble(), fi.get("w_block").getAsDouble());
+            com.google.gson.JsonArray fo = new com.google.gson.JsonArray();
+            for (com.google.gson.JsonElement e : fi.getAsJsonArray("ops")) {
+                com.google.gson.JsonArray v = e.getAsJsonArray();
+                String op = v.get(0).getAsString();
+                if (op.equals("period")) f.period(v.get(1).getAsDouble(), v.get(2).getAsInt());
+                else if (op.equals("hurt")) f.hurtBy(v.get(1).getAsDouble(), v.get(2).getAsDouble());
+                else if (op.equals("health")) f.health(v.get(1).getAsDouble(), v.get(2).getAsDouble());
+                else if (op.equals("kill")) fo.add(new com.google.gson.JsonPrimitive(f.kill(v.get(1).getAsDouble(), v.get(2).getAsInt())));
+                else if (op.equals("hit")) fo.add(new com.google.gson.JsonPrimitive(f.hit(v.get(1).getAsDouble(), v.get(2).getAsInt())));
+                else if (op.equals("dodge")) fo.add(new com.google.gson.JsonPrimitive(f.dodge(v.get(1).getAsInt())));
+                else if (op.equals("cover")) fo.add(new com.google.gson.JsonPrimitive(f.cover(v.get(1).getAsInt())));
+                else if (op.equals("block")) fo.add(new com.google.gson.JsonPrimitive(f.block(v.get(1).getAsInt(), v.get(2).getAsLong())));
+            }
+            res.add("fight", fo);
+        }
+        if (in.has("finds")) {   // ["found", t, block], ["soft", t]; and out_died over distances
+            com.google.gson.JsonObject fi = in.getAsJsonObject("finds");
+            Finds f = new Finds(fi.get("window").getAsDouble(), fi.get("per").getAsDouble(), fi.get("cap").getAsDouble());
+            com.google.gson.JsonArray fo = new com.google.gson.JsonArray();
+            for (com.google.gson.JsonElement e : fi.getAsJsonArray("ops")) {
+                com.google.gson.JsonArray v = e.getAsJsonArray();
+                if (v.get(0).getAsString().equals("found")) f.found(v.get(1).getAsDouble(), findValue(v.get(2).getAsString()));
+                else fo.add(new com.google.gson.JsonPrimitive(f.soft(v.get(1).getAsDouble())));
+            }
+            res.add("finds", fo);
+            com.google.gson.JsonArray od = new com.google.gson.JsonArray();
+            for (com.google.gson.JsonElement e : fi.getAsJsonArray("out_died"))
+                od.add(new com.google.gson.JsonPrimitive(outDied(e.getAsDouble(), fi.get("out_scale").getAsDouble(), fi.get("out_cap").getAsDouble())));
+            res.add("out_died", od);
+        }
+        java.nio.file.Files.write(new java.io.File(args[2]).toPath(), res.toString().getBytes("UTF-8"));
+    }
+
     /** the components whose payment is progress (the stall's clock starts again): the scales, a goal, an achievement, a useful step */
     static boolean progress(String comp) {
         return RlSpec.isScale(comp) || comp.equals("goal") || comp.equals("skill_ok");

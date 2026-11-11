@@ -224,6 +224,7 @@ final class RlArena {
             Entity e = EntityList.createEntityFromNBT((NBTTagCompound) t.copy(), w);
             if (e != null) w.spawnEntityInWorld(e);
         }
+        net.minecraft.pathfinding.FastPath.worldRewritten(w);   // (the chunks written past the world's notices: the path cache forgets them)
         restoreMs = (System.nanoTime() - t0) / 1000000;
         return restoreMs;
     }

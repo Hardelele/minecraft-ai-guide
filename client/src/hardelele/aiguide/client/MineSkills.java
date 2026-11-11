@@ -169,7 +169,7 @@ final class MineSkills {
         if (m.mouth == null || m.stairs.isEmpty()) return MindSkills.failed("NO_MINE", "the crew has no stairs down: descend first");
         if (!underground(c, a)) return MindSkills.failed("ON_SURFACE", "on the surface already");
         Ascend s = new Ascend(nearestAny(m, a));
-        s.lease = 20 * 300;
+        s.lease = 20 * 300 + 20 * 4 * Math.max(0, RlWorld.now.surfaceY(c) - feetY(a));   // (a way of its own up: a step a few seconds)
         return s;
     }
 
@@ -185,15 +185,24 @@ final class MineSkills {
         return best + 1;   // (index in mouth + stairs)
     }
 
-    /** up the stairs, three at a time, the mouth last */
+    /** up the stairs, three at a time, the mouth last; no way to them (a pit, a pillar, a cave): steps dug up to the surface over itself */
     static final class Ascend extends MindSkills.Skill {
         int i, fails, climbs;
         Crew.GoTo walk;
-        StepsUp up;
+        StepsUp up, out;
         Ascend(int from) { i = from; }
 
         Result run(Agent a, WorldServer w) {
             RlWorld m = RlWorld.now;
+            Crew c = Crew.instance;
+            if (out != null) {   // its own way up: done when it is out from under the ground
+                Result r = out.step(a, w);
+                if (r == Result.RUNNING) return r;
+                out = null;
+                if (c == null || !underground(c, a)) { detail = "dug its way up to the surface at " + (int) Math.floor(a.posX) + " " + feetY(a) + " " + (int) Math.floor(a.posZ); return Result.OK; }
+                if (r == Result.NO_TOOL || r == Result.NO_ITEMS) { reason = r.name(); detail = "no way to the stairs, and the way up needs " + (r == Result.NO_TOOL ? "a pickaxe" : "blocks"); return r; }
+                reason = "NO_PATH"; detail = "no way to the stairs, nor dug up to the surface (" + r + ")"; return Result.NO_PATH;
+            }
             List<int[]> way = new ArrayList<int[]>();
             way.add(m.mouth);
             way.addAll(m.stairs);
@@ -214,6 +223,11 @@ final class MineSkills {
                 if (++fails > 3) {
                     int[] near = way.get(nearestAny(m, a) - 1 < 0 ? 0 : Math.min(way.size() - 1, nearestAny(m, a)));
                     if (climbs++ < 3 && near[1] > Math.floor(a.boundingBox.minY) + 1) { up = new StepsUp(near, 24); return Result.RUNNING; }
+                    if (c != null) {   // the stairs out of reach: a staircase of its own, dug up to the surface (a player out of a hole)
+                        int s = RlWorld.now.surfaceY(c), fy = feetY(a);
+                        out = new StepsUp(new int[] { (int) Math.floor(a.posX), s, (int) Math.floor(a.posZ) }, s - fy + 8);
+                        return Result.RUNNING;
+                    }
                     reason = "NO_PATH"; detail = "no way up the stairs at " + p[0] + " " + p[1] + " " + p[2]; return Result.NO_PATH;
                 }
                 return Result.RUNNING;

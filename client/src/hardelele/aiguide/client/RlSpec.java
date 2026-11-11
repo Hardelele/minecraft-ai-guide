@@ -526,6 +526,16 @@ final class RlSpec {
         w.put("skill_ok", 0.02);
         w.put("retry_fail", -0.03);   // (3.1) the same action failing again: (k - 1) for its k-th failure in a row
         w.put("switch_ok", 0.05);     // (3.1) a success by another action than the one that failed last
+        w.put("afk", -0.005);         // (3.1) a second of idling, times min(AFK_CAP, (idle / AFK_TAU)^2): RlScore.Afk
+        w.put("trade.kill", 0.1);     // (3.1) a kill with little health lost (RlScore.Fight; the points capped a wave)
+        w.put("trade.recover", 0.2);  // (3.1) low health, healed, back in the fight
+        w.put("dodge.melee", 0.03);   // (3.1) a mob in reach at it, no hit taken
+        w.put("dodge.arrow", 0.03);   // (3.1) an arrow at it gone by
+        w.put("cover.melee", 0.03);   // (3.1) a mob at it kept off by a block between, seen
+        w.put("cover.arrow", 0.03);   // (3.1) an arrow at it stopped by a block, seen
+        w.put("block_credit", 0.05);  // (3.1) a mob had to go round (or fell into) a block the crew put or dug, seen: to its decision by the chain
+        w.put("ready.wall", 1.0);     // (3.1) the ring wall whole at a wave's start
+        w.put("ready.moat", 0.5);     // (3.1) the moat whole at a wave's start
         w.put("damage", -0.01);
         w.put("death", -1.0);
         w.put("accident", -1.5);
@@ -595,6 +605,17 @@ final class RlSpec {
             { "torch", "32", "0.5" }, { "arrow", "32", "0.5" }, { "wheat_seeds", "16", "0.3" }, { "wheat", "32", "0.5" } };
     /** the windows (game seconds): of stall (no measured progress), of the renewable's balance in the observation */
     static final int STALL_S = 60, WINDOW_S = 120;
+    /** (3.1) idling's growth: its factor min(AFK_CAP, (idle s / AFK_TAU)^2); moving more than AFK_MOVE blocks ends it */
+    static final double AFK_TAU = 15, AFK_CAP = 20, AFK_MOVE = 4;
+    /** (3.1) the day's wasted time: the window before a night looked at, the share of a night's penalty named back */
+    static final double WASTED_WINDOW = 300, WASTED_SHARE = 0.5;
+    static final String[] WASTED_KEYS = { "death", "perimeter.breach", "perimeter.mob_seconds" };
+    /** (3.1) the fight's: RlScore.Fight's numbers and the environment's tests of a threat and of fleeing */
+    static final double FIGHT_HP_SCALE = 10, FIGHT_WINDOW = 10, FIGHT_LOW = 8, FIGHT_HIGH = 16, FIGHT_BACK = 60, FIGHT_DECAY = 0.5,
+            FIGHT_CAP_TRADE = 0.4, FIGHT_CAP_DODGE = 0.3, FIGHT_REACH = 2.0, FIGHT_LEASH_BASE = 12, FIGHT_LEASH_MOB = 6,
+            FIGHT_CAP_COVER = 0.3, FIGHT_CAP_BLOCK = 0.3, FIGHT_SEE = 16;
+    /** (3.1) a death outside the base by its distance (out_died: min(OUT_CAP, d / OUT_SCALE)); a scout's finds: SCOUT_* */
+    static final double OUT_SCALE = 32, OUT_CAP = 3, SCOUT_WINDOW = 180, SCOUT_PER = 0.15, SCOUT_CAP = 0.5, SCOUT_SHARE = 0.5;
     /** the horizons of the mine: the feet's y of each (iron and coal, diamonds, gold and redstone) and how near counts as at it */
     static final int[] HORIZONS = { 40, 12 };
     static final int HORIZON_NEAR = 4;
@@ -802,6 +823,48 @@ final class RlSpec {
         for (String[] x : STOCK) { JsonArray e = new JsonArray(); e.add(new JsonPrimitive(Double.parseDouble(x[1]))); e.add(new JsonPrimitive(Double.parseDouble(x[2]))); st.add(x[0], e); }
         k.add("stock_cap_value", st);
         k.addProperty("stall_s", STALL_S);
+        JsonObject afk = new JsonObject();   // (3.1) idling: RlScore.Afk, sim_env.Afk
+        afk.addProperty("tau_s", AFK_TAU);
+        afk.addProperty("cap", AFK_CAP);
+        afk.addProperty("move_blocks", AFK_MOVE);
+        afk.addProperty("note", "a game second of idling (no measured gain, no new thing in the bag, no hit on a mob, not more than move_blocks from where it began) pays weights.afk x min(cap, (idle s / tau_s)^2)");
+        k.add("afk", afk);
+        JsonObject wd = new JsonObject();   // (3.1) the day's wasted time: RlScore.WastedDay, sim_env.WastedDay
+        wd.addProperty("window_s", WASTED_WINDOW);
+        wd.addProperty("share", WASTED_SHARE);
+        JsonArray pk = new JsonArray();
+        for (String x : WASTED_KEYS) pk.add(new JsonPrimitive(x));
+        wd.add("night_keys", pk);
+        wd.addProperty("useful", "a real deed (a measured gain of a scale, a goal, a new thing in the bag, a hit on a mob) or an OK that changed the bag (skill_ok: a wall's, a moat's, a shelter's blocks put, a sword made, food eaten)");
+        wd.addProperty("note", "a penalty of night_keys at night or in a wave names, in a reward event 'wasted_day' (no payment of its own), the decisions of the window_s before the night with nothing useful of them; its points, share x the penalty x the wasted part of the window, train.py's --credit moves back to them");
+        k.add("wasted_day", wd);
+        JsonObject fi = new JsonObject();   // (3.1) the fight's bonuses: RlScore.Fight, sim_env.Fight
+        fi.addProperty("hp_scale", FIGHT_HP_SCALE);
+        fi.addProperty("window_s", FIGHT_WINDOW);
+        fi.addProperty("low_hp", FIGHT_LOW);
+        fi.addProperty("high_hp", FIGHT_HIGH);
+        fi.addProperty("back_s", FIGHT_BACK);
+        fi.addProperty("decay", FIGHT_DECAY);
+        fi.addProperty("cap_trade", FIGHT_CAP_TRADE);
+        fi.addProperty("cap_dodge", FIGHT_CAP_DODGE);
+        fi.addProperty("reach", FIGHT_REACH);
+        fi.addProperty("leash_base", FIGHT_LEASH_BASE);
+        fi.addProperty("leash_mob", FIGHT_LEASH_MOB);
+        fi.addProperty("cap_cover", FIGHT_CAP_COVER);
+        fi.addProperty("cap_block", FIGHT_CAP_BLOCK);
+        fi.addProperty("see", FIGHT_SEE);
+        fi.addProperty("note_cover", "cover.melee: a hostile within reach + 1 at it with a block between (it does not see the agent), no hit taken in the next second, the agent sees that block; cover.arrow: an arrow aimed at its body stopped in a block it sees; decay and cap as the dodge's; not while it is far from the base in a waves scenario. block_credit: a hostile going for an agent or the base whose straight way (4 blocks ahead) runs into a block the crew put, or a pit it dug, while an agent within see of it sees the mob: once a (mob, block) a wave, to the decision that put or dug it by the event's chain; ready.wall/ready.moat: the ring wall / the moat whole at a wave's start. Altogether capped under what holding the base pays (clean_wave 1.0, wave_cleared 0.5, kills)");
+        fi.addProperty("note", "trade.kill x max(0, 1 - health lost in window_s / hp_scale) for a kill; trade.recover when health went under low_hp, came back to high_hp and the agent hit a mob within back_s; dodge.melee: a hostile within reach (horizontally) targeting it and no hit taken in the next second; dodge.arrow: an arrow aimed at its body gone by; a dodge only when the agent is not shut in and is within leash_base of the base or leash_mob of the mob (else it is flight: no bonus, the idling's and the wasted day's); the same mob dodged again without a hit on it: decay^k; the points of a wave (a minute without waves) at most cap_trade and cap_dodge");
+        k.add("fight", fi);
+        JsonObject od = new JsonObject();   // (3.1) a death far from the base, what a scout found
+        od.addProperty("out_scale", OUT_SCALE);
+        od.addProperty("out_cap", OUT_CAP);
+        od.addProperty("scout_window_s", SCOUT_WINDOW);
+        od.addProperty("scout_per", SCOUT_PER);
+        od.addProperty("scout_cap", SCOUT_CAP);
+        od.addProperty("scout_share", SCOUT_SHARE);
+        od.addProperty("note", "perimeter.out_died (a death in a wave outside the ring) is measured min(out_cap, distance from the base / out_scale) instead of 1; the ores an agent saw first (diamond 3, gold 1.5, iron and obsidian 1, redstone 0.5, coal 0.3) within scout_window_s make its death cost less by min(scout_cap, scout_per x their worth); an ore it found mined by another of the crew names it in an event scout_credit, scout_share x what that ore's mine.* pays, moved to the find's decision by the credit; curiosity.novel is not paid while a wave's mobs live");
+        k.add("death_scout", od);
         k.addProperty("window_s", WINDOW_S);
         JsonArray hz = new JsonArray();
         for (int h : HORIZONS) hz.add(new JsonPrimitive(h));

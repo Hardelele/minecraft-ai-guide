@@ -70,7 +70,7 @@ def run_env(env, name, scenario, seconds, episodes, seed, pol, crew, trace, out,
         tr = time.time()
         o = env.reset(scenario, seed + ep, crew=crew)
         st["reset_ms"].append(o["info"].get("reset_ms") if o["info"].get("reset_ms") is not None else (time.time() - tr) * 1000)
-        ret, acts_log = 0.0, []
+        ret, acts_log, moves = 0.0, [], {}
         while not o["done"]:
             tp = time.time()
             acts = choose(pol, o, rng)
@@ -79,6 +79,9 @@ def run_env(env, name, scenario, seconds, episodes, seed, pol, crew, trace, out,
             st["decisions"] += len(acts)
             st["steps"] += 1
             o = env.step(acts)
+            for ev in o["info"].get("events") or ():   # the credit moved to past decisions (v4: its components sum to 0)
+                if ev.get("type") == "reward" and str(ev.get("key", "")).startswith("credit."):
+                    moves[ev["key"]] = round(moves.get(ev["key"], 0.0) + abs(float(ev.get("points", 0.0))), 4)
             ret += sum(o["reward"]) / max(1, len(o["agents"]) or crew)
             if not episodes and time.time() - t0 > seconds * 3:
                 break
@@ -93,7 +96,7 @@ def run_env(env, name, scenario, seconds, episodes, seed, pol, crew, trace, out,
         if trace is not None:
             trace.append({"env": name, "scenario": scenario, "seed": seed + ep, "done_reason": why, "success": bool(info.get("success")),
                           "t": info.get("t"), "return": round(ret, 3), "achievements": info.get("achievement_ids"),
-                          "measured": info.get("measured"), "actions": acts_log})
+                          "measured": info.get("measured"), "episode_components": info.get("episode_components"), "events4": info.get("events4"), "moves": moves, "actions": acts_log})
         ep += 1
     st["wall_s"] = round(time.time() - t0, 2)
     if hasattr(env, "close_env"):

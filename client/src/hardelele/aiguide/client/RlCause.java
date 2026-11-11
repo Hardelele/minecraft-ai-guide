@@ -84,6 +84,12 @@ final class RlCause {
         return l == null ? null : l.via("step");
     }
 
+    /** a decision by its id as a link via v (null when it is not known any more) */
+    Link decision(long id, String v) {
+        Link l = decisions.get(id);
+        return l == null ? null : l.via(v);
+    }
+
     /** the decision that made an item (its NBT's id) as a link via the item */
     Link item(long id, String item) {
         Link l = decisions.get(id);
@@ -137,6 +143,21 @@ final class RlCause {
         }
         if (from != null) blocks.put(pos, new Mark(from.decision, f, true));
         else if (m != null) blocks.remove(pos);
+    }
+
+    /** (3.1) the cells the crew's decisions dug (a pit, the moat): pos -> decision (block_credit) */
+    final Map<Long, Long> dugBy = new java.util.LinkedHashMap<Long, Long>();
+
+    void dug(long pos, Link by) {
+        dugBy.put(pos, by.id);
+        while (dugBy.size() > 50000) dugBy.remove(dugBy.keySet().iterator().next());
+    }
+
+    /** the decision that dug the cell, as a link (via dug), or null */
+    Link dugAt(long pos) {
+        Long d = dugBy.get(pos);
+        Link l = d == null ? null : decisions.get(d);
+        return l == null ? null : l.via("dug");
     }
 
     /** the link of a block's mark (via block:<id>), or null */
@@ -193,6 +214,7 @@ final class RlCause {
     /** a new episode: the world's marks gone (the arena is back), the decisions' ids go on, the journal's kinds too */
     void reset() {
         blocks.clear();
+        dugBy.clear();
         current.clear();
         burning.clear();
         episode.clear();

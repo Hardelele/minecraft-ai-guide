@@ -132,6 +132,7 @@ class Skills {
         FakePlayer p = hands(a, w);
         ItemStack held = a.getHeldItem();
         boolean ok = p.theItemInWorldManager.tryHarvestBlock(x, y, z);
+        if (ok && w.isAirBlock(x, y, z)) Exploration.invalidate(w, x, y, z);   // it broke it: the crew does not remember it standing (#1053)
         ItemStack after = p.inventory.mainInventory[0];
         if (held != null && (after == null || after.stackSize <= 0)) {   // the tool broke
             Ledger.flow(Ledger.Way.INGREDIENT, held, "worn out");

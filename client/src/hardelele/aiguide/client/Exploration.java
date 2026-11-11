@@ -6,6 +6,7 @@ import java.util.*;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import net.minecraft.block.Block;
 import net.minecraft.item.Item;
+import net.minecraft.util.MathHelper;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.Vec3;
 import net.minecraft.world.WorldServer;
@@ -103,8 +104,14 @@ public final class Exploration {
         if (due != null && now < due && due - now <= PERIOD) return;
         if (m.next.size() >= 128 && !m.next.containsKey(a.getEntityId())) m.next.clear();
         m.next.put(a.getEntityId(), now + PERIOD);
-        scan(m, view(w), a.posX, a.posY + a.getEyeHeight(), a.posZ, (int) Math.floor(a.boundingBox.minY));
+        observer = a;
+        try { scan(m, view(w), a.posX, a.posY + a.getEyeHeight(), a.posZ, (int) Math.floor(a.boundingBox.minY)); } finally { observer = null; }
     }
+
+    /** (3.1) who looks now, and who hears of a block seen for the first time (RlEnv: what a scout found) */
+    static Agent observer;
+    interface Finds { void found(Agent a, int x, int y, int z, String block); }
+    static Finds finds;
     static void scan(Memory m, View v, double x, double eyeY, double z, int feetY) {
         Pos feet = new Pos((int) Math.floor(x), feetY, (int) Math.floor(z));
         m.trail.remove(feet); m.trail.add(feet); trim(m.trail, TRAIL_LIMIT);
@@ -148,6 +155,8 @@ public final class Exploration {
         } else m.ground.remove(feet);
     }
     private static void remember(Memory m, Pos p, String block) {
+        boolean fresh = !m.seen.containsKey(p);
+        if (fresh && observer != null && finds != null && block != null) finds.found(observer, p.x, p.y, p.z, block);
         m.seen.remove(p);
         if (block != null && !block.equals("minecraft:air")) m.seen.put(p, block);
         while (m.seen.size() > LIMIT) m.seen.remove(m.seen.keySet().iterator().next());
@@ -216,10 +225,46 @@ public final class Exploration {
         m.ground.remove(p); m.ground.remove(new Pos(p.x, p.y - 1, p.z));
     }
     static synchronized void invalidate(WorldServer w, int x, int y, int z) { forget(memory(w), new Pos(x, y, z)); }
+
+    /** each agent's chunk when its memory was last looked over (recheck: a new chunk, a wider look) */
+    private static final Map<Integer, Long> lookedFrom = new HashMap<Integer, Long>();
+
+    /**
+     * The remembered blocks of these kinds looked at again from the agent's eyes (#1053: a felled tree stayed in the
+     * memory and the crew walked to it): look() refreshes one that is seen and forgets one a clear ray passes through.
+     * Those within near of the agent; all within RANGE when it has come into another chunk; at most max looks. Honest:
+     * only what the eyes reach, nothing through a wall. The places forgotten are returned.
+     */
+    static synchronized List<int[]> recheck(Agent a, WorldServer w, Set<String> kinds, double near, int max) {
+        if (a == null || w == null || a.worldObj != w) return new ArrayList<int[]>();
+        long chunk = ((long) (MathHelper.floor_double(a.posX) >> 4) << 32) ^ ((MathHelper.floor_double(a.posZ) >> 4) & 0xffffffffL);
+        Long was = lookedFrom.put(a.getEntityId(), chunk);
+        return recheck(memory(w), view(w), a.posX, a.posY + a.getEyeHeight(), a.posZ, was == null || was != chunk, kinds, near, max);
+    }
+
+    /** recheck from eyes at ex ey ez: within near, or within RANGE after a change of chunk */
+    static List<int[]> recheck(Memory m, View v, final double ex, final double ey, final double ez, boolean newChunk, Set<String> kinds, double near, int max) {
+        List<int[]> gone = new ArrayList<int[]>();
+        double r = newChunk ? RANGE : near;
+        List<Pos> cand = new ArrayList<Pos>();
+        for (Map.Entry<Pos, String> e : m.seen.entrySet()) {
+            if (!kinds.contains(e.getValue())) continue;
+            Pos p = e.getKey();
+            double dx = p.x + .5 - ex, dy = p.y + .5 - ey, dz = p.z + .5 - ez;
+            if (dx * dx + dy * dy + dz * dz <= r * r) cand.add(p);
+        }
+        Collections.sort(cand, (p, q) -> Double.compare((p.x - ex) * (p.x - ex) + (p.z - ez) * (p.z - ez), (q.x - ex) * (q.x - ex) + (q.z - ez) * (q.z - ez)));
+        for (int i = 0; i < cand.size() && i < max; i++) {
+            Pos p = cand.get(i);
+            look(m, v, ex, ey, ez, p);
+            if (!m.seen.containsKey(p)) gone.add(p.array());
+        }
+        return gone;
+    }
     /** how much is remembered: { blocks seen, walkable cells, footprints } (a check of the memory, not of the world) */
     static synchronized int[] size(WorldServer w) { Memory m = memory(w); return new int[] { m.seen.size(), m.ground.size(), m.trail.size() }; }
     /** Nothing seen yet (a learning environment's new episode: the arena put back, the crew new). */
-    static synchronized void clear(WorldServer w) { worlds.put(w, new Memory()); }
+    static synchronized void clear(WorldServer w) { worlds.put(w, new Memory()); lookedFrom.clear(); }
     static synchronized List<int[]> breadcrumbs(WorldServer w) {
         List<int[]> out = new ArrayList<int[]>(); for (Pos p : memory(w).trail) out.add(p.array()); return out;
     }
