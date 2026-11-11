@@ -62,7 +62,10 @@ def run(ports, kinds, cfg, q_out, q_w, stage_val, stop, seed, device, allowed=No
     list(pool.map(lambda a: a.reset(STAGES[stage_val.value]), envs))
     sent = 0
     while not stop.is_set():
-        n = len(envs) if active is None else max(1, min(len(envs), active.value))   # the governor's arenas (League: one)
+        n = len(envs) if active is None else max(0, min(len(envs), active.value))   # the governor's arenas (League: one; a pause: none)
+        if n == 0:
+            time.sleep(0.2)
+            continue
         if allowed is not None and sent > allowed.value:   # the trainer is behind (its replay ratio kept): wait for it
             time.sleep(0.02)
             continue

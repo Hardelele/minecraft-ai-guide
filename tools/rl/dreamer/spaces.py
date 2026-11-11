@@ -24,7 +24,7 @@ NIGHT, WAVE = VI["night"], VI["phase_wave"]
 
 def onehot(a: torch.Tensor) -> torch.Tensor:
     """(…, 5) ints -> (…, ACT_DIM) one-hots of the heads"""
-    return torch.cat([torch.nn.functional.one_hot(a[..., i].long(), n).float() for i, n in enumerate(SIZES)], -1)
+    return torch.cat([(a[..., i].long().unsqueeze(-1) == torch.arange(n, device=a.device)).float() for i, n in enumerate(SIZES)], -1)   # (no host check: a graph captures it)
 
 
 def from_strings(o: dict) -> dict:
