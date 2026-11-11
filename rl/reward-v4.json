@@ -1,7 +1,7 @@
 {
   "version": 1,
   "contract": "reward-v4",
-  "note": "docs/rl/REWARD-v4.md: the reward by outcomes only plus the general causal credit. The scales' weights (safety.*, equipment.*, mine.*, enchant.*, sustain.*, stock.*, achievement.*, curiosity.*) and the scenarios' factors stay rl/reward.json's ('weights', 'scenarioScales'); everything else of rl/reward.json's weights is not paid under v4. tools/rl/reward_core.py and RlReward4.java read this file.",
+  "note": "docs/rl/REWARD-v4.md: the reward by outcomes only plus the general causal credit. The scales' weights (safety.*, equipment.*, mine.*, enchant.*, sustain.*, stock.*, achievement.*, curiosity.*) and the scenarios' factors stay rl/reward.json's ('weights', 'scenarioScales'); everything else of rl/reward.json's weights is not paid under v4. tools/rl/reward_core.py and RlReward4.java read this file. forfeit: noop (the run given up) costs the rest of the episode besides outcomes.noop: the goal still open (outcomes.goal x each agent, x goal) and the scales the crew would still earn, its rate so far (the scales' points paid / max(t, min_s)) x the seconds left x scales, at most cap; all of it to the agent that chose noop (its decision). The environment tells left_s and goal on the noop event.",
   "outcomes": {
     "noop": -1.0,
     "goal": 5.0,
@@ -55,6 +55,12 @@
   },
   "wasted_day": {
     "share": 0.25
+  },
+  "forfeit": {
+    "goal": 1.0,
+    "scales": 1.0,
+    "min_s": 60.0,
+    "cap": 20.0
   },
   "scale_move": 0.5,
   "calm_phases": ["day", "prep", "break"],

@@ -79,6 +79,7 @@ class RewardCore:
         self.open: dict[str, dict] = {}        # agent -> component -> points since its last decision
         self.episode: dict[str, float] = {}
         self.total = 0.0
+        self.gain = 0.0                        # the scales' positive points paid so far (the crew): forfeit's rate
         self.t = 0.0
         self.phase = "day"
         self.moves: list[dict] = []
@@ -309,6 +310,12 @@ class RewardCore:
 
     def ev_noop(self, e):
         self.pay(e["agent"], "noop", self.o["noop"])
+        f = self.p.get("forfeit")
+        if f:   # the rest of the episode given up: the open goal and the scales still to come, to the one who gave up
+            goal = self.o["goal"] * float(f["goal"]) * len(self.ag) if e.get("goal") else 0.0
+            left = max(0.0, float(e.get("left_s", 0.0)))
+            est = min(float(f["cap"]), float(f["scales"]) * self.gain / max(self.t, float(f["min_s"])) * left)
+            self.pay(e["agent"], "forfeit", -(goal + est))
 
     def ev_fall(self, e):
         """the base given up (noop) or lost: every open threat counts as done, a threat to the base as a breach and the
@@ -388,6 +395,8 @@ class RewardCore:
         find = self.finds.get(res) if res is not None else None
         for k in payees:
             self.pay(k, key, pts)
+            if pts > 0:
+                self.gain += pts
             if raw <= 0:
                 continue
             if e["agent"] != "*" or not causes:

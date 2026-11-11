@@ -910,8 +910,9 @@ class SimEnv:
         """v3's payments as v4's events: the outcomes and the scales; the rest (time, stall, skill_ok, kill, ...) is
         not paid (the kills, the wall's mobs, the covers are events of their own, where they happen)"""
         comp = key.split(".")[0]
-        if key == "noop":
-            self.fev.append({"type": "noop", "agent": a.i})
+        if key == "noop":   # what the run gives up: the seconds left, the goal still to pay (close() pays it on goal or pass_alive)
+            open_goal = not self.goal_sent and (self.sc["goal"] != "none" or "pass_alive" in self.sc)
+            self.fev.append({"type": "noop", "agent": a.i, "left_s": max(0.0, float(self.sc["seconds"]) - self.t), "goal": bool(open_goal)})
         elif key == "goal":
             if not self.goal_sent:
                 self.goal_sent = True
@@ -1548,7 +1549,7 @@ class SimEnv:
             self.xp(a, 0.7 * n)
             if dst == "iron_ingot":
                 self.achieve(a, "acquireIron")
-        elif name.startswith("place:"):
+        elif name.startswith("place:") and "@" not in name:   # place:<item>; place:<slot>@<target> is place_at's (below)
             item = name[6:]
             if a.n(item) < 1:
                 return "NO_ITEMS"
