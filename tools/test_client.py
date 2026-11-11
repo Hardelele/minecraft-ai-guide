@@ -17,12 +17,12 @@ PURE = ["Sight.java", "CaseVec.java", "CaseBook.java", "Events.java", "Result.ja
         "PlacesNet.java", "PlacesKernels.java", "PlacesClasses.java", "PlacesSplit.java",
         "PlaceView.java", "PlaceSource.java", "Labels.java", "Episodes.java", "Scrub.java", "ShareBuild.java", "ShareUpload.java", "CrewCommand.java",
         "UiIcon.java", "UiLayout.java", "UiToasts.java", "CaveFade.java", "Mind.java", "MindState.java", "MindShare.java", "Defense.java",
-        "WavePlan.java", "WaveRing.java", "WaveCycle.java", "WaveReport.java", "WaveCommand.java",
+        "WavePlan.java", "ZombieDig.java", "WaveRing.java", "WaveCycle.java", "WaveReport.java", "WaveCommand.java",
         "EpochScore.java", "Lessons.java", "EpochKnobs.java", "EpochRun.java", "RlSpec.java", "RlSpec1.java", "RlSpec3.java", "RlAchievements.java", "RlScore.java", "RlCause.java", "RlNear.java", "Reach.java", "Xp.java", "Hunger.java", "RlReward.java", "RlReward4.java", "OpenSpec.java", "PolicyNet.java"]   # the classes with no game in them (Gson aside)
 TESTS = ["hardelele.aiguide.client.SightTest", "hardelele.aiguide.client.CaseTest", "hardelele.aiguide.client.ReflexesTest",
          "hardelele.aiguide.client.PlacesSplitTest", "hardelele.aiguide.client.PlacesNetTest", "hardelele.aiguide.client.FeedbackTest",
          "hardelele.aiguide.client.CrewCommandTest", "hardelele.aiguide.client.UiLayoutTest", "hardelele.aiguide.client.MindTest",
-         "hardelele.aiguide.client.WavesTest", "hardelele.aiguide.client.DefenseTest", "hardelele.aiguide.client.EpochsTest",
+         "hardelele.aiguide.client.WavesTest", "hardelele.aiguide.client.ZombieDigTest", "hardelele.aiguide.client.DefenseTest", "hardelele.aiguide.client.EpochsTest",
          "hardelele.aiguide.client.RlTest", "hardelele.aiguide.client.PolicyTest", "hardelele.aiguide.client.Reward4Test", "hardelele.aiguide.client.OpenTest", "hardelele.aiguide.client.CaveFadeTest"]
 GAME_TESTS = ["CaveGeometryTest", "CaveRetentionTest", "RoutineIntentTest", "RoutineLayoutTest", "RoutineSnapshotTest", "ShelterRouteTest", "PlacesInputTest", "BoardOrdersTest", "MindGameTest", "DefenseGameTest", "EngineGameTest", "TreeMemoryGameTest"]   # against the built client
 HELPERS = ["ShareProbe.java"]   # compiled with the pure tests, run by tools/share-service's tests

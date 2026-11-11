@@ -28,13 +28,14 @@ public class WaveMobs {
     /** a wave's mark on its mob */
     static final class Tag {
         int run, wave;
-        boolean burn = true, removing, exploded, counted;
+        boolean burn = true, removing, exploded, counted, digger;   // digger: breaks the blocks on its way to an agent underground (ZombieDig)
 
         void write(NBTTagCompound t) {
             NBTTagCompound c = new NBTTagCompound();
             c.setInteger("run", run);
             c.setInteger("wave", wave);
             c.setBoolean("burn", burn);
+            if (digger) c.setBoolean("digger", true);
             t.setTag("AIGuideWave", c);
         }
 
@@ -44,6 +45,7 @@ public class WaveMobs {
             run = c.getInteger("run");
             wave = c.getInteger("wave");
             burn = !c.hasKey("burn") || c.getBoolean("burn");
+            digger = c.getBoolean("digger");
         }
     }
 
