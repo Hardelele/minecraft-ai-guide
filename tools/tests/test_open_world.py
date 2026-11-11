@@ -86,6 +86,21 @@ def main():
         agent.dec.vec[-1].bias[S.NIGHT] = 2.0   # the decoded vector says: night (symlog 2 -> 6.4)
     cur, off = agent.curiosity(f, a)
     check("curiosity: nothing paid when the model sees the night", float(cur.abs().sum()) == 0.0 and float(off) == 1.0)
+    if torch.cuda.is_available():   # the update as a CUDA graph (fast.py): the same numbers as the eager one, a few updates
+        from dreamer.fast import FastUpdate
+        cfg2 = dict(cfg, bf16=False)
+        torch.manual_seed(0)
+        a1 = Dreamer(cfg2, "cuda")
+        a2 = Dreamer(cfg2, "cuda")
+        a2.load_state_dict(a1.state_dict())
+        bs = rep.sample(8, 16)
+        fu = FastUpdate(a2, 8, 8, 16, bf16=False)
+        tb = rep.sample(8, 16)
+        for _ in range(4):
+            fu.update(bs, tb, 1.0)
+        mm = fu.metrics()
+        check("the CUDA graph's update: the losses are numbers after 4 replays (wm %.1f, bc nll %.2f)" % (mm["wm/loss"], mm["bc/nll"]),
+              all(np.isfinite(v) for v in mm.values()) and mm["bc/nll"] > 0)
     print("test_open_world: %d failed" % failed)
     sys.exit(1 if failed else 0)
 

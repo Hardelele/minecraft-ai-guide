@@ -67,7 +67,7 @@ class Encoder(nn.Module):
     def __init__(self, out=512):
         super().__init__()
         self.blk = nn.Embedding(S.NBLOCK, 8)
-        self.conv = nn.Sequential(nn.Conv3d(9, 32, 3, padding=1), nn.SiLU(), nn.Conv3d(32, 64, 3, stride=2, padding=1), nn.SiLU())
+        self.conv = nn.Sequential(nn.Conv3d(9, 32, 3, padding=1), nn.SiLU(), nn.Conv3d(32, 64, 3, stride=2, padding=1), nn.SiLU()).to(memory_format=torch.channels_last_3d)
         with torch.no_grad():
             n = self.conv(torch.zeros(1, 9, *S.SHAPE)).numel()
         self.vox = nn.Sequential(nn.Linear(n, out), nn.LayerNorm(out), nn.SiLU())
@@ -80,7 +80,7 @@ class Encoder(nn.Module):
         vox = o["vox"].long()
         lead = vox.shape[:-3]
         v = self.blk(vox.reshape(-1, *S.SHAPE)).permute(0, 4, 1, 2, 3)   # N, 8, Y, Z, X
-        v = torch.cat([v, o["seen"].reshape(-1, 1, *S.SHAPE).float()], 1)
+        v = torch.cat([v, o["seen"].reshape(-1, 1, *S.SHAPE).float()], 1).contiguous(memory_format=torch.channels_last_3d)   # (channels last: tensor cores)
         v = self.vox(self.conv(v).flatten(1))
         e = self.ent(o["ent"].reshape(-1, S.ENTS, S.ENT_F))
         e = torch.cat([e.mean(1), e.max(1).values], -1)
@@ -95,7 +95,7 @@ class Decoder(nn.Module):
         self.grid = (64, 4, 6, 6)
         self.lin = nn.Sequential(nn.Linear(feat, math.prod(self.grid)), nn.SiLU())
         self.deconv = nn.Sequential(nn.ConvTranspose3d(64, 32, 3, stride=2, padding=1, output_padding=(1, 0, 0)), nn.SiLU(),
-                                    nn.Conv3d(32, S.NBLOCK + 1, 3, padding=1))
+                                    nn.Conv3d(32, S.NBLOCK + 1, 3, padding=1)).to(memory_format=torch.channels_last_3d)
         self.vec = mlp(feat, 512, S.VEC, 2)
         self.ent = mlp(feat, 512, S.ENTS * S.ENT_F, 2)
         self.hot = mlp(feat, 256, S.HOT * S.NITEM, 1)
@@ -103,7 +103,7 @@ class Decoder(nn.Module):
     def forward(self, f):
         lead = f.shape[:-1]
         x = f.reshape(-1, f.shape[-1])
-        g = self.deconv(self.lin(x).reshape(-1, *self.grid))[:, :, :S.SHAPE[0], :S.SHAPE[1], :S.SHAPE[2]]
+        g = self.deconv(self.lin(x).reshape(-1, *self.grid).contiguous(memory_format=torch.channels_last_3d))[:, :, :S.SHAPE[0], :S.SHAPE[1], :S.SHAPE[2]]
         return {"vox": g[:, :S.NBLOCK].reshape(*lead, S.NBLOCK, *S.SHAPE), "seen": g[:, S.NBLOCK].reshape(*lead, *S.SHAPE),
                 "vec": self.vec(x).reshape(*lead, S.VEC), "ent": self.ent(x).reshape(*lead, S.ENTS, S.ENT_F),
                 "hot": self.hot(x).reshape(*lead, S.HOT, S.NITEM)}
@@ -146,48 +146,55 @@ class RSSM(nn.Module):
 
     def sample(self, p):
         idx = categorical(p)
-        oh = F.one_hot(idx, self.classes).float()
+        oh = (idx.unsqueeze(-1) == torch.arange(self.classes, device=p.device)).float()
         return (oh + p - p.detach()).flatten(-2)   # straight-through
 
     def img_step(self, h, z, a):
-        h = self.gru(self.inp(torch.cat([z, a], -1)), h)
-        p = self._dist(self.prior(h))
-        return h, self.sample(p), p
+        with torch.autocast(device_type=h.device.type, enabled=False):   # the recurrence in full precision whatever the rest runs in
+            h, z, a = h.float(), z.float(), a.float()
+            h = self.gru(self.inp(torch.cat([z, a], -1)), h)
+            p = self._dist(self.prior(h))
+            return h, self.sample(p), p
 
     def obs_step(self, h, z, a, e, first):
-        keep = (1 - first.float()).unsqueeze(-1)
-        h, z, a = h * keep, z * keep, a * keep
-        h = self.gru(self.inp(torch.cat([z, a], -1)), h)
-        prior = self._dist(self.prior(h))
-        post = self._dist(self.post(torch.cat([h, e], -1)))
-        return h, self.sample(post), post, prior
+        with torch.autocast(device_type=h.device.type, enabled=False):
+            e = e.float()
+            keep = (1 - first.float()).unsqueeze(-1)
+            h, z, a = h * keep, z * keep, a * keep
+            h = self.gru(self.inp(torch.cat([z, a], -1)), h)
+            prior = self._dist(self.prior(h))
+            post = self._dist(self.post(torch.cat([h, e], -1)))
+            return h, self.sample(post), post, prior
 
     def observe(self, embed, acts_prev, first, h=None, z=None):
         """over a sequence (B, T): the posterior states; acts_prev[t] is the action before obs t (one-hot). The loop does
         only what the recurrence needs (the GRU, the posterior and its sample); the priors and the posterior's embed
-        part are computed for all steps at once (fewer launches: the update is launch-bound)"""
-        B, T = embed.shape[:2]
-        if h is None:
-            h, z = self.initial(B, embed.device)
-        lin0 = self.post[0]
-        dh = self.deter
-        e_part = embed @ lin0.weight[:, dh:].t() + lin0.bias      # (B, T, hidden)
-        w_h = lin0.weight[:, :dh]
-        keep = (1 - first.float()).unsqueeze(-1)
-        hs, zs, posts = [], [], []
-        for t in range(T):
-            k = keep[:, t]
-            h, z, a = h * k, z * k, acts_prev[:, t] * k
-            h = self.gru(self.inp(torch.cat([z, a], -1)), h)
-            x = h @ w_h.t() + e_part[:, t]
-            for m in list(self.post)[1:]:
-                x = m(x)
-            post = self._dist(x)
-            z = self.sample(post)
-            hs.append(h); zs.append(z); posts.append(post)
-        H = torch.stack(hs, 1)
-        prior = self._dist(self.prior(H))
-        return H, torch.stack(zs, 1), torch.stack(posts, 1), prior
+        part are computed for all steps at once (fewer launches: the update is launch-bound). In full precision (the
+        state is a running sum: bf16 would blur it); the loop is what a CUDA graph (fast.py) makes cheap."""
+        with torch.autocast(device_type=embed.device.type, enabled=False):
+            embed, acts_prev = embed.float(), acts_prev.float()
+            B, T = embed.shape[:2]
+            if h is None:
+                h, z = self.initial(B, embed.device)
+            lin0 = self.post[0]
+            dh = self.deter
+            e_part = embed @ lin0.weight[:, dh:].t() + lin0.bias      # (B, T, hidden)
+            w_h = lin0.weight[:, :dh]
+            keep = (1 - first.float()).unsqueeze(-1)
+            hs, zs, posts = [], [], []
+            for t in range(T):
+                k = keep[:, t]
+                h, z, a = h * k, z * k, acts_prev[:, t] * k
+                h = self.gru(self.inp(torch.cat([z, a], -1)), h)
+                x = h @ w_h.t() + e_part[:, t]
+                for m in list(self.post)[1:]:
+                    x = m(x)
+                post = self._dist(x)
+                z = self.sample(post)
+                hs.append(h); zs.append(z); posts.append(post)
+            H = torch.stack(hs, 1)
+            prior = self._dist(self.prior(H))
+            return H, torch.stack(zs, 1), torch.stack(posts, 1), prior
 
     @staticmethod
     def kl(p, q, free=1.0):

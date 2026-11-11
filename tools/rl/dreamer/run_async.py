@@ -87,40 +87,57 @@ def push_weights(agent, q_w):
     q_w.put(sd)
 
 
+def advice_of(path):
+    """the governor's advice (tools/rl/governor.py writes it): pause = the CPU's work (the arenas) is stopped, gpu_pause = the
+    updates are too, gpu_duty = the share of the time the GPU may work, arenas, threads"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
 def main_async(a, agent, cfg, rep, teach, out, t0, updates, log):
+    """The learner and the collector are two things (the governor's rule: a pause of the CPU is not a pause of the GPU):
+    the collector (its own process: the arenas on the CPU) works as the governor lets it; the update (a CUDA graph on the
+    GPU, fast.py) goes on from the replay by itself as long as the GPU is not the others', and when collecting is paused it
+    may take each new step more times (--paused-ratio)."""
     import multiprocessing as mp
     from dreamer import collect
+    from dreamer.fast import FastUpdate
     ctx = mp.get_context("spawn")
     q_out, q_w = ctx.Queue(maxsize=256), ctx.Queue(maxsize=1)
     stage_val, stop = ctx.Value("i", collect.STAGES.index(a.stage)), ctx.Event()
-    allowed = ctx.Value("q", a.warmup + a.lead * a.train_every)
-    active = ctx.Value("i", len(a.ports.split(",")))   # the arenas stepped (the governor's advice)   # the collector's steps the trainer allows (warmup, then a lead of updates)
+    allowed = ctx.Value("q", a.warmup + a.lead * a.train_every)   # the collector's steps the learner allows
     ports = [int(p) for p in a.ports.split(",")]
+    active = ctx.Value("i", len(ports))   # the arenas stepped (the governor's advice)
     proc = ctx.Process(target=collect.run, args=(ports, [a.env] * len(ports), cfg, q_out, q_w, stage_val, stop, a.seed, a.device, allowed, active), daemon=True)
     push_weights(agent, q_w)
     proc.start()
     prog = Progress(out.name)
-    prog.note(f"старт {out.name}: этап {a.stage}, {len(ports)} арен, от {a.init or 'нуля'}")
+    prog.note(f"старт {out.name}: этап {a.stage}, {len(ports)} арен, от {a.init or 'нуля'}, обновление графом CUDA, батч {a.batch}+{a.bc_batch if teach is not None else 0}")
     ef = open(out / "episodes.jsonl", "a")
+    fast = FastUpdate(agent, a.batch, a.bc_batch if teach is not None else 0, a.seq, bf16=not a.fp32)
     env_steps, upd0, m = 0, updates, {}
-    last_row = last_snap = rate_t = time.time()
+    last_row = last_snap = rate_t = last_steps_t = time.time()
     rate_steps, rate_upd = 0, updates
     pick = []
-    adv_file, adv_t, duty = os.environ.get("AIGUIDE_GOVERNOR"), 0.0, 1.0
+    adv_file, adv_t, adv = os.environ.get("AIGUIDE_GOVERNOR"), 0.0, {}
+    stats = {"idle_gpu_s": 0.0, "paused_updates": 0}
     while env_steps < a.steps:
-        if adv_file and time.time() - adv_t > 10:   # the governor's advice: threads, arenas, the GPU's duty (League: Idle, 1 thread, 1 arena, a quarter)
-            adv_t = time.time()
-            try:
-                adv = json.load(open(adv_file, encoding="utf-8"))
+        now = time.time()
+        if adv_file and now - adv_t > 5:   # the governor's advice: threads, arenas, the GPU's duty and pause
+            adv_t = now
+            adv = advice_of(adv_file) or adv
+            if adv:
                 torch.set_num_threads(max(1, int(adv.get("threads", 1))))
-                active.value = max(1, min(len(ports), int(adv.get("arenas", len(ports)))))
-                duty = max(0.05, float(adv.get("gpu_duty", 1.0)))
-            except Exception:
-                pass
+                active.value = 0 if adv.get("pause") else max(1, min(len(ports), int(adv.get("arenas", len(ports)))))
+        duty = max(0.05, float(adv.get("gpu_duty", 1.0))) if adv else 1.0
+        gpu_pause = bool(adv.get("gpu_pause", False)) if adv else False
         got = 0
         while got < 400:   # what the collector sent
             try:
-                msg = q_out.get(timeout=0.002 if got or rep.size < a.warmup or env_steps / a.train_every > updates - upd0 else 0.2)
+                msg = q_out.get(timeout=0.001)
             except Exception:
                 break
             got += 1
@@ -128,6 +145,7 @@ def main_async(a, agent, cfg, rep, teach, out, t0, updates, log):
                 for _, stream, ob, act, r, first, mask in msg[1]:
                     rep.add(stream, ob, act, r, 1.0, first, mask)
                 env_steps += len(msg[1])
+                last_steps_t = now
             elif msg[0] == "end":
                 rep.end(msg[1], msg[2], msg[3])
             else:
@@ -145,34 +163,46 @@ def main_async(a, agent, cfg, rep, teach, out, t0, updates, log):
         if not proc.is_alive():
             print("the collector died", flush=True)
             break
-        if rep.size >= a.warmup and env_steps / a.train_every > updates - upd0:
+        collect_paused = bool(adv.get("pause")) or now - last_steps_t > 5.0
+        ratio = a.paused_ratio if collect_paused else a.ratio
+        did = False
+        if rep.size >= a.warmup and not gpu_pause and (updates - upd0) < env_steps / a.train_every * ratio:
             b = rep.sample(a.batch, a.seq)
-            if b is None and updates == upd0:
-                print(f"no sequence yet: replay {rep.size}", flush=True)
-            if b is not None:
+            bb = teach.sample(a.bc_batch, a.seq) if teach is not None else None
+            if b is not None and (teach is None or bb is not None):
                 k = updates - a.bc_steps
                 w = a.bc_final + (a.bc_weight - a.bc_final) * max(0.0, 1 - k / max(1, a.bc_decay)) if teach is not None else 0.0
-                bb = teach.sample(a.bc_batch, a.seq) if teach is not None else None
                 tu = time.time()
-                m = agent.train_step(b, bc_batch=bb, bc_weight=w)
-                m["bc/weight"] = w
-                if duty < 1.0:   # the GPU a part of the time only
-                    time.sleep(min(5.0, (time.time() - tu) * (1 / duty - 1)))
+                fast.update(b, bb, w)
                 updates += 1
-                allowed.value = max(allowed.value, a.warmup + (updates - upd0 + a.lead) * a.train_every)
+                did = True
+                if collect_paused:
+                    stats["paused_updates"] += 1
+                allowed.value = max(allowed.value, int(a.warmup + (updates - upd0 + a.lead) * a.train_every / a.ratio))
+                if duty < 1.0:   # the GPU a part of the time only (League: a quarter; the others' GPU much: a half)
+                    torch.cuda.synchronize()
+                    time.sleep(min(5.0, (time.time() - tu) * (1 / duty - 1)))
                 if updates % 10 == 0:
                     push_weights(agent, q_w)
                 if updates % 25 == 0:
+                    m = fast.metrics()
+                    m["bc/weight"] = w
                     log(m, "rl", env_steps, updates)
                     print(f"update {updates} steps {env_steps}: wm {m['wm/loss']:.2f} rew {m['wm/rew']:.3f} ret {m.get('ac/ret', 0):.3f} cur {m.get('ac/curiosity', 0):.4f} "
-                          f"ent {m.get('ac/entropy', 0):.2f} bc {m.get('bc/nll', 0):.2f} ({time.time() - t0:.0f} s)", flush=True)
+                          f"ent {m.get('ac/entropy', 0):.2f} bc {m.get('bc/nll', 0):.2f} ({time.time() - t0:.0f} s{', collecting paused' if collect_paused else ''})", flush=True)
                 if updates % 500 == 0:
                     torch.save({"model": agent.state_dict(), "cfg": cfg, "updates": updates}, out / "ckpt.pt")
+        if not did:
+            time.sleep(0.01)
+            if gpu_pause:
+                stats["idle_gpu_s"] += 0.01
         now = time.time()
         if now - last_row >= 120:
             dt = now - rate_t
+            if not m:
+                m = fast.metrics()
             prog.row(updates, (now - t0) / 60, env_steps, collect.STAGES[stage_val.value], (env_steps - rate_steps) / dt, (updates - rate_upd) / dt, m)
-            print(f"rate: {(env_steps - rate_steps) / dt:.1f} env steps/s, {(updates - rate_upd) / dt:.2f} updates/s", flush=True)
+            print(f"rate: {(env_steps - rate_steps) / dt:.1f} env steps/s, {(updates - rate_upd) / dt:.2f} updates/s, {stats['paused_updates']} updates while collecting paused", flush=True)
             last_row, rate_t, rate_steps, rate_upd = now, now, env_steps, updates
         if now - last_snap >= 1800:
             torch.save({"model": agent.state_dict(), "cfg": cfg, "updates": updates}, out / f"snap-{updates}.pt")

@@ -5,6 +5,11 @@ the GPU while our run is collecting, League of Legends running) and decides:
 
 - League of Legends running: Idle priority, at most 2 threads of load (1 torch thread, 1 arena stepping), the GPU
   at a small duty (the update sleeps between its minibatches);
+- the CPU and the GPU are two things: a run that learns on the GPU from its replay while its arenas (the engine's Java, on
+  the CPU) collect says so (--gpu-root: the root process is the GPU's updater). Then a pause for the others' CPU stops
+  the arenas and their collector only, and the updates go on; the updates stop (gpu_pause) only when the others use the
+  GPU hard (--gpu-hard, default 92 %) or memory is short, and slow down (gpu_duty 0.5) when they use it much
+  (--gpu-busy, 70 %; League: a quarter);
 - otherwise: BelowNormal; threads and arenas by the free cores less a margin;
 - the others' load jumps (CPU up by --jump points since the last look, or over --busy) or the free memory falls under
   --mem-low: squeeze (the arenas halved, 1 thread), and on --busy-hard / under --mem-pause: pause. A pause suspends
@@ -103,7 +108,7 @@ def matching(subs):
 class Governor:
     def __init__(self, root_pid=None, log=None, max_threads=None, max_arenas=None, interval=2.0, margin=2.0, jump=25.0,
                  busy=70.0, busy_hard=90.0, mem_low=4096, mem_pause=2048, calm=5, self_pause=False, advice_file=None,
-                 gpu_every=3, extra_pids=None):
+                 gpu_every=3, extra_pids=None, gpu_root=False, gpu_busy=70.0, gpu_hard=92.0):
         self.root = psutil.Process(root_pid or os.getpid())
         self.log_path = log
         self.ncpu = psutil.cpu_count() or 4
@@ -114,6 +119,9 @@ class Governor:
         self.self_pause = self_pause      # the wrapper: the root is a child and may be suspended too
         self.advice_file = advice_file
         self.gpu_every = gpu_every
+        self.gpu_root = gpu_root          # the root learns on the GPU: a pause of the CPU's work leaves it running
+        self.gpu_busy, self.gpu_hard = gpu_busy, gpu_hard
+        self._gpu_ema = None
         self.extra_pids = extra_pids or (lambda: ())
         self.status = {"phase": "collect", "gpu_mb": 0.0}   # what the run says of itself (train.py sets it)
         self._lock = threading.Lock()
@@ -204,7 +212,7 @@ class Governor:
         self._ema = others if self._ema is None else max(others, 0.7 * self._ema + 0.3 * others) if others > self._ema else 0.8 * self._ema + 0.2 * others
         free_cores = self.ncpu * (1 - self._ema / 100.0) - self.margin   # (down at once, up slowly)
         hard = others >= self.busy_hard or m["mem_free_mb"] < self.mem_pause
-        soft = others >= self.busy or rise >= self.jump or m["mem_free_mb"] < self.mem_low or m.get("gpu_others", 0) >= 60
+        soft = others >= self.busy or rise >= self.jump or m["mem_free_mb"] < self.mem_low
         if hard or soft:
             self._quiet = 0
         else:
@@ -214,6 +222,8 @@ class Governor:
         if m["league"]:
             d = {"mode": "league", "priority": "idle", "threads": 1, "arenas": min(1, self.max_arenas), "pause": hard, "gpu_duty": 0.25,
                  "reason": "League of Legends runs: Idle, at most 2 threads of load, the GPU little" + ("; others' load hard: paused" if hard else "")}
+            if self.gpu_root and not hard:
+                d["pause"] = False
         elif hard or (held and prev == "pause"):
             why = ("others' CPU %.0f%% >= %.0f" % (others, self.busy_hard) if others >= self.busy_hard else
                    "free memory %d MB < %d" % (m["mem_free_mb"], self.mem_pause) if m["mem_free_mb"] < self.mem_pause else
@@ -223,7 +233,6 @@ class Governor:
             why = ("others' CPU up %.0f points" % rise if rise >= self.jump else
                    "others' CPU %.0f%% >= %.0f" % (others, self.busy) if others >= self.busy else
                    "free memory %d MB < %d" % (m["mem_free_mb"], self.mem_low) if m["mem_free_mb"] < self.mem_low else
-                   "others use the GPU %.0f%%" % m.get("gpu_others", 0) if m.get("gpu_others", 0) >= 60 else
                    "held: %d of %d quiet looks" % (self._quiet, self.calm))
             base = self._advice["arenas"] if prev not in ("start", "pause") else self.max_arenas
             d = {"mode": "squeeze", "priority": "idle", "threads": 1, "arenas": max(1, min(base, int(free_cores)) // 2 or 1), "pause": False,
@@ -233,29 +242,73 @@ class Governor:
             ar = int(max(1, min(self.max_arenas, free_cores - th)))
             d = {"mode": "normal", "priority": "below_normal", "threads": th, "arenas": ar, "pause": False, "gpu_duty": 1.0,
                  "reason": "free %.1f cores (others %.0f%%, smoothed %.0f%%, margin %.0f): %d threads, %d arenas" % (free_cores, others, self._ema, self.margin, th, ar)}
+        return self.gpu_advice(m, d, hard)
+
+    def gpu_advice(self, m, d, hard):
+        """the GPU's side of the advice: gpu_pause (the updates stop), gpu_duty (a part of the time), apart from the CPU's pause.
+        Without --gpu-root the run is one thing and its GPU stops with its CPU, as it did."""
+        g = m.get("gpu_others")
+        if g is not None:   # (smoothed: a render's frame is not a reason; up at once, down slowly)
+            self._gpu_ema = g if self._gpu_ema is None else (max(g, 0.5 * self._gpu_ema + 0.5 * g) if g > self._gpu_ema else 0.85 * self._gpu_ema + 0.15 * g)
+        ge = self._gpu_ema or 0.0
+        d["gpu_root"] = self.gpu_root
+        d["gpu_others"] = round(ge, 1)
+        if not self.gpu_root:
+            d["gpu_pause"] = d["pause"]
+            return d
+        low_mem = m["mem_free_mb"] < self.mem_pause
+        was = self._advice.get("gpu_pause", False)
+        stop = ge >= self.gpu_hard or low_mem or (was and ge >= self.gpu_hard - 10)   # (a gap of 10 points to start again)
+        d["gpu_pause"] = bool(stop)
+        d["gpu_duty"] = 1.0   # (the CPU's squeeze or pause is not the GPU's)
+        if m["league"]:
+            d["gpu_duty"] = 0.25
+        elif ge >= self.gpu_busy:
+            d["gpu_duty"] = 0.5
+            d["reason"] += "; others on the GPU %.0f%%: the updates at half" % ge
+        if stop:
+            d["reason"] += "; others on the GPU %.0f%%%s: the updates paused" % (ge, " / memory short" if low_mem else "")
         return d
 
     # ---- applying -------------------------------------------------------------------------------------------------
     def apply(self, d):
-        prio = IDLE if d["priority"] == "idle" else BELOW
+        """priorities, and who is suspended: with --gpu-root the CPU's pause takes the children and the processes of the run
+        started apart (the collector, the engine) and leaves the root (the GPU's updater) running, which gets BelowNormal
+        even when the others are busy (an Idle thread would starve at 95 % and could not launch the next update) unless
+        League runs; the root stops with gpu_pause only. Without it everything stops with the pause."""
+        prio = IDLE if d.get("priority") == "idle" else BELOW
+        cpu_pause = bool(d.get("pause"))
+        gpu_pause = bool(d.get("gpu_pause", cpu_pause)) if self.gpu_root else cpu_pause
         procs = self.tree()
+        want = set()
         for p in procs:
+            if p.pid == os.getpid():
+                continue
+            root = p.pid == self.root.pid
             try:
-                if p.nice() != prio:
-                    p.nice(prio)
+                pr = BELOW if (root and self.gpu_root and d.get("mode") != "league" and not gpu_pause) else prio
+                if p.nice() != pr:
+                    p.nice(pr)
             except psutil.Error:
                 pass
-        if d["pause"]:
-            for p in procs:
-                if p.pid == os.getpid() or (p.pid == self.root.pid and not self.self_pause) or p.pid in self._suspended:
-                    continue
+            if root:
+                if self.self_pause and (gpu_pause if self.gpu_root else cpu_pause):
+                    want.add(p.pid)
+            elif cpu_pause:
+                want.add(p.pid)
+        for pid in list(self._suspended - want):   # no longer wanted: running again
+            try:
+                psutil.Process(pid).resume()
+            except psutil.Error:
+                pass
+            self._suspended.discard(pid)
+        for p in procs:
+            if p.pid in want and p.pid not in self._suspended:
                 try:
                     p.suspend()
                     self._suspended.add(p.pid)
                 except psutil.Error:
                     pass
-        elif self._suspended:
-            self.resume_all()
 
     def resume_all(self):
         for pid in list(self._suspended):
@@ -276,7 +329,7 @@ class Governor:
     def step(self):
         m = self.measure()
         d = self.decide(m)
-        changed = any(d[k] != self._advice.get(k) for k in ("mode", "priority", "threads", "arenas", "pause", "gpu_duty"))
+        changed = any(d.get(k) != self._advice.get(k) for k in ("mode", "priority", "threads", "arenas", "pause", "gpu_pause", "gpu_duty"))
         with self._lock:
             self._advice = d
         self.apply(d)
@@ -332,6 +385,11 @@ def main():
     ap.add_argument("--max-threads", type=int, default=0)
     ap.add_argument("--max-arenas", type=int, default=0)
     ap.add_argument("--margin", type=float, default=2.0, help="cores left free over the others' use")
+    ap.add_argument("--gpu-root", action="store_true",
+                    help="run: the command learns on the GPU from a replay while its children (and --with) collect on the CPU: "
+                         "a pause for the others' CPU stops the collecting only")
+    ap.add_argument("--gpu-busy", type=float, default=70.0, help="others' GPU %% from which the updates run at half")
+    ap.add_argument("--gpu-hard", type=float, default=92.0, help="others' GPU %% from which the updates stop (with --gpu-root)")
     ap.add_argument("--with", dest="with_", action="append", default=[],
                     help="run: processes started apart that belong to the run (the engine's JVM), by a string of their command line: "
                          "their priority and pauses go with the run's, and their CPU and GPU are ours")
@@ -363,7 +421,8 @@ def main():
             cache["pids"], cache["t"] = matching(a.with_), time.time()
         return cache["pids"]
     g = Governor(root_pid=child.pid, log=log, max_threads=a.max_threads or None, max_arenas=a.max_arenas or None, interval=a.interval,
-                 margin=a.margin, self_pause=True, advice_file=adv, extra_pids=extra)
+                 margin=a.margin, self_pause=True, advice_file=adv, extra_pids=extra,
+                 gpu_root=a.gpu_root, gpu_busy=a.gpu_busy, gpu_hard=a.gpu_hard)
     g.start()
     print("governor: log %s" % log, flush=True)
     try:
