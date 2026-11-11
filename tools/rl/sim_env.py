@@ -50,6 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import achievements as ACH  # noqa: E402
 import reward_core as RCORE  # noqa: E402
 import sim_near as NEAR  # noqa: E402
+import zdig as ZD  # noqa: E402
 import spec  # noqa: E402
 from spec import ACTIONS, IDX, RECIPES, SCEN, WEIGHTS  # noqa: E402
 
@@ -58,6 +59,11 @@ CAL = json.loads((spec.ROOT / "rl" / "sim-calibration.json").read_text(encoding=
 # the waves' fight fitted to the engine (tools/rl/calibrate_waves.py): the kills' and the hits' multipliers, the leak of
 # the gate's opening while no door shuts it (absent: 1, 1, 0 - the simulator as it was)
 WCAL = {"kill": 1.0, "hurt": 1.0, "gate_leak": 0.0, **CAL.get("waves", {})}
+# the digging zombies (docs/rl/ZOMBIES-DIG.md, tools/rl/zdig.py): per depth level the seconds a digger of each tier needs to
+# get down to an agent there and the seconds of the wave underground after which the agent is heard
+_DIG = CAL.get("dig", {"reach_s": {}, "hear_s": [0.0, 0.0]})
+DIG_REACH = [[None] + [r[i] for r in (_DIG["reach_s"][t["name"]] for t in ZD.TIERS)] for i in (0, 1)] if _DIG["reach_s"] else None
+DIG_HEAR = [0.0] + [float("inf") if h is None else float(h) for h in _DIG["hear_s"]]
 LOSSES_PER_WAVE = 6   # the game's: WaveCycle.Config.lossesPerWave (-Daiguide.waves.losses)
 OUTCOMES = os.environ.get("AIGUIDE_RL_OUTCOMES") == "1"   # the outcomes' rewards begun here: off (RlEnv.OUTCOMES; rl/reward-outcomes goes on with them)
 _AFK = json.loads((spec.ROOT / "rl" / "reward.json").read_text(encoding="utf-8")).get("constants", {}).get("afk", {})
@@ -225,6 +231,9 @@ class Agent:
         self.worn: dict[str, str] = {}   # slot -> piece
         self.dist = 0.0          # from the base (on the surface)
         self.depth = 0           # 0 the surface, 1 y~40, 2 y~12
+        self.under = 0.0         # seconds underground in this wave (what the digging zombies hear it by)
+        self.dig_work = 0.0      # seconds the diggers have dug towards it (the tunnel stays between the waves)
+        self.dig_alert = False   # the wave's diggers went for it (their threats are out)
         self.tunnels = {1: 0, 2: 0}
         self.post = False
         self.free_at = 0.0
@@ -310,10 +319,14 @@ class SimEnv:
     _did = 0   # decision ids: unique in a process
 
     def __init__(self, seed: int = 0, shaping: float = 0.0, weights: dict | None = None, noise: bool = True,
-                 curiosity: float = -1.0, obstacles: float = 1.0, force: str | None = None, reward: str | None = None):
+                 curiosity: float = -1.0, obstacles: float = 1.0, force: str | None = None, reward: str | None = None,
+                 zdig: bool | None = None):
         """noise=False: the calibration's failures off (no fresh or sticky failures, no tables out of reach, no empty
         chops): the mechanics alone, for the tests; curiosity: curiosity.novel's weight (-1: the contract's)"""
         self.noise = noise
+        self.zdig = (ZD.ON and DIG_REACH is not None) if zdig is None else bool(zdig)   # the digging zombies: AIGUIDE_ZDIG=0 or zdig=False, the old waves
+        self.dig_nd = 0          # the wave's zombies with a tool
+        self.dig_need = [None, None, None]   # seconds of digging to the agent at each depth: the fastest tier of the wave
         self.rng = random.Random(seed)
         self.shaping = shaping
         self.base_w = dict(WEIGHTS if weights is None else weights)
@@ -2104,6 +2117,8 @@ class SimEnv:
                         continue
             else:
                 a.health = min(20.0, a.health + 0.25 * dt)   # the agents count as fed: 1 a 4 s
+            if not a.depth and (a.under or a.dig_work):
+                a.under = a.dig_work = 0.0
             if a.depth:   # under the surface: caves' mobs, now and then lava or a fall
                 lit = 0.5 if a.n("torch") else 1.0
                 self.hurt(a, CAL["mine"]["cave_hits"][a.depth] * lit, dt, 4.0)
@@ -2118,6 +2133,8 @@ class SimEnv:
                     self.give(a, "accident")
                     self.die(a, out=False, accident=True)
                     continue
+                if wave and self.zdig and self.dig_nd > 0:
+                    self.dig_under(a, dt)
                 if a.health <= 0:
                     self.die(a, out=False)
                 continue
@@ -2220,6 +2237,50 @@ class SimEnv:
                 if self.v4:
                     self.fall4("lost")
 
+    def dig_under(self, a: Agent, dt: float):
+        """the digging zombies of the wave and an agent hidden underground (docs/rl/ZOMBIES-DIG.md): heard after DIG_HEAR seconds
+        of the wave under the ground (the deeper, the later), the diggers dig to it (the fastest tier of the wave needs
+        dig_need seconds, kept between the waves); the tunnel open, the mobs come at it one or two at a time: its hits
+        as at a post, its kills as inside the perimeter"""
+        need = self.dig_need[a.depth]
+        if need is None:
+            return
+        a.under += dt
+        if a.under < DIG_HEAR[a.depth]:
+            return
+        if not a.dig_alert:
+            a.dig_alert = True
+            if self.v4:   # the diggers go for it: threats to the agent (the game's: a wave's mob that takes an agent for its target)
+                for m in self.mobs_out[:self.dig_nd]:
+                    self.fev.append({"type": "threat", "mob": m, "kind": "zombie", "target": a.i, "dmg": 3.0})
+        a.dig_work += dt
+        e = max(0.0, self.enemies)
+        if a.dig_work < need or e <= 0:
+            return
+        if self.v4 and self.mobs_out:
+            self._hurt_mob = self.mobs_out[0]
+        self.hurt(a, WCAL["hurt"] * 0.025 * min(e, 2.0), dt)
+        self._hurt_mob = None
+        unarmed = 1.0 if a.held else self.sc.get("unarmed", 1.0)
+        k = min(self.poisson(WCAL["kill"] * 0.04 * (1 + a.held) * unarmed * dt), int(math.ceil(self.enemies)))
+        if k:
+            self.kill(a, k)
+
+    def dig_wave(self):
+        """a wave begins: its zombies' tiers (zdig.tier), the fastest to get down to each depth; the agents' time under the ground starts again"""
+        self.dig_nd = 0
+        self.dig_need = [None, None, None]
+        for a in self.agents:
+            a.under = 0.0
+            a.dig_alert = False
+        if not self.zdig:
+            return
+        c = ZD.tier_counts(self.wave_num, int(self.enemies))
+        self.dig_nd = sum(c)
+        for d in (1, 2):
+            best = [DIG_REACH[d - 1][i + 1] for i in range(len(c)) if c[i] > 0 and DIG_REACH[d - 1][i + 1] is not None]
+            self.dig_need[d] = min(best) if best else None
+
     def die(self, a: Agent, out: bool, accident: bool = False):
         if self.v4:
             self.fev.append({"type": "death", "agent": a.i, "cause": "accident" if accident else "mob", "base_dist": float(a.dist)})
@@ -2238,6 +2299,7 @@ class SimEnv:
         a.held = 0
         a.health = 0
         a.depth = 0
+        a.under = a.dig_work = 0.0
         a.trip_out = False
         a.trip_ores = 0
         if a.post:
@@ -2270,6 +2332,7 @@ class SimEnv:
             self.wave_breaches = 0
             self.wave_mob_s = 0.0
             self.phase, self.phase_until = "wave", self.t + 240
+            self.dig_wave()
             if self.v4:   # the wave's mobs: threats to the base from their coming
                 self.gone4()
                 for _ in range(int(self.enemies)):

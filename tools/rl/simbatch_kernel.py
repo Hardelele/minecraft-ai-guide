@@ -50,6 +50,16 @@ LOW = float(T.spec.LOW)
 W_KILL = float(T.S.WCAL["kill"])
 W_HURT = float(T.S.WCAL["hurt"])
 W_LEAK = float(T.S.WCAL["gate_leak"])
+# the digging zombies (sim_env.DIG_*, tools/rl/zdig.py): the tiers shares, the seconds to an agent at each depth by tier, the hearing
+_ZD = T.S.ZD
+DIG_TIER_FROM = np.array([float(t["from"]) for t in _ZD.TIERS])
+DIG_TIER_BASE = np.array([float(t["base"]) for t in _ZD.TIERS])
+DIG_TIER_STEP = np.array([float(t["step"]) for t in _ZD.TIERS])
+DIG_TIER_MAX = np.array([float(t["max"]) for t in _ZD.TIERS])
+DIG_BOSS, DIG_TIERS_MAX = float(_ZD.P["boss_mult"]), float(_ZD.P["tiers_max"])
+_DR = T.S.DIG_REACH
+DIG_REACH = np.array([[-1.0 if (_DR is None or _DR[d][i + 1] is None) else float(_DR[d][i + 1]) for i in range(len(_ZD.TIERS))] for d in (0, 1)])
+DIG_HEAR = np.array([min(1e18, float(h)) for h in T.S.DIG_HEAR])
 CAL = T.S.CAL
 SKC = T.S.SK
 LEVEL_S = float(CAL["mine"]["level_s"])
@@ -222,14 +232,14 @@ _AI = ("SCEN NAG TARGET FORCE TREES TREES_HIDDEN STONE_SEEN COAL COAL_HIDDEN IRO
        "HANG_GOT OB_HANG_LOGS OB_DITCH_MET OB_DITCH_BRIDGED OB_LAVA_MET OB_LAVA_PASSED OB_SWITCH_OK OB_RETRY_FAIL OB_PIT_STUCK DONE REASON "
        "CHANGED N_BUILDERS N_CROPS N_RIPE N_SAPLINGS N_YOUNG N_RENFOOD N_RENWHEAT N_SUSWIN SUSWIN_HEAD N_LASTREN DID_NEXT OVERFLOW EPISODES "
        "PEN_ORDER_N SUCCESS V4 GOAL_SENT MOB_NEXT N_FOUND B_SEEN ACTOR HURT_MOB N_OUT N_IN N_FEV N_FEVL NIGHT_ORD "
-       "C4_PHASE C4_PREV_CALM C4_DAY_N C4_THR_N C4_POOL_N C4_MOVES_N C4_EP_FIRST C4_ERR C4_FORGOT C4_DAYFULL REC_NF REC_NE REC_NL").split()
+       "C4_PHASE C4_PREV_CALM C4_DAY_N C4_THR_N C4_POOL_N C4_MOVES_N C4_EP_FIRST C4_ERR C4_FORGOT C4_DAYFULL REC_NF REC_NE REC_NL DIG_ND").split()
 _AF = ("T MINE_D TABLE_D FURNACE_D PHASE_UNTIL ENEMIES INSIDE MOB_S WAVE_MOB_S SUS_FR SUS_FE SUS_WR SUS_WU SUS_PAID0 SUS_PAID1 CT_WALL CT_MOAT "
-       "CT_LIGHT CT_GATE CT_ETABLE CT_SOURCE CT_STOCK OB_SHELTER PROGRESS_OUT C4_TOTAL C4_T C4_CALM_END C4_GAIN").split()
+       "CT_LIGHT CT_GATE CT_ETABLE CT_SOURCE CT_STOCK OB_SHELTER PROGRESS_OUT C4_TOTAL C4_T C4_CALM_END C4_GAIN DIG_NEED1 DIG_NEED2").split()
 _GI = ("XP HELD DEPTH TUN0 TUN1 TUN2 POST ALIVE PEND PEND_ACT PEND_OK PEND_REASON HOLDING DID KIND LAST OUTCOME REPEATED TRIP_ORES TRIP_OUT TRIPS "
        "ENCHANTED DITCH LAVA_FRONT PIT_FAILS NEAR_VALID NEAR_GROUND NEAR_PICK NEAR_Y NEAR_PLACED NEAR_N MOB_ON MOB_X MOB_Y MOB_Z "
-       "F_LAST_FAILED F_GROUP F_WIN_N F_WIN_HEAD HAS_RESPAWN BOX_N NIGHT_N NIGHT_ORD DANGER_N C4_CUR REC_N OPEN_N").split()
+       "F_LAST_FAILED F_GROUP F_WIN_N F_WIN_HEAD HAS_RESPAWN BOX_N NIGHT_N NIGHT_ORD DANGER_N C4_CUR REC_N OPEN_N DIG_ALERT").split()
 _GF = ("HEALTH FOOD SAT XP_PTS DIST FREE_AT PEND_BEGAN ACC DID_T LAST_S TRK_ARMOR TRK_WEAPON TRK_PICK TRK_RANGED TRK_DEPTH PROGRESS_T "
-       "RESPAWN_AT").split()
+       "RESPAWN_AT UNDER DIG_WORK").split()
 for _j, _n in enumerate(_AI):
     globals()["A_" + _n] = _j
 for _j, _n in enumerate(_AF):
@@ -311,12 +321,12 @@ class StateRef(structref.StructRefProxy):
 
 structref.define_proxy(StateRef, StateType, FIELDS)
 # flags: noise, obstacles (x1000), parallel
-FL_NOISE, FL_OBST, FL_REC, FL_V4, FL_MERGE = 0, 1, 2, 3, 4
+FL_NOISE, FL_OBST, FL_REC, FL_V4, FL_MERGE, FL_ZDIG = 0, 1, 2, 3, 4, 5
 NO_CHAIN = np.zeros((1, 5), np.int64)
 
 
 def new_state(n: int, scen_tables: dict, noise: bool = True, obstacles: float = 1.0, v4: bool = False, record: bool = False,
-              ev_cap: int = EV_CAP, merge: bool = False):
+              ev_cap: int = EV_CAP, merge: bool = False, zdig: bool = False):
     """-> (the kernels' StateRef, the same arrays by name for Python)"""
     from simbatch_rng import new_state as rng_state
     mt, gn = rng_state(n)
@@ -344,7 +354,7 @@ def new_state(n: int, scen_tables: dict, noise: bool = True, obstacles: float = 
         mt=mt, gnext=gn, comp=np.zeros((n, NCOMP)), facts=np.zeros((n, MA, NKEY)),
         ev_i=np.zeros((n, ev_cap, 8), np.int64), ev_f=np.zeros((n, ev_cap)), links=np.zeros((n, max(LINK_CAP, 4 * ev_cap), 5), np.int64),
         nev=np.zeros(n, np.int64), nlink=np.zeros(n, np.int64),
-        flags=np.array([1 if noise else 0, int(round(obstacles * 1000)), 1 if (v4 and record) else 0, 1 if v4 else 0, 1 if merge else 0],
+        flags=np.array([1 if noise else 0, int(round(obstacles * 1000)), 1 if (v4 and record) else 0, 1 if v4 else 0, 1 if merge else 0, 1 if zdig else 0],
                        np.int64),
         sc_f=sf, sc_i=si, kit=scen_tables["kit"], w=scen_tables["w"], fac=scen_tables["fac"], scale_on=scen_tables["scale_on"],
         mt4=mt4, gnext4=gn4, fev_i=np.zeros((m4, FEV_CAP, 9), np.int64), fev_f=np.zeros((m4, FEV_CAP, 3)), fev_l=np.zeros((m4, FEVL_CAP), np.int64),
@@ -2743,6 +2753,8 @@ def die(st, e, i, out, accident):
     st.gi[e, i, GI_HELD] = 0
     st.gf[e, i, GF_HEALTH] = 0
     st.gi[e, i, GI_DEPTH] = 0
+    st.gf[e, i, GF_UNDER] = 0.0
+    st.gf[e, i, GF_DIG_WORK] = 0.0
     st.gi[e, i, GI_TRIP_OUT] = 0
     st.gi[e, i, GI_TRIP_ORES] = 0
     if st.gi[e, i, GI_POST]:
@@ -2795,6 +2807,7 @@ def next_phase(st, e):
         st.af[e, AF_WAVE_MOB_S] = 0.0
         st.ai[e, A_PHASE] = PH_WAVE
         st.af[e, AF_PHASE_UNTIL] = t + 240
+        dig_wave(st, e)
         if st.ai[e, A_V4]:   # the wave's mobs: threats to the base from their coming
             gone4(st, e)
             for _ in range(int(en)):
@@ -2912,6 +2925,9 @@ def world(st, e, dt):
                     continue
         else:
             st.gf[e, i, GF_HEALTH] = min(20.0, st.gf[e, i, GF_HEALTH] + 0.25 * dt)
+        if depth == 0 and (st.gf[e, i, GF_UNDER] != 0.0 or st.gf[e, i, GF_DIG_WORK] != 0.0):
+            st.gf[e, i, GF_UNDER] = 0.0
+            st.gf[e, i, GF_DIG_WORK] = 0.0
         if depth:
             lit = 0.5 if st.bag[e, i, I_TORCH] else 1.0
             hurt(st, e, i, CAVE_HITS[depth] * lit, dt, 4.0, False)
@@ -2929,6 +2945,8 @@ def world(st, e, dt):
                 give0(st, e, i, K_ACCIDENT, 1.0)
                 die(st, e, i, False, True)
                 continue
+            if wave and st.flags[FL_ZDIG] == 1 and st.ai[e, A_DIG_ND] > 0:
+                dig_under(st, e, i, dt, depth, unarmed_s)
             if st.gf[e, i, GF_HEALTH] <= 0:
                 die(st, e, i, False, False)
             continue
@@ -3600,6 +3618,91 @@ def perim(st, e):
 def mob4(st, e):
     st.ai[e, A_MOB_NEXT] += 1
     return st.ai[e, A_MOB_NEXT]
+
+
+@jit
+def dig_tier(wave, k, total, share_out):
+    """zdig.tier: the tier of the k-th zombie (from 0) of the wave, -1 plain; share_out: scratch of the tiers' shares"""
+    tot = 0.0
+    nt = DIG_TIER_FROM.shape[0]
+    for q in range(nt):
+        f = 0.0
+        if wave >= DIG_TIER_FROM[q]:
+            f = min(DIG_TIER_MAX[q], DIG_TIER_BASE[q] + DIG_TIER_STEP[q] * (wave - DIG_TIER_FROM[q]))
+            if wave > 0 and wave % 5 == 0:
+                f = f * DIG_BOSS
+        share_out[q] = f
+        tot += f
+    if tot > DIG_TIERS_MAX:
+        for q in range(nt):
+            share_out[q] = share_out[q] * DIG_TIERS_MAX / tot
+    u = ((k + 1) * 0.6180339887498949) % 1.0
+    acc = 0.0
+    for q in range(nt - 1, -1, -1):
+        acc += share_out[q]
+        if u < acc:
+            return q
+    return 1 if (k == 0 and total >= 3) else -1
+
+
+@jit
+def dig_wave(st, e):
+    """sim_env.dig_wave: a wave begins: the diggers tiers, the fastest to each depth; the agents time under the ground starts again"""
+    st.ai[e, A_DIG_ND] = 0
+    st.af[e, AF_DIG_NEED1] = -1.0
+    st.af[e, AF_DIG_NEED2] = -1.0
+    for i in range(st.ai[e, A_NAG]):
+        st.gf[e, i, GF_UNDER] = 0.0
+        st.gi[e, i, GI_DIG_ALERT] = 0
+    if st.flags[FL_ZDIG] != 1:
+        return
+    total = int(st.af[e, AF_ENEMIES])
+    nt = DIG_TIER_FROM.shape[0]
+    cnt = np.zeros(nt, np.int64)
+    sh = np.zeros(nt)
+    nd = 0
+    for k in range(total):
+        q = dig_tier(st.ai[e, A_WAVE_NUM], k, total, sh)
+        if q >= 0:
+            cnt[q] += 1
+            nd += 1
+    st.ai[e, A_DIG_ND] = nd
+    for d in range(2):
+        best = -1.0
+        for q in range(nt):
+            if cnt[q] > 0 and DIG_REACH[d, q] >= 0 and (best < 0 or DIG_REACH[d, q] < best):
+                best = DIG_REACH[d, q]
+        st.af[e, AF_DIG_NEED1 + d] = best
+
+
+@jit
+def dig_under(st, e, i, dt, depth, unarmed_s):
+    """sim_env.dig_under: the wave's digging zombies and an agent hidden underground"""
+    need = st.af[e, AF_DIG_NEED1 + depth - 1]
+    if need < 0:
+        return
+    st.gf[e, i, GF_UNDER] += dt
+    if st.gf[e, i, GF_UNDER] < DIG_HEAR[depth]:
+        return
+    if st.gi[e, i, GI_DIG_ALERT] == 0:
+        st.gi[e, i, GI_DIG_ALERT] = 1
+        if st.ai[e, A_V4]:
+            kk = min(st.ai[e, A_DIG_ND], st.ai[e, A_N_OUT])
+            for q in range(kk):
+                threat4(st, e, st.mobs_out[e, q], i, 0.0)
+    st.gf[e, i, GF_DIG_WORK] += dt
+    en = max(0.0, st.af[e, AF_ENEMIES])
+    if st.gf[e, i, GF_DIG_WORK] < need or en <= 0:
+        return
+    if st.ai[e, A_V4] and st.ai[e, A_N_OUT] > 0:
+        st.ai[e, A_HURT_MOB] = st.mobs_out[e, 0]
+    hurt(st, e, i, W_HURT * 0.025 * min(en, 2.0), dt, 3.0, False)
+    st.ai[e, A_HURT_MOB] = -1
+    held = st.gi[e, i, GI_HELD]
+    unarmed = 1.0 if held else unarmed_s
+    k = min(poisson(st, e, W_KILL * 0.04 * (1 + held) * unarmed * dt), int(math.ceil(st.af[e, AF_ENEMIES])))
+    if k:
+        kill(st, e, i, k, False, -1, new_chain(), -1)
 
 
 @jit

@@ -73,6 +73,8 @@ public class Waves {
     static double[] fronts = { 0 };
     static Random rnd = new Random();
     static int run, spawnIndex, spawnedTotal, removedAtEnd, noSpot, requeued;
+    /** the zombies of the wave made so far, and its total (the digging ones are told by their number: ZombieDig.digger) */
+    static int zombieK, zombieTotal;
     static long ticks, endedTick, seedNow;
     static String source = "";
     static boolean autoDone;
@@ -244,6 +246,8 @@ public class Waves {
         still.clear();
         errors.clear();
         spawnIndex = spawnedTotal = removedAtEnd = noSpot = requeued = 0;
+        zombieK = zombieTotal = 0;
+        ZombieDigWorld.reset(world());
         endedTick = 0;
         lastReport = null;
     }
@@ -281,6 +285,13 @@ public class Waves {
         String world = w == null ? "" : w.getSaveHandler().getWorldDirectoryName();
         JsonObject o = WaveReport.run(cycle, world, source, w != null && w.difficultySetting == EnumDifficulty.PEACEFUL, spawnedTotal, removedAtEnd, errors);
         o.addProperty("waves_seed", String.valueOf(seedNow));   // (a string: a long's digits stay whole in any JSON reader)
+        int[] dg = ZombieDigWorld.stats();
+        o.addProperty("dig_mode", ZombieDigWorld.mode.name().toLowerCase(java.util.Locale.ROOT));
+        o.addProperty("dig_blocks", dg[0]);
+        o.addProperty("underground_s", dg[1]);
+        o.addProperty("diggers", dg[2]);
+        o.addProperty("dig_reached", dg[3]);
+        o.addProperty("dig_deepest", dg[4]);
         lastReport = o;
         String line = WaveReport.line(o);
         if (w != null)
@@ -289,6 +300,7 @@ public class Waves {
             } catch (Exception e) {
                 Events.log("waves: the run is not written: " + e);
             }
+        Events.log("waves: " + ZombieDigWorld.line());
         Events.log("waves: run over (" + cycle.reason + "): " + cycle.cleared + " waves cleared, " + cycle.kills + " kills, " + cycle.losses + " lost; " + line);
         Crew.note("waves.over", String.valueOf(cycle.cleared), String.valueOf(cycle.kills), String.valueOf(cycle.losses));
         update();
@@ -345,6 +357,8 @@ public class Waves {
             }
             if (!cycle.paused && cycle.phase == WaveCycle.Phase.WAVE && ticks % cfg.spawnEvery == 0) spawn(w);
             if (!cycle.paused) for (EntityLiving m : new ArrayList<EntityLiving>(alive)) if ((m.getEntityId() + ticks) % 20 == 0) steer(m, w);
+            if (!cycle.paused && cycle.phase == WaveCycle.Phase.WAVE) ZombieDigWorld.tick(w, ticks, alive, Crew.instance, cycle.wave);
+            else if (!ZombieDigWorld.works.isEmpty()) ZombieDigWorld.clear(w);
             update();
         } catch (Exception ex) {
             StringBuilder at = new StringBuilder();
@@ -366,6 +380,9 @@ public class Waves {
         int[] counts = WavePlan.counts(n, cycle.mult);
         pending.clear();
         pending.addAll(WavePlan.queue(counts, rnd));
+        zombieK = 0;
+        zombieTotal = counts[WavePlan.Kind.ZOMBIE.ordinal()] + counts[WavePlan.Kind.ARMORED_ZOMBIE.ordinal()];
+        ZombieDigWorld.wave();
         cycle.planned(pending.size());
         fronts = WaveRing.fronts(n, rnd);
         recent.clear();
@@ -406,6 +423,7 @@ public class Waves {
             float yaw = (float) Math.toDegrees(Math.atan2(center[2] - at[2], center[0] - at[0])) - 90;
             m.setLocationAndAngles(at[0] + 0.5, at[1], at[2] + 0.5, yaw, 0);
             m.rotationYawHead = yaw;
+            if (k == WavePlan.Kind.ZOMBIE || k == WavePlan.Kind.ARMORED_ZOMBIE) ZombieDigWorld.mark(m, cycle.wave, zombieK++, zombieTotal);
             w.spawnEntityInWorld(m);
             w.func_147487_a("largesmoke", at[0] + 0.5, at[1] + 1, at[2] + 0.5, 12, 0.3, 0.5, 0.3, 0.01);
             alive.add(m);
@@ -502,6 +520,7 @@ public class Waves {
             } else if (m.getNavigator().noPath()) RlEngine.moveTo(m, center[0] + 0.5, center[1], center[2] + 0.5, 1.0);
         } else if (old && (!((EntityCreature) m).hasPath() || m.getDistanceToEntity(t) > 12))
             ((EntityCreature) m).setPathToEntity(w.getPathEntityToEntity(m, t, (float) SEEK, true, false, false, true));
+        if (ZombieDigWorld.busy(m, ticks)) { still.put(m.getEntityId(), new double[] { m.posX, m.posZ, ticks }); return; }   // a digger at work is not stuck
         // stuck: not 3 blocks from where it was 45 s ago, and not at the base nor at its target
         double[] s = still.get(m.getEntityId());
         if (s == null || Math.hypot(m.posX - s[0], m.posZ - s[1]) > 3) { still.put(m.getEntityId(), new double[] { m.posX, m.posZ, ticks }); return; }

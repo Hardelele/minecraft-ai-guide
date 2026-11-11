@@ -1,0 +1,20 @@
+{
+ "version": 1,
+ "note": "The digging zombies of the waves (docs/rl/ZOMBIES-DIG.md): the tools of a zombie's hand, the tiers (a kind of zombie with a tool, its share of the wave's zombies by the wave), the numbers of the breaking and the hearing. ZombieDig.java has the same built in (ZombieDigTest checks them against this file); tools/rl/zdig.py reads it for the two simulators. A block: ticks = max(min_ticks, ceil(hardness * 30 / speed * slow)), speed of the tool on what it is for (a shovel soil, an axe wood, a pickaxe rock) else 1; a block that wants a tool is broken only by the right tool of the level (stone 0, iron ore 1, diamond and gold ore 2, obsidian 3), bedrock by none; over max_ticks never.",
+ "params": {"slow": 3, "min_ticks": 10, "max_ticks": 1200, "boss_mult": 1.5, "tiers_max": 0.75, "max_at_once": 6, "detect": 24, "hear_grow": 0.4, "hear_grace": 20, "hear_max": 64, "below": 3},
+ "tools": {
+  "hand": {"kind": "none", "speed": 1, "level": -1},
+  "iron_shovel": {"kind": "shovel", "speed": 6, "level": 0},
+  "iron_axe": {"kind": "axe", "speed": 6, "level": 0},
+  "wooden_pickaxe": {"kind": "pickaxe", "speed": 2, "level": 0},
+  "stone_pickaxe": {"kind": "pickaxe", "speed": 4, "level": 1},
+  "iron_pickaxe": {"kind": "pickaxe", "speed": 6, "level": 2},
+  "diamond_pickaxe": {"kind": "pickaxe", "speed": 8, "level": 3}
+ },
+ "tiers": [
+  {"name": "shoveler", "tool": "iron_shovel", "from": 1, "base": 0.06, "step": 0.02, "max": 0.15, "digs": "soil, sand, gravel"},
+  {"name": "digger", "tool": "stone_pickaxe", "from": 1, "base": 0.06, "step": 0.03, "max": 0.20, "digs": "soil by hand, stone, coal, iron ore"},
+  {"name": "miner", "tool": "iron_pickaxe", "from": 3, "base": 0.04, "step": 0.03, "max": 0.20, "digs": "the same faster, gold, redstone, diamond ore"},
+  {"name": "breaker", "tool": "diamond_pickaxe", "from": 7, "base": 0.03, "step": 0.02, "max": 0.10, "digs": "obsidian too"}
+ ]
+}

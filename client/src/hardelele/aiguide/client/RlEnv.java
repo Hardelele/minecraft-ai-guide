@@ -2077,6 +2077,22 @@ public class RlEnv {
                 info.add("events4", n4);
             }
             info.add("measured", reward.measuredJson());
+            if (sc != null && sc.waves != null) {   // the run's waves: the A/B of the digging zombies (docs/rl/ZOMBIES-DIG.md)
+                WaveCycle cy = Waves.cycle;
+                JsonObject wv = new JsonObject();
+                wv.addProperty("wave", cy.wave);
+                wv.addProperty("cleared", cy.cleared);
+                wv.addProperty("kills", cy.kills);
+                wv.addProperty("losses", cy.losses);
+                int[] dg = ZombieDigWorld.stats();
+                wv.addProperty("dig_mode", ZombieDigWorld.mode.name().toLowerCase(java.util.Locale.ROOT));
+                wv.addProperty("dig_blocks", dg[0]);
+                wv.addProperty("underground_s", dg[1]);
+                wv.addProperty("diggers", dg[2]);
+                wv.addProperty("dig_reached", dg[3]);
+                wv.addProperty("dig_deepest", dg[4]);
+                info.add("waves", wv);
+            }
             JsonObject ach = new JsonObject();
             if (c != null)
                 for (Agent a : c.agents) {
