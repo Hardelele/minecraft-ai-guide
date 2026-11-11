@@ -193,10 +193,17 @@ public final class CaveView {
             double b = (ox * dx + oy * dy + oz * dz) / len, c = ox * ox + oy * oy + oz * oz - r * r;
             double disc = b * b - c;
             if (disc < 0) continue;
-            double t = -b - Math.sqrt(disc);   // where the ray enters the ball, in blocks along it
-            if (-b + Math.sqrt(disc) < 0) continue;   // the ball is behind
-            double share = Math.max(0, Math.min(1, t / len));
-            if (!found || share < best) { best = share; found = true; }
+            double root = Math.sqrt(disc), t0 = Math.max(0, -b - root), t1 = Math.min(len, -b + root);
+            if (t1 < 0 || t0 > len) continue;   // the ball is behind, or past the ray's end
+            // The ray starts where it first stands in the cave's air, so it meets the first face the person sees, not the rock before it.
+            for (double s = t0; s <= t1; s += 0.25) {
+                double px = x0 + dx * s / len, py = y0 + dy * s / len, pz = z0 + dz * s / len;
+                if (z.live.r.contains(MathHelper.floor_double(px), MathHelper.floor_double(py), MathHelper.floor_double(pz))) {
+                    double share = s / len;
+                    if (!found || share < best) { best = share; found = true; }
+                    break;
+                }
+            }
         }
         return best;
     }
@@ -303,8 +310,8 @@ public final class CaveView {
 
     // ---- the frame ------------------------------------------------------------------------------------
 
-    @SubscribeEvent(priority = EventPriority.LOWEST)
-    public void end(RenderWorldLastEvent e) {
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public void end(RenderWorldLastEvent e) {   // before the commander's marks, which then stay over the zone
         Minecraft mc = Minecraft.getMinecraft();
         World w = mc.theWorld;
         if (w == null || mc.renderViewEntity == null) { if (!zones.isEmpty()) exit(); return; }
