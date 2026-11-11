@@ -36,7 +36,7 @@ FORCES = {None: 0, "hang": 1, "ditch": 2, "lava": 3}
 
 class BatchSim:
     def __init__(self, n: int, noise: bool = True, curiosity: float = -1.0, obstacles: float = 1.0, threads: int | None = None,
-                 reward: str = "v3", record: bool = False, ev_cap: int = 0, merge: bool = False):
+                 reward: str = "v3", record: bool = False, ev_cap: int = 0, merge: bool = False, zdig: bool | None = None):
         """reward: "v3" (rl/reward.json's weights, as sim_env pays them) or "v4" (docs/rl/REWARD-v4.md: sim_env's events under
         reward="v4" and reward_core's points from them, in the kernel); record: keep each step's v4 frames (frames()); ev_cap: an arena's events a
         step at most (0: 96 under v3, 4096 under v4: a long step's frames each move credit); merge: a step's credit moves to one
@@ -50,7 +50,8 @@ class BatchSim:
         import types
         self.v4 = reward == "v4"
         ev_cap = ev_cap or (4096 if self.v4 and not merge else (512 if self.v4 else KN.EV_CAP))
-        self.ref, arrays = KN.new_state(n, self.tables, noise, obstacles, self.v4, record, ev_cap, merge)   # the kernels' struct
+        self.ref, arrays = KN.new_state(n, self.tables, noise, obstacles, self.v4, record, ev_cap, merge,
+                                      (T.S.ZD.ON and T.S.DIG_REACH is not None) if zdig is None else bool(zdig))   # the kernels' struct
         self.st = types.SimpleNamespace(**arrays)
         rows = n * MA
         self.obs = np.zeros((rows, D), np.float32)

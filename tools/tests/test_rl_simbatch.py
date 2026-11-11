@@ -312,6 +312,15 @@ def main():
     for k, s in enumerate(["waves:normal", "delay:lava"]):
         ep, dec, msg = run_case4(s, max(2, n // 2), 950 + k, (2, 3), prefer=PLACE_AT)
         check(not msg, f"v4 {s} (place_at preferred): {ep} episodes, {dec} decisions alike" + (NL + msg if msg else ""))
+    # the digging zombies (docs/rl/ZOMBIES-DIG.md): agents sent underground in waves (descend preferred), with the zombies on and off
+    DOWN = tuple(k for k, nme in enumerate(spec.ACTIONS) if nme in ("descend:mine", "wait:5", "tunnel:branch"))
+    for k, s in enumerate(["waves:normal", "waves:long"]):
+        ep, dec, msg = run_case(s, n, 1100 + k, (1, 2), prefer=DOWN)
+        tot += dec
+        check(not msg, f"{s} (underground preferred, digging zombies): {ep} episodes, {dec} decisions alike" + (NL + msg if msg else ""))
+        ep, dec, msg = run_case4(s, max(2, n // 2), 1150 + k, (1, 2), prefer=DOWN)
+        tot += dec
+        check(not msg, f"v4 {s} (underground preferred, digging zombies): {ep} episodes, {dec} decisions alike" + (NL + msg if msg else ""))
     for k, s in enumerate(["wood", "iron", "farm", "achievements", "waves:easy", "waves:normal", "waves:long", "night:shelter", "fortify", "diamond"]):
         ep, dec, msg = run_case4(s, max(2, n // 2), 900 + k, (2, 3, 1, 4) if s.startswith("waves") else (1, 2, 3))
         tot += dec

@@ -34,7 +34,7 @@ final class ZombieDig {
         double detect = 24;      // blocks, in a straight line: a target this near is heard at once
         double hearGrow = 0.4;   // blocks a second more, after hearGrace seconds under the ground in the wave
         double hearGrace = 20;
-        double hearMax = 48;     // the waves' mobs' follow range (Waves.SEEK)
+        double hearMax = 64;     // a little more than the waves' mobs' follow range (48): a digger hears what a target of the others is not
         double slow = 3;         // a digger breaks a block this many times slower than a player with the same tool (30 ticks a point of hardness at speed 1 when it harvests)
         int minTicks = 10;       // ticks at the least for a block
         int maxTicks = 1200;     // a block that takes longer is never (60 s)

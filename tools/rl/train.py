@@ -337,8 +337,12 @@ def main():
     ap.add_argument("--chunk", type=int, default=16, help="--recurrent: decisions a training sequence")
     ap.add_argument("--reward", default="v3", choices=["v3", "v4"], help="the simulator's reward: v3 rl/reward.json's weights, v4 the outcomes and "
                     "the causal credit (docs/rl/REWARD-v4.md; its credits' moves are applied whatever --credit)")
+    ap.add_argument("--zdig", default="on", choices=["on", "off", "all"], help="the digging zombies of the waves (docs/rl/ZOMBIES-DIG.md): on (below: they dig to an "
+                    "agent hidden underground; the default), all (walls too: the engine only), off (the old waves); both simulators and the engine's -Daiguide.waves.dig")
     a = ap.parse_args()
     os.environ["AIGUIDE_REWARD"] = a.reward   # the simulator's workers read it
+    os.environ["AIGUIDE_ZDIG"] = "0" if a.zdig == "off" else "1"   # (sim_env, simbatch: tools/rl/zdig.py)
+    os.environ["AIGUIDE_ENGINE_OPTS"] = (os.environ.get("AIGUIDE_ENGINE_OPTS", "") + " -Daiguide.waves.dig=" + {"on": "below", "off": "off", "all": "all"}[a.zdig]).strip()   # (engine_env.jvm_args)
 
     below_normal()
     torch.set_num_threads(a.threads)

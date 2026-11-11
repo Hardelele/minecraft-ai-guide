@@ -109,7 +109,7 @@ public final class ZombieDigTest {
     static void hearing(ZombieDig.Params p) {
         check(ZombieDig.hear(0, p) == 24 && ZombieDig.hear(20, p) == 24, "24 blocks at once and for 20 s");
         check(Math.abs(ZombieDig.hear(70, p) - 44) < 1e-9, "+0.4 a second after that");
-        check(ZombieDig.hear(1000, p) == 48, "up to 48");
+        check(ZombieDig.hear(1000, p) == 64, "up to 64");
     }
 
     static void ways(ZombieDig.Params p) {
@@ -182,6 +182,40 @@ public final class ZombieDigTest {
         }
     }
 
+    /** what Python's tools/rl/zdig.py must give the same (tools/tests/test_rl_zdig.py): the tiers, the ticks, the seconds to an agent */
+    static void dump(ZombieDig.Params p) throws Exception {
+        JsonObject o = new JsonObject();
+        JsonObject tiers = new JsonObject();
+        for (int n = 1; n <= 20; n++)
+            for (int total : new int[] { 1, 3, 5, 10, 20, 40 }) {
+                JsonArray r = new JsonArray();
+                for (int k = 0; k < total; k++) r.add(new com.google.gson.JsonPrimitive(ZombieDig.tier(n, k, total, p)));
+                tiers.add(n + ":" + total, r);
+            }
+        o.add("tiers", tiers);
+        JsonObject reach = new JsonObject();
+        for (ZombieDig.Tool t : new ZombieDig.Tool[] { ZombieDig.Tool.IRON_SHOVEL, ZombieDig.Tool.WOODEN_PICKAXE, ZombieDig.Tool.STONE_PICKAXE, ZombieDig.Tool.IRON_PICKAXE, ZombieDig.Tool.DIAMOND_PICKAXE })
+            for (int d : new int[] { 12, 24, 48, 52 }) {
+                double s = dig(new Ground(5, t, p), d, 10, null);
+                reach.addProperty(t.name().toLowerCase() + ":" + d, s < 0 ? -1.0 : Math.round(s * 10) / 10.0);
+            }
+        o.add("reach", reach);
+        JsonObject tk = new JsonObject();
+        ZombieDig.Mat[] mats = ZombieDig.Mat.values();
+        for (ZombieDig.Tool t : ZombieDig.Tool.values())
+            for (float h : new float[] { 0.1f, 0.5f, 1.5f, 3f, 50f })
+                for (boolean need : new boolean[] { false, true })
+                    for (int lv : new int[] { 0, 1, 3 })
+                        for (ZombieDig.Mat m : mats) tk.addProperty(t.name().toLowerCase() + ":" + m.name().toLowerCase() + ":" + h + ":" + need + ":" + lv, ZombieDig.ticks(t, m, h, need, lv, p));
+        o.add("ticks", tk);
+        JsonArray hear = new JsonArray();
+        for (int t = 0; t <= 200; t += 5) hear.add(new com.google.gson.JsonPrimitive(ZombieDig.hear(t, p)));
+        o.add("hear", hear);
+        File f = new File(System.getProperty("aiguide.zdig.out", "build/rl/zdig-java.json"));
+        f.getParentFile().mkdirs();
+        Files.write(f.toPath(), o.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
     public static void main(String[] a) throws Exception {
         ZombieDig.Params p = new ZombieDig.Params();
         tiers(p);
@@ -189,6 +223,7 @@ public final class ZombieDigTest {
         hearing(p);
         ways(p);
         file(p);
+        dump(p);
         System.out.println(bad == 0 ? "ZombieDigTest ok" : "ZombieDigTest FAILED: " + bad);
         System.exit(bad == 0 ? 0 : 1);
     }
