@@ -302,7 +302,17 @@ public class RlEnv {
             }
             case "reset":
                 try {
-                    reset(w, r.msg);
+                    if (RlOpen.wants(r.msg)) {   // the open world (docs/rl/OPEN-WORLD.md)
+                        if (open == null) open = new RlOpen(this);
+                        rec = null;
+                        OpenRec.on = false;
+                        open.reset(w, r.msg);
+                    } else {
+                        if (open != null) { open.close(); open = null; }
+                        reset(w, r.msg);
+                        rec = r.msg.has("record_open") && r.msg.get("record_open").getAsBoolean() ? new RlOpen.Rec(this, r.msg) : null;   // the teacher's record
+                        OpenRec.on = rec != null;
+                    }
                     replyTo = r.conn;
                     state = State.RUN;
                     runSince = System.nanoTime();
@@ -1223,8 +1233,14 @@ public class RlEnv {
         });
     }
 
+    /** the open world's mode (null: a scenario's episode); the teacher's recording of a scenario's episode */
+    RlOpen open;
+    RlOpen.Rec rec;
+
     void episodeTick(WorldServer w) {
         ticks++;
+        if (open != null) { open.tick(w); return; }
+        if (rec != null) rec.tick(w);
         Crew c = Crew.instance;
         if (c == null) return;
         for (Agent a : c.agents) if (!a.isDead) reward.add(id(a), "time", 1 / 20.0);
@@ -1994,6 +2010,7 @@ public class RlEnv {
     // ---- the answer: the observations, the masks, the rewards ---------------------------------------------------
 
     void answer(WorldServer w) {
+        if (open != null) { open.answer(w); waiting.clear(); return; }
         Crew c = Crew.instance;
         JsonObject o = new JsonObject(), obs = new JsonObject(), mask = new JsonObject(), rew = new JsonObject(), comps = new JsonObject(), rawOut = new JsonObject();
         List<Agent> who = new ArrayList<Agent>();
@@ -2094,11 +2111,13 @@ public class RlEnv {
             Events.log("rl: episode " + episode + " " + sc.name + " done (" + doneReason + ") at " + ticks / 20 + " game s, " + wall + " ms, reward " + reward.episodeJson());
         }
         if (raw) info.add("raw", rawOut);
+        if (rec != null) info.add("open", rec.drain());
         o.add("info", info);
         if (replyTo != null) replyTo.send(o);
     }
 
     void step(WorldServer w, Req r) {
+        if (open != null) { open.step(w, r); return; }
         if (state != State.WAIT || r.conn != replyTo) { r.conn.send(error(state == State.IDLE ? "no episode: reset first" : "not waiting for actions now")); return; }
         if (!r.msg.has("actions") || !r.msg.get("actions").isJsonObject()) { r.conn.send(error("step needs actions: {agent: action}")); return; }
         Map<Integer, Integer> got = new LinkedHashMap<Integer, Integer>();

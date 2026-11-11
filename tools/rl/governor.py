@@ -50,10 +50,54 @@ def gpu():
 
 
 def league_running():
+    """League* runs: the game, and its client too (LeagueClient, LeagueClientUx…: the owner's rule names League*)"""
     for p in psutil.process_iter(["name"]):
-        if p.info["name"] == LEAGUE:
+        if (p.info["name"] or "").lower().startswith("league"):
             return True
     return False
+
+
+def gpu_by_pid(pids):
+    """our processes' share of the GPU: (SM %, dedicated memory MB) summed over these pids; nvidia-smi pmon gives each
+    process's SM % (its memory is N/A under Windows' WDDM), Windows' GPU Process Memory counters give its memory"""
+    util = mem = 0.0
+    pids = set(pids)
+    try:
+        out = subprocess.run(["nvidia-smi", "pmon", "-c", "1", "-s", "u"], capture_output=True, text=True, timeout=10,
+                             creationflags=0x08000000 if IS_WIN else 0).stdout
+        for line in out.splitlines():
+            f = line.split()
+            if len(f) > 3 and not line.startswith("#") and f[1].isdigit() and int(f[1]) in pids and f[3] != "-":
+                util += float(f[3])
+    except Exception:
+        pass
+    if IS_WIN:
+        try:
+            out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                                  "(Get-Counter '\\GPU Process Memory(*)\\Dedicated Usage').CounterSamples | ForEach-Object { $_.InstanceName + ' ' + [int64]$_.CookedValue }"],
+                                 capture_output=True, text=True, timeout=15, creationflags=0x08000000).stdout
+            for line in out.splitlines():
+                name, _, val = line.strip().rpartition(" ")
+                if name.startswith("pid_") and int(name.split("_")[1]) in pids:
+                    mem += float(val) / 2 ** 20
+        except Exception:
+            pass
+    return util, mem
+
+
+def matching(subs):
+    """the pids of the processes whose command line holds one of these strings (the run's engine, started apart)"""
+    out = []
+    if not subs:
+        return out
+    for p in psutil.process_iter(["pid", "cmdline"]):
+        try:
+            c = " ".join(p.info["cmdline"] or ())
+        except psutil.Error:
+            continue
+        if p.info["pid"] != os.getpid() and any(x in c for x in subs) and "governor.py" not in c:
+            out.append(p.info["pid"])
+    return out
 
 
 class Governor:
@@ -83,6 +127,7 @@ class Governor:
         self._last_log = 0.0
         self._n = 0
         self._gpu_last = None
+        self._gpu_own = None
         self._cpu_prev: dict = {}   # pid -> its CPU seconds at the last look
         self._t_prev = time.time()
         psutil.cpu_percent(None)
@@ -142,9 +187,13 @@ class Governor:
              "mem_free_mb": round(vm.available / 2 ** 20), "league": league_running()}
         if g:
             m["gpu_util"], m["gpu_mem_mb"], m["gpu_total_mb"] = g
-            m["gpu_mem_others_mb"] = round(max(0.0, g[1] - self.status.get("gpu_mb", 0.0) - (400 if self.status.get("gpu_mb") else 0)))
-            if self.status.get("phase") == "collect":   # our run hardly touches the GPU while collecting: the use is the others'
-                m["gpu_others"] = g[0]
+            if self._n % self.gpu_every == 1 or self.gpu_every <= 1 or self._gpu_own is None:
+                self._gpu_own = gpu_by_pid([p.pid for p in self.tree()])
+            own_u, own_mb = self._gpu_own
+            m["gpu_own"], m["gpu_own_mb"] = round(own_u, 1), round(own_mb)
+            # the others' use: all of it less our tree's (the run and its children, the engine named by --with)
+            m["gpu_mem_others_mb"] = round(max(0.0, g[1] - own_mb))
+            m["gpu_others"] = round(max(0.0, g[0] - own_u), 1)
         return m
 
     # ---- deciding -------------------------------------------------------------------------------------------------
@@ -283,6 +332,9 @@ def main():
     ap.add_argument("--max-threads", type=int, default=0)
     ap.add_argument("--max-arenas", type=int, default=0)
     ap.add_argument("--margin", type=float, default=2.0, help="cores left free over the others' use")
+    ap.add_argument("--with", dest="with_", action="append", default=[],
+                    help="run: processes started apart that belong to the run (the engine's JVM), by a string of their command line: "
+                         "their priority and pauses go with the run's, and their CPU and GPU are ours")
     argv = sys.argv[1:]
     cut = argv.index("--") if "--" in argv else len(argv)   # (the command after --: its own options are not ours)
     a = ap.parse_args(argv[:cut])
@@ -304,8 +356,14 @@ def main():
     import shutil
     cmd = [shutil.which(cmd[0]) or cmd[0]] + cmd[1:]   # (CreateProcess does not look along PATH as a shell does)
     child = subprocess.Popen(cmd, env=env, creationflags=BELOW if IS_WIN else 0)
+    cache = {"t": 0.0, "pids": []}
+
+    def extra():   # (looked up again every 15 s: an engine restarted is found)
+        if time.time() - cache["t"] > 15:
+            cache["pids"], cache["t"] = matching(a.with_), time.time()
+        return cache["pids"]
     g = Governor(root_pid=child.pid, log=log, max_threads=a.max_threads or None, max_arenas=a.max_arenas or None, interval=a.interval,
-                 margin=a.margin, self_pause=True, advice_file=adv)
+                 margin=a.margin, self_pause=True, advice_file=adv, extra_pids=extra)
     g.start()
     print("governor: log %s" % log, flush=True)
     try:

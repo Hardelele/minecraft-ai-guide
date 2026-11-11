@@ -227,6 +227,7 @@ class Skills {
         boolean ok = one.tryPlaceItemIntoWorld(p, w, c[0], c[1], c[2], c[3], hx, hy, hz);
         if (!ok || one.stackSize != 0) return Result.BLOCKED;
         take(a, in.getItem(), in.getMetadata(), 1, Ledger.Way.PLACED);
+        OpenRec.note(a, OpenRec.USE, 0);
         Ground.changed();
         Block placed = w.getBlock(x, y, z);
         w.playSoundEffect(x + 0.5, y + 0.5, z + 0.5, placed.stepSound.getPlaceSound(), 1.0F, 0.8F);
@@ -360,6 +361,7 @@ class Skills {
             if (in.getItem().hasContainerItem()) put(a, new ItemStack(in.getItem().getContainerItem()), Ledger.Way.CRAFTED);
         }
         put(a, res.copy(), Ledger.Way.CRAFTED);
+        OpenRec.crafted(a, MindSkills.id(res.getItem(), 0));
         Ledger.act(a, "craft " + Ledger.name(res));
         return res;
     }

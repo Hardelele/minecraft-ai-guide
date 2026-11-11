@@ -208,6 +208,36 @@ public class Agent extends EntityCreature implements Doer {
     boolean running;   // the last step was faster than a walk (a jump then costs as a sprint jump)
     int reflexAt = -1000;   // when it last put water under itself (AgentLife)
 
+    /** the open world's driver (RlOpen): a player's keys a step at a time instead of the crew's skills; null otherwise */
+    OpenBody open;
+    /** the tick of its last jump (the teacher's record: OpenRec) */
+    int jumpedAt = -1000;
+
+    /** the open world's legs act in the game's own movement, just before it moves (the navigator's walk is off then) */
+    @Override
+    protected void updateAITasks() {
+        super.updateAITasks();
+        OpenBody o = open;
+        if (o != null && !worldObj.isRemote) o.legs(this);
+    }
+
+    /** sneaking in the open world keeps it on the edge, as a player's sneak does (Entity.moveEntity's rule for players) */
+    @Override
+    public void moveEntity(double dx, double dy, double dz) {
+        if (open != null && onGround && isSneaking()) {
+            double step = 0.05;
+            while (dx != 0 && worldObj.getCollidingBoundingBoxes(this, boundingBox.getOffsetBoundingBox(dx, -1, 0)).isEmpty())
+                dx = Math.abs(dx) < step ? 0 : dx > 0 ? dx - step : dx + step;
+            while (dz != 0 && worldObj.getCollidingBoundingBoxes(this, boundingBox.getOffsetBoundingBox(0, -1, dz)).isEmpty())
+                dz = Math.abs(dz) < step ? 0 : dz > 0 ? dz - step : dz + step;
+            while (dx != 0 && dz != 0 && worldObj.getCollidingBoundingBoxes(this, boundingBox.getOffsetBoundingBox(dx, -1, dz)).isEmpty()) {
+                dx = Math.abs(dx) < step ? 0 : dx > 0 ? dx - step : dx + step;
+                dz = Math.abs(dz) < step ? 0 : dz > 0 ? dz - step : dz + step;
+            }
+        }
+        super.moveEntity(dx, dy, dz);
+    }
+
     @Override
     public void onLivingUpdate() {
         super.onLivingUpdate();
@@ -219,6 +249,7 @@ public class Agent extends EntityCreature implements Doer {
     @Override
     protected void jump() {
         super.jump();
+        jumpedAt = ticksExisted;
         if (!worldObj.isRemote && hungerOn) hunger.jumped(running);
     }
 

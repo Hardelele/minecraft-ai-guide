@@ -299,6 +299,7 @@ public class Crew {
         board.tick(w);
         for (Agent a : agents) {
             a.body.sense(w);   // the body's snapshot of this tick, before anything acts on it
+            if (a.open != null) { a.open.tick(a, w); continue; }   // the open world: the policy's keys drive the body (no reflexes, no mind, no jobs)
             if (Reacts.tick(this, a, w)) { AgentMind.reflex(a); AgentMind.share(this, a, w, true); continue; }   // layer 2: a reflex (or what a task asked for itself) has the body this tick; the job waits
             AgentMind.share(this, a, w, false);   // who drives it (the mind share's line)
             if (AgentMind.tick(this, a, w)) continue;   // layer 3, its own mind: it thinks, or is between its steps (no board work then)
