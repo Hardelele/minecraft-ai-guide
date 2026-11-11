@@ -53,16 +53,14 @@ final class ZombieDigWorld {
 
     static ZombieDig.Params params() {
         ZombieDig.Params p = new ZombieDig.Params();
-        p.frac = num("aiguide.waves.dig.frac", p.frac);
-        p.step = num("aiguide.waves.dig.step", p.step);
-        p.fracMax = num("aiguide.waves.dig.fracmax", p.fracMax);
         p.max = (int) num("aiguide.waves.dig.max", p.max);
         p.detect = num("aiguide.waves.dig.detect", p.detect);
         p.hearGrow = num("aiguide.waves.dig.hear", p.hearGrow);
         p.hearGrace = num("aiguide.waves.dig.grace", p.hearGrace);
         p.hearMax = num("aiguide.waves.dig.hearmax", p.hearMax);
-        p.cell = num("aiguide.waves.dig.cell", p.cell);
+        p.slow = num("aiguide.waves.dig.slow", p.slow);
         p.minTicks = (int) num("aiguide.waves.dig.min", p.minTicks);
+        p.tiersMax = num("aiguide.waves.dig.tiersmax", p.tiersMax);
         return p;
     }
 
@@ -86,6 +84,7 @@ final class ZombieDigWorld {
         reached.clear();
         seen.clear();
         dugBlocks = underSeconds = diggersSeen = reachedAgents = deepest = 0;
+        java.util.Arrays.fill(tiers, 0);
     }
 
     /** a new wave: the agents' time underground (what they are heard by) begins again */
@@ -97,13 +96,29 @@ final class ZombieDigWorld {
         works.clear();
     }
 
-    /** a wave's zombie just made: marked a digger by the share (k from 0 of total zombies in the wave) and given a pickaxe */
+    /** a wave's zombie just made: its tier by the shares (k from 0 of total zombies in the wave), the tool of it in its hand (the one that is seen) */
     static void mark(EntityLiving m, int wave, int k, int total) {
         if (!on() || !(m instanceof WaveMobs.Zombie)) return;
-        if (!ZombieDig.digger(wave, k, total, P)) return;
+        int t = ZombieDig.tier(wave, k, total, P);
+        if (t < 0) return;
         ((WaveMobs.Zombie) m).tag.digger = true;
-        if (m.getEquipmentInSlot(4) == null) m.setCurrentItemOrArmor(0, new ItemStack(Items.iron_pickaxe));
+        m.setCurrentItemOrArmor(0, new ItemStack(item(ZombieDig.TIERS[t].tool)));
         diggersSeen++;
+        tiers[t]++;
+    }
+
+    static final int[] tiers = new int[ZombieDig.TIERS.length];
+
+    static net.minecraft.item.Item item(ZombieDig.Tool t) {
+        switch (t) {
+            case IRON_SHOVEL: return Items.iron_shovel;
+            case IRON_AXE: return Items.iron_axe;
+            case WOODEN_PICKAXE: return Items.wooden_pickaxe;
+            case STONE_PICKAXE: return Items.stone_pickaxe;
+            case IRON_PICKAXE: return Items.iron_pickaxe;
+            case DIAMOND_PICKAXE: return Items.diamond_pickaxe;
+            default: return null;
+        }
     }
 
     /** a digger at work just now (Waves does not take it for a stuck one) */
@@ -187,7 +202,9 @@ final class ZombieDigWorld {
         return best;
     }
 
-    static final ZombieDig.Terrain terrain(final WorldServer w) {
+    /** the cells as this mob's hand finds them: the ticks a block takes it by the game's rule of harvesting and its tool's speed, never for what it cannot harvest */
+    static ZombieDig.Terrain terrain(final WorldServer w, final EntityLiving m) {
+        final ItemStack tool = m.getHeldItem();
         return new ZombieDig.Terrain() {
             public float cell(int x, int y, int z) {
                 if (y < 1 || y > 250) return ZombieDig.NEVER;
@@ -196,7 +213,12 @@ final class ZombieDigWorld {
                 if (b.getMaterial().isLiquid()) return ZombieDig.LIQUID;
                 if (!b.getMaterial().isSolid()) return ZombieDig.PASS;
                 float h = b.getBlockHardness(w, x, y, z);
-                return h < 0 ? ZombieDig.NEVER : Math.max(0.05f, h);
+                if (h < 0) return ZombieDig.NEVER;
+                boolean hand = b.getMaterial().isToolNotRequired();
+                if (!hand && !(tool != null && tool.canItemHarvestBlock(b))) return ZombieDig.NEVER;   // wants a tool (a level) it has not
+                double speed = tool == null ? 1 : Math.max(1, tool.getStrVsBlock(b));
+                int t = (int) Math.ceil(Math.max(0.05f, h) * 30 / speed * P.slow);
+                return t > 1200 ? ZombieDig.NEVER : Math.max(P.minTicks, t);
             }
         };
     }
@@ -227,7 +249,7 @@ final class ZombieDigWorld {
         }
         if (k.reachable) { release(w, m, k); return; }
         k.lastWork = ticks;
-        ZombieDig.Terrain t = terrain(w);
+        ZombieDig.Terrain t = terrain(w, m);
         int fx = MathHelper.floor_double(m.posX), fy = MathHelper.floor_double(m.boundingBox.minY + 0.01), fz = MathHelper.floor_double(m.posZ);
         // a step in hand: finished when the zombie's feet are in its cell; else broken, then walked into
         if (k.step != null && fx == k.step.x && fy == k.step.y && fz == k.step.z) k.step = null;
@@ -249,7 +271,7 @@ final class ZombieDigWorld {
             k.block = w.getBlock(c[0], c[1], c[2]);
             k.done = 0;
             k.stage = -1;
-            k.need = ZombieDig.ticks(k.block.getBlockHardness(w, c[0], c[1], c[2]), P);
+            k.need = Math.round(t.cell(c[0], c[1], c[2]));
         }
         if (k.need < 0) { k.step = null; return; }
         m.getLookHelper().setLookPosition(c[0] + 0.5, c[1] + 0.5, c[2] + 0.5, 30F, 30F);

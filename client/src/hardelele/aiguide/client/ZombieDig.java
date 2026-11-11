@@ -27,40 +27,93 @@ final class ZombieDig {
         return Mode.BELOW;
     }
 
-    /** the numbers (-Daiguide.waves.dig.*) */
+    /** the numbers (-Daiguide.waves.dig.*; the same in rl/zombie-dig.json, ZombieDigTest checks it) */
     static final class Params {
-        double frac = 0.10, step = 0.06, fracMax = 0.50, bossMult = 1.5, bossMax = 0.75;
+        double bossMult = 1.5, tiersMax = 0.75;   // a boss wave's shares times this; all the tiers together at most this share of the zombies
         int max = 6;             // diggers breaking at once, at most
         double detect = 24;      // blocks, in a straight line: a target this near is heard at once
         double hearGrow = 0.4;   // blocks a second more, after hearGrace seconds under the ground in the wave
         double hearGrace = 20;
         double hearMax = 48;     // the waves' mobs' follow range (Waves.SEEK)
-        double cell = 24;        // ticks for a point of hardness
+        double slow = 3;         // a digger breaks a block this many times slower than a player with the same tool (30 ticks a point of hardness at speed 1 when it harvests)
         int minTicks = 10;       // ticks at the least for a block
-        double maxHardness = 10; // this hard or harder (obsidian 50), or unbreakable (bedrock -1): never
+        int maxTicks = 1200;     // a block that takes longer is never (60 s)
         int below = 3;           // a target this many blocks below the zombie's feet is "under the ground"
     }
 
-    // ---- who digs -------------------------------------------------------------------------------------------
+    // ---- the tools and who has them ---------------------------------------------------------------------------------
 
-    /** the share of a wave's zombies that dig: 0.16 at the 1st, 0.28 at the 3rd, 0.4 at the 5th, 0.5 from the 8th; a boss wave 1.5 times that, 0.75 at most */
-    static double share(int wave, Params p) {
-        double f = Math.min(p.fracMax, p.frac + p.step * Math.max(0, wave));
-        if (WavePlan.boss(wave)) f = Math.min(p.bossMax, f * p.bossMult);
-        return f;
+    /** a tool of a zombie's hand: its kind (a shovel digs soil, an axe wood, a pickaxe rock), its speed on what it is for (the game's tiers: 2, 4, 6, 8), its harvest level (stone 0, iron ore 1, diamond 2, obsidian 3) */
+    enum Tool {
+        HAND(0, 1, -1), IRON_SHOVEL(1, 6, 0), IRON_AXE(2, 6, 0), WOODEN_PICKAXE(3, 2, 0), STONE_PICKAXE(3, 4, 1), IRON_PICKAXE(3, 6, 2), DIAMOND_PICKAXE(3, 8, 3);
+
+        final int kind;      // 0 none, 1 shovel, 2 axe, 3 pickaxe
+        final double speed;
+        final int level;
+
+        Tool(int kind, double speed, int level) { this.kind = kind; this.speed = speed; this.level = level; }
     }
 
-    /** is the k-th zombie (from 0) of a wave with total zombies a digger: by the share, with no random numbers (the wave is the same with the digging off); the first is one when there are 3 or more */
-    static boolean digger(int wave, int k, int total, Params p) {
-        double f = share(wave, p);
-        if (Math.floor(f * (k + 1)) > Math.floor(f * k)) return true;
-        return k == 0 && total >= 3;
+    /** what a block is for the tools: soil (a shovel's), wood (an axe's), rock (a pickaxe's: needs a pickaxe to harvest), other (a hand's) */
+    enum Mat { SOIL, WOOD, ROCK, OTHER }
+
+    /**
+     * Ticks a block takes a digger with a tool, -1 for never: the game's rule of the player's breaking (a block that wants a tool
+     * is harvested only by the right tool of a level enough: obsidian only by diamond; bedrock, hardness below 0, by none), the
+     * game's time (30 ticks a point of hardness at the tool's speed on what it is for, 1 for a hand or another tool) times
+     * Params.slow; at least minTicks, never more than maxTicks. need: the block wants a tool (not isToolNotRequired); level: its harvest level.
+     */
+    static int ticks(Tool tool, Mat mat, float hardness, boolean need, int level, Params p) {
+        if (hardness < 0) return -1;
+        boolean right = tool.kind == 1 && mat == Mat.SOIL || tool.kind == 2 && mat == Mat.WOOD || tool.kind == 3 && mat == Mat.ROCK;
+        if (need && !(right && tool.level >= level)) return -1;
+        double t = Math.ceil(hardness * 30 / (right ? tool.speed : 1) * p.slow);
+        if (t > p.maxTicks) return -1;
+        return Math.max(p.minTicks, (int) t);
     }
 
-    /** how many of a wave's zombies dig */
+    /** a tier: a kind of the wave's zombies with a tool, by the wave: from the wave `from`, share base + step * (wave - from), at most max */
+    static final class Tier {
+        final String name;
+        final Tool tool;
+        final int from;
+        final double base, step, max;
+
+        Tier(String name, Tool tool, int from, double base, double step, double max) { this.name = name; this.tool = tool; this.from = from; this.base = base; this.step = step; this.max = max; }
+
+        double share(int wave, Params p) {
+            if (wave < from) return 0;
+            double f = Math.min(max, base + step * (wave - from));
+            return WavePlan.boss(wave) ? f * p.bossMult : f;
+        }
+    }
+
+    /** the tiers as built in (rl/zombie-dig.json is the same): the plain zombie has no tool and does not dig */
+    static final Tier[] TIERS = {
+            new Tier("shoveler", Tool.IRON_SHOVEL, 1, 0.06, 0.02, 0.15),       // soil, sand, gravel: the top layer of the ground
+            new Tier("digger", Tool.STONE_PICKAXE, 1, 0.06, 0.03, 0.20),  // stone and the ores to iron
+            new Tier("miner", Tool.IRON_PICKAXE, 3, 0.04, 0.03, 0.20),    // the same, faster, the ores to redstone and diamond
+            new Tier("breaker", Tool.DIAMOND_PICKAXE, 7, 0.03, 0.02, 0.10) };   // obsidian too
+
+    /** the tier of the k-th zombie (from 0) of a wave of total zombies, or -1 for a plain one: by the shares, with no random numbers (the wave is the same with the digging off) */
+    static int tier(int wave, int k, int total, Params p) {
+        double[] s = new double[TIERS.length];
+        double sum = 0;
+        for (int i = 0; i < s.length; i++) sum += s[i] = TIERS[i].share(wave, p);
+        if (sum > p.tiersMax) for (int i = 0; i < s.length; i++) s[i] *= p.tiersMax / sum;
+        double u = ((k + 1) * 0.6180339887498949) % 1.0;   // a low-discrepancy sequence: the shares hold for a few zombies
+        double acc = 0;
+        for (int i = s.length - 1; i >= 0; i--) {   // the rarest (strongest) tier first
+            acc += s[i];
+            if (u < acc) return i;
+        }
+        return k == 0 && total >= 3 ? 1 : -1;   // one digger at least among three
+    }
+
+    /** how many of a wave's zombies have a tool, the rest plain */
     static int diggers(int wave, int total, Params p) {
         int n = 0;
-        for (int k = 0; k < total; k++) if (digger(wave, k, total, p)) n++;
+        for (int k = 0; k < total; k++) if (tier(wave, k, total, p) >= 0) n++;
         return n;
     }
 
@@ -71,18 +124,10 @@ final class ZombieDig {
         return Math.min(p.hearMax, p.detect + Math.min(p.hearMax - p.detect, p.hearGrow * Math.max(0, t - p.hearGrace)));
     }
 
-    // ---- the block ------------------------------------------------------------------------------------------------
-
-    /** what a cell is, for the plan: passable (air, plants), a liquid, a block that never breaks, or a hardness above 0 */
+    /** what a cell is, for the plan: passable (air, plants), a liquid, a block this digger never breaks, else the ticks it takes (above 0) */
     static final float PASS = 0f, LIQUID = -3f, NEVER = -1f;
 
     interface Terrain { float cell(int x, int y, int z); }
-
-    /** ticks a block of this hardness takes a digger; -1: never (unbreakable, too hard) */
-    static int ticks(float hardness, Params p) {
-        if (hardness < 0 || hardness >= p.maxHardness) return -1;
-        return Math.max(p.minTicks, (int) Math.ceil(hardness * p.cell));
-    }
 
     // ---- the way --------------------------------------------------------------------------------------------------
 
@@ -133,22 +178,10 @@ final class ZombieDig {
         else { st.cells.add(new int[] { nx, fy, nz }); st.cells.add(new int[] { nx, fy + 1, nz }); }
         for (int[] c : st.cells) {
             float h = t.cell(c[0], c[1], c[2]);
-            if (h == LIQUID || h == NEVER || h < 0 || h >= p.maxHardness) return null;
+            if (h < 0) return null;   // a liquid, or a block this digger never breaks
         }
         float below = t.cell(nx, ny - 1, nz);
         if (below == LIQUID) return null;   // not into the water or the lava of a cave
         return st;
-    }
-
-    // ---- the time to an agent (for the tables and the simulators) ----------------------------------------------------
-
-    /**
-     * Seconds a digger takes to dig down to an agent d blocks below it (a stair: 3 cells a level) through a soil layer
-     * of soilDepth blocks (hardness soil) and then rock (hardness rock), walking the finished tunnel at 0.25 s a block.
-     */
-    static double reach(int d, int soilDepth, float soil, float rock, Params p) {
-        double ticks = 0;
-        for (int i = 0; i < d; i++) ticks += 3.0 * ticks(i < soilDepth ? soil : rock, p);
-        return ticks / 20.0 + 0.25 * d;
     }
 }
