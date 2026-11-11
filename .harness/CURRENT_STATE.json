@@ -39,7 +39,7 @@
   "rejectedDecisions": [
     "51s v2 is rejected and never sent; filenames containing final are not acceptance.",
     "V9b is a rejected caption experiment; do not use its QA frames to diagnose delivered V9.",
-    "Do not claim a one-layer Slice or bounded PART CaveView reveals every world cave.",
+    "Do not claim the underground view (CaveView zone around each underground agent, radius ~12, loaded connected air only) reveals every world cave. The one-layer Slice mode was removed.",
     "Do not use the failed all-four door gate as evidence of entry/closure/night or manually edit/teleport world to fake it."
   ],
   "provenFacts": [
@@ -111,7 +111,7 @@
     "Final V10/V11 caption/story legibility, cinematic/UI ratio, human full 1x AV review and normal-profile install."
   ],
   "acceptedDebt": [
-    "CaveView shows only a bounded connected loaded map, marked PART; not all world passages.",
+    "CaveView (always-on underground zone, ui/caveview-always) shows only loaded connected air within a bounded radius of each underground agent; not all world passages. Sildur/OptiFine shader compatibility of the zone is not yet verified in game.",
     "Remote miner outside loaded radius, autonomous tree hidden-log discovery, and imported routine unknown IDs remain limitations.",
     "Routine Run-selected/persistence/world isolation are less verified than create/edit/delete."
   ],

@@ -156,6 +156,8 @@ public class Commander {
     // the picked ones (by agent number) and the groups
     final Set<Integer> selected = new LinkedHashSet<Integer>();
     int viewedSkin = -1;
+    /** the camera over an agent that is underground: its distance and tilt (it keeps over the ground, CaveView draws the agent through it) */
+    static final double UNDER_DIST = 16, UNDER_PITCH = 50;
     boolean viewedUnderground;
     final Map<Integer, Set<Integer>> groups = new HashMap<Integer, Set<Integer>>();
     // the last frame's view (for picking from the mouse, and labels)
@@ -230,8 +232,7 @@ public class Commander {
         if (!on) return;
         on = false;
         fb.close();
-        Slice.exit();
-        CaveView.exit();
+        CaveView.resetFocus();
         viewedSkin = -1;
         mc.gameSettings.hideGUI = hideWas;
         if (mc.thePlayer != null) mc.renderViewEntity = mc.thePlayer;
@@ -251,7 +252,7 @@ public class Commander {
     @SubscribeEvent
     public void frame(TickEvent.RenderTickEvent e) {
         if (e.phase != TickEvent.Phase.START || !on || mc.theWorld == null || mc.thePlayer == null) return;
-        if (Cam.instance != null && Cam.instance.shot != null) { Slice.exit(); CaveView.exit(); viewedSkin = -1; return; }   // film camera owns this frame
+        if (Cam.instance != null && Cam.instance.shot != null) { CaveView.resetFocus(); viewedSkin = -1; return; }   // film camera owns this frame
 
         // One chosen hero is a camera target, including when rock hides it from the surface.
         Agent viewed = selected.size() == 1 ? renderedAgent(selected.iterator().next()) : null;
@@ -259,41 +260,25 @@ public class Commander {
         if (viewed != null && Math.hypot(viewed.posX - mc.thePlayer.posX, viewed.posZ - mc.thePlayer.posZ) > viewLimit) viewed = null;
         int skin = viewed == null || viewed.isDead ? -1 : viewed.skin();
         if (skin != viewedSkin) {
-            // A new selection must not inherit the previous agent's cave volume.
-            if (CaveView.on) CaveView.exit();
+            CaveView.resetFocus();   // a new selection is looked at from the start
             viewedSkin = skin;
             if (viewed != null) {
                 px = sx = viewed.posX;
                 pz = sz = viewed.posZ;
                 py = sy = viewed.boundingBox.minY + 0.6;
                 yaw = syaw = viewed.rotationYaw;
-                boolean underground = Slice.belowSurface(viewed);
-                viewedUnderground = underground;
-                if (underground && !CaveView.on) {
-                    Slice.follow = true;
-                    Slice.enter();
-                    dist = sdist = 11;
-                    pitch = 52;
-                } else if (!underground) {
-                    Slice.exit();
-                    CaveView.exit();
-                    dist = sdist = 22;
-                    pitch = 56;
-                }
-            } else { Slice.exit(); CaveView.exit(); viewedUnderground = false; }
+                viewedUnderground = CaveView.underground(viewed);
+                dist = sdist = viewedUnderground ? UNDER_DIST : 22;
+                pitch = viewedUnderground ? UNDER_PITCH : 56;
+            } else viewedUnderground = false;
         }
-        if (viewed == null) { if (Slice.on) Slice.exit(); if (CaveView.on) CaveView.exit(); }
         if (viewed != null) {
-            boolean underground = Slice.belowSurface(viewed);
+            boolean underground = CaveView.underground(viewed);
             if (underground != viewedUnderground) {
                 viewedUnderground = underground;
-                if (underground) { if (!CaveView.on) { Slice.follow = true; Slice.enter(); dist = 11; pitch = 52; } }
-                else {
-                    Slice.exit();
-                    // Keep the cave volume while this same agent reaches its upper opening.
-                    // The person explicitly leaves the overview with C or selects another agent.
-                    if (!CaveView.on) { dist = 22; pitch = 56; }
-                }
+                if (!underground) CaveView.resetFocus();
+                dist = underground ? UNDER_DIST : 22;
+                pitch = underground ? UNDER_PITCH : 56;
             }
         }
         long now = System.nanoTime();
@@ -331,22 +316,16 @@ public class Commander {
         }
         px += mxp * speed;
         pz += mzp * speed;
-        if (CaveView.active()) {
-            // The selected component is a persistent map. Agent movement cannot change
-            // its center or silently replace it with a disconnected air pocket.
-            double[] focus = CaveView.focusPoint(viewed);
-            if (focus != null) { px = focus[0]; py = focus[1]; pz = focus[2]; }
-            else {
-                if (CaveView.focused()) { CaveView.resetFocus(); dist = 45; pitch = 42; }
-                px = CaveView.anchorX();
-                pz = CaveView.anchorZ();
-                CaveGeometry.Result g = CaveView.volume;
-                py = g != null && g.cells > 0 ? (g.minLevel + g.maxLevel) * 0.5 : viewed.boundingBox.minY + 0.6;
-            }
-        } else if (viewed != null && Slice.active()) {
+        double[] focus = viewed == null ? null : CaveView.focusPoint(viewed);
+        if (focus != null) { px = focus[0]; py = focus[1]; pz = focus[2]; }
+        else if (viewed != null && viewedUnderground) {
+            // The camera stays over the ground, so the world around the see-through zone looks as usual; the zone shows the agent.
             px = viewed.posX;
             pz = viewed.posZ;
-            py = Slice.follow ? viewed.boundingBox.minY + 0.6 : Slice.level - 1;
+            py = viewed.boundingBox.minY + 0.6;
+            int top = mc.theWorld.getHeightValue(MathHelper.floor_double(px), MathHelper.floor_double(pz));
+            double sinP = Math.sin(Math.toRadians(pitch));
+            dist = Math.max(dist, Math.min(70, (top + 3 - py) / Math.max(0.5, sinP)));
         } else {
             int gy = mc.theWorld.getHeightValue(MathHelper.floor_double(px), MathHelper.floor_double(pz));
             if (gy > 0) py = gy;
@@ -573,15 +552,9 @@ public class Commander {
     Object pick(int mx, int my) {
         Vec3[] r = ray(mx, my);
         if (r == null) return null;
-        if (Slice.active()) {
-            // Picking must start beneath the roof hidden by the observer's cut plane.
-            double dy = r[1].yCoord - r[0].yCoord;
-            if (r[0].yCoord >= Slice.level && dy < -1e-6) {
-                double t = (r[0].yCoord - Slice.level + 0.001) / -dy;
-                r[0] = Vec3.createVectorHelper(r[0].xCoord + (r[1].xCoord - r[0].xCoord) * t,
-                        Slice.level - 0.001, r[0].zCoord + (r[1].zCoord - r[0].zCoord) * t);
-            }
-        }
+        // Where a see-through zone is on the way, the ray starts in it: the person clicks what the zone shows, not the ground over it.
+        double into = CaveView.rayStart(r[0].xCoord, r[0].yCoord, r[0].zCoord, r[1].xCoord, r[1].yCoord, r[1].zCoord);
+        if (into > 0) r[0] = Vec3.createVectorHelper(r[0].xCoord + (r[1].xCoord - r[0].xCoord) * into, r[0].yCoord + (r[1].yCoord - r[0].yCoord) * into, r[0].zCoord + (r[1].zCoord - r[0].zCoord) * into);
         MovingObjectPosition hit = mc.theWorld.rayTraceBlocks(Vec3.createVectorHelper(r[0].xCoord, r[0].yCoord, r[0].zCoord), Vec3.createVectorHelper(r[1].xCoord, r[1].yCoord, r[1].zCoord), false, true, false);
         double limit = hit == null ? 1e9 : hit.hitVec.distanceTo(r[0]);
         Entity best = null;
@@ -589,7 +562,6 @@ public class Commander {
         for (Object o : mc.theWorld.loadedEntityList) {
             if (!(o instanceof EntityLivingBase) || o == mc.thePlayer && !selfUnit() || o == eye) continue;   // the player himself: the crew's number 1
             Entity en = (Entity) o;
-            if (Slice.active() && en.boundingBox.minY >= Slice.level) continue;
             if (Fog.instance != null && Fog.instance.active() && !(en instanceof Agent) && Fog.instance.stateAt(en.posX, en.posZ) != 2) continue;   // hidden in the fog
             AxisAlignedBB bb = en.boundingBox.expand(0.35, 0.2, 0.35);
             MovingObjectPosition m = bb.calculateIntercept(r[0], r[1]);
@@ -1146,37 +1118,22 @@ public class Commander {
             if (code == Keyboard.KEY_Y) Fog.on = !Fog.on;
             if (code == Keyboard.KEY_L) { togglePlaces(); return; }
             if (code == Keyboard.KEY_J) { fb.openActions(); return; }
-            if (code == Keyboard.KEY_U && viewedSkin > 0) {
-                if (CaveView.on) {
-                    CaveView.exit();
-                    if (!viewedUnderground) centerSurfaceView();
-                    else { dist = 22; pitch = 56; }
-                }
-                else if (Slice.on) Slice.exit();
-                else if (viewedUnderground) { Slice.follow = true; Slice.enter(); }
+            if (code == Keyboard.KEY_C) {   // the underground view is always on; C puts it away and back
+                CaveView.on = !CaveView.on;
+                if (!CaveView.on) CaveView.resetFocus();
+                Director.log("cave view: " + (CaveView.on ? "on" : "off"));
             }
-            if (code == Keyboard.KEY_C && viewedSkin > 0 && (viewedUnderground || CaveView.on)) {
-                if (CaveView.on) {
-                    CaveView.exit();
-                    if (viewedUnderground) { Slice.follow = true; Slice.enter(); dist = 11; pitch = 52; }
-                    else centerSurfaceView();
-                }
-                else CaveView.enter();
-            }
-            if (Slice.on && code == Keyboard.KEY_HOME) { Slice.follow = true; Slice.updateFollow(); }
-            if (Slice.on && code == Keyboard.KEY_PRIOR) Slice.adjust(1);
-            if (Slice.on && code == Keyboard.KEY_NEXT) Slice.adjust(-1);
             if (code == Keyboard.KEY_M) arm(Armed.MOVE);
             if (code == Keyboard.KEY_B) arm(Armed.CHOP);
             if (code == Keyboard.KEY_X) arm(Armed.ATTACK);
             if (code == Keyboard.KEY_G) arm(Armed.GUARD);
             if (code == Keyboard.KEY_I && selected.size() == 1) fullInv = !fullInv;
-            if (code == Keyboard.KEY_F && CaveView.active()) {
-                if (CaveView.toggleFocus()) {
-                    dist = CaveView.focused() ? 9 : 45;
-                    pitch = CaveView.focused() ? 35 : 42;
-                    Director.log("cave view: focus " + (CaveView.focused() ? "agent" : "map"));
-                } else Director.log("cave view: focus unavailable outside mapped component");
+            if (code == Keyboard.KEY_F && viewedSkin > 0 && viewedUnderground && CaveView.on) {
+                if (CaveView.toggleFocus(renderedAgent(viewedSkin))) {
+                    dist = CaveView.focused() ? 9 : UNDER_DIST;
+                    pitch = CaveView.focused() ? 35 : UNDER_PITCH;
+                    Director.log("cave view: focus " + (CaveView.focused() ? "agent" : "off"));
+                } else Director.log("cave view: focus unavailable until the zone is up");
                 return;
             }
             if (code == Keyboard.KEY_K || code == Keyboard.KEY_P || code == Keyboard.KEY_F || code == Keyboard.KEY_N) filmKey(code, shift);
@@ -1270,7 +1227,6 @@ public class Commander {
             if (what.equals("settings")) { mc.displayGuiScreen(new net.minecraft.client.gui.GuiControls(null, mc.gameSettings)); return; }
             if (what.equals("fog")) { Fog.on = !Fog.on; return; }
             if (what.equals("caves")) { typed(Keyboard.KEY_C); return; }
-            if (what.equals("layer")) { typed(Keyboard.KEY_U); return; }
             if (what.equals("stall-ai")) {   // the plan stands: everyone back under the plan
                 List<Integer> all = units();
                 int[] who = new int[all.size()];
@@ -1504,19 +1460,12 @@ public class Commander {
             }
             if (routinesOpen) { routineInput(b, state, gx, gy, wheel); return; }
             if (b >= 0 && downButton < 0 && overUi(gx, gy)) { panelInput(b, state, gx, gy); return; }
-            // The floating cave geometry is for observation. Vanilla block picking still sees
-            // the uncut world, so world clicks must not turn its apparent faces into orders.
-            if (CaveView.active() && b >= 0) {
-                if (!state) { downButton = -1; selecting = false; dragging = false; dragFrom = null; painting = false; eraseFrom = null; }
-                return;
-            }
             if (b >= 0 && !state && dragFrom != null) { panelInput(b, false, gx, gy); return; }   // an item let go over the world: nothing
             boolean shift = shiftDown();
             boolean ctrl = ctrlDown();
             boolean alt = altDown();
             if (wheel != 0) {
-                if (alt && Slice.active()) Slice.adjust(wheel > 0 ? 1 : -1);
-                else if (shift) depth = Math.max(1, Math.min(8, depth + (wheel > 0 ? 1 : -1)));
+                if (shift) depth = Math.max(1, Math.min(8, depth + (wheel > 0 ? 1 : -1)));
                 else if (ctrl) paintMat = (paintMat + (wheel > 0 ? 1 : PAINT_MATERIALS.length - 1)) % PAINT_MATERIALS.length;
                 else dist = Math.max(6, Math.min(70, dist * (wheel > 0 ? 0.88 : 1.14)));
             }
@@ -1619,25 +1568,13 @@ public class Commander {
         @Override
         public void drawScreen(int gmx, int gmy, float pt) {
             drawn++;
-            if (CaveView.active()) { hoverLabel = null; hoverL = hoverR = null; } else hoverNow();
+            hoverNow();
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             if (vOn) { gmx = curX() / scale; gmy = (mc.displayHeight - curY()) / scale; }
             pollGuide();
             kit.begin(fontRendererObj, width, height, gmx, gmy);
             worldLabels(scale);
             PlaceLayer.labels(Commander.this, fontRendererObj, scale, mc.displayHeight);
-            if (CaveView.active() && !CaveView.focused() && CaveView.liveExit()) {
-                CaveGeometry.Result g = CaveView.volume;
-                float[] s = toScreen(g.exitX + 0.5, g.exitY + 1.0, g.exitZ + 0.5);
-                if (s != null && s[0] >= 0 && s[0] <= mc.displayWidth && s[1] >= 0 && s[1] <= mc.displayHeight) {
-                    String text = "ОТКРЫТЫЙ ВЕРХ Y" + g.exitY;
-                    int tw = fontRendererObj.getStringWidth(text);
-                    int x = Math.max(2, Math.min(width - tw - 8, (int) (s[0] / scale) - tw / 2));
-                    int y = Math.max(32, Math.min(height - 42, (int) ((mc.displayHeight - s[1]) / scale) + 4));
-                    Ui.round(x - 4, y - 3, x + tw + 4, y + 10, 4, 0xD0203020);
-                    fontRendererObj.drawStringWithShadow(text, x, y, 0xBFFF8B);
-                }
-            }
             if (dragging && selecting) {   // the box being dragged
                 int x0 = downX / scale, y0 = (mc.displayHeight - downY) / scale, x1 = curX() / scale, y1 = (mc.displayHeight - curY()) / scale;
                 Ui.round(Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1), 2, 0x3050FF70);
@@ -1777,21 +1714,6 @@ public class Commander {
 
         boolean stalled() { return Crew.instance != null && Crew.instance.board.stalled; }
 
-        /** the view's mode in a line (the cave's map, the one layer), or null */
-        String mode() {
-            if (CaveView.active()) {
-                CaveGeometry.Result g = CaveView.volume;
-                boolean exitLive = CaveView.liveExit();
-                String top = exitLive ? " · открытый верх ↑" : g != null && g.exit ? " · верх не подтверждён" : " · верх не проверен";
-                return CaveView.holdingLast() ? "ЧАСТЬ: прежняя карта; обновление ждёт"
-                        : g == null || CaveView.scanning() ? "Пещера: обновляю карту…" : g.cells == 0 ? "Пещера: нет доступной полости"
-                        : g.limited() ? "ЧАСТЬ: Y" + g.minLevel + "–" + g.maxLevel + top
-                        : "Полость Y" + g.minLevel + "–" + g.maxLevel + (g.exit ? top : " · верх не найден");
-            }
-            if (Slice.active()) return "Только один слой: Y=" + Slice.level + (Slice.follow ? " · за агентом" : " · вручную");
-            return null;
-        }
-
         UiLayout.Input layoutInput(int w) {
             UiLayout.Input in = new UiLayout.Input(w, height);
             in.units = units().size();
@@ -1799,8 +1721,8 @@ public class Commander {
             in.player = selfUnit();
             in.chatOpen = chat.isFocused();
             in.toasts = toasts.live(System.currentTimeMillis());
-            in.stall = stalled() || mode() != null;
-            in.underground = viewedSkin > 0 && (viewedUnderground || CaveView.on || Slice.on);
+            in.stall = stalled();
+            in.underground = viewedSkin > 0 && viewedUnderground;
             in.wideInventory = fullInv;
             in.journalOpen = journalOpen;
             in.mind = true;
@@ -1832,10 +1754,8 @@ public class Commander {
         /** over each unit: its number and its health; its mind thinking: a small cloud over the number */
         void worldLabels(int scale) {
             List<EntityLivingBase> units = new ArrayList<EntityLivingBase>(clientAgents());
-            if (selfUnit() && !CaveView.active()) units.add(mc.thePlayer);
+            if (selfUnit()) units.add(mc.thePlayer);
             for (EntityLivingBase a : units) {
-                if (Slice.active() && a.boundingBox.minY >= Slice.level) continue;
-                if (CaveView.active() && !CaveView.containsEntity(a)) continue;
                 float[] s = toScreen(a.posX, a.boundingBox.maxY + 0.45, a.posZ);
                 if (s == null) continue;
                 int n = unitOf(a);
@@ -1877,7 +1797,7 @@ public class Commander {
                 String name = b.id.substring(7);
                 if (name.equals("more")) { kit.button("more:toggles", UiIcon.MORE, b.x, b.y, "toggles".equals(openMenu), true, null, null); continue; }
                 UiIcon ic = UiIcon.valueOf(name.toUpperCase(java.util.Locale.ROOT));
-                boolean on = ic == UiIcon.FOG ? Fog.on : ic == UiIcon.PLACES ? PlaceLayer.on : ic == UiIcon.CAVES ? CaveView.on : ic == UiIcon.LAYER ? Slice.on : ic == UiIcon.LOG && journalOpen;
+                boolean on = ic == UiIcon.FOG ? Fog.on : ic == UiIcon.PLACES ? PlaceLayer.on : ic == UiIcon.CAVES ? CaveView.on : ic == UiIcon.LOG && journalOpen;
                 String why = ic == UiIcon.PLACES && placesMissing() ? UiKit.ui("state.noplaces") : null;
                 kit.button(pillOf(ic), ic, b.x, b.y, on, why == null, null, why);
             }
@@ -1889,7 +1809,6 @@ public class Commander {
             UiLayout.Box st = lay.get("state");
             if (st != null) {
                 if (stalled()) kit.state(st, UiIcon.WARNING, UiKit.ui("state.stall"), "stall-ai", UiIcon.PLAN, true);
-                else if (mode() != null) kit.state(st, CaveView.active() ? UiIcon.CAVES : UiIcon.LAYER, mode(), null, null, false);
             }
             long now = System.currentTimeMillis();
             List<UiLayout.Box> boxes = lay.starting("toast.");
@@ -2086,7 +2005,7 @@ public class Commander {
 
         /** what a click would do, by the cursor: the mouse's buttons as icons */
         void cursorLabel(int gmx, int gmy) {
-            if (CaveView.active() || dragFrom != null || overUi(gmx, gmy)) return;
+            if (dragFrom != null || overUi(gmx, gmy)) return;
             String l = null, r = null, plain = null;
             if (painting) plain = (paintBuild ? "Строить: " + shownName(buildMaterial()) : "Копать") + " ×" + strokeCells(paintFrom, paintTo, paintBuild).size() + (depth > 1 ? "  глубина " + depth : "");
             else if (armed != Armed.NONE) l = armed == Armed.MOVE ? "идти сюда" : armed == Armed.CHOP ? "рубить" : armed == Armed.ATTACK ? "атаковать" : "охранять";
