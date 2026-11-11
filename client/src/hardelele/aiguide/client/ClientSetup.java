@@ -10,7 +10,6 @@ class ClientSetup {
         Commander.start();
         CrewKeys.start();
         Fog.start();
-        Slice.start();
         CaveView.start();
         Feedback.start();
         WavesHud.start();

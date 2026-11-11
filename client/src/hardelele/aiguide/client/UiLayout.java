@@ -81,7 +81,7 @@ final class UiLayout {
 
     static List<Tool> toggles(Input in) {
         List<Tool> t = new ArrayList<Tool>();
-        if (in.underground) { t.add(new Tool(UiIcon.CAVES, 0, 2)); t.add(new Tool(UiIcon.LAYER, 0, 3)); }
+        if (in.underground) { t.add(new Tool(UiIcon.CAVES, 0, 2)); }
         t.add(new Tool(UiIcon.FOG, 1, 4));
         t.add(new Tool(UiIcon.PLACES, 1, 5));
         t.add(new Tool(UiIcon.LOG, 2, 1));
